@@ -1,0 +1,184 @@
+name: Package
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate source
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify tag matches package version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: >-
+          node -e "const expected = 'v' + require('./package.json').version;
+          if (process.env.GITHUB_REF_NAME !== expected) {
+            throw new Error('Tag ' + process.env.GITHUB_REF_NAME + ' must equal ' + expected)
+          }"
+
+      - name: Run tests
+        run: npm test
+
+      - name: Run type checks
+        run: npm run typecheck
+
+      - name: Build application
+        run: npm run build
+
+      - name: Run Electron end-to-end tests
+        run: npm run test:e2e
+
+  shell-smoke:
+    name: Native shell smoke (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Linux
+            runner: ubuntu-24.04
+          - platform: macOS
+            runner: macos-15
+          - platform: Windows
+            runner: windows-2025
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run cleanup contract tests
+        run: npm test -- scripts/clean.test.ts
+
+      - name: Run native Shell and PTY smoke tests
+        run: npm run test:shell-smoke
+
+  package:
+    name: Package ${{ matrix.platform }} ${{ matrix.arch }}
+    needs: [validate, shell-smoke]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: mac
+            arch: x64
+            runner: macos-15-intel
+          - platform: mac
+            arch: arm64
+            runner: macos-15
+          - platform: win
+            arch: x64
+            runner: windows-2025
+          - platform: win
+            arch: arm64
+            runner: windows-11-arm
+          - platform: linux
+            arch: x64
+            runner: ubuntu-24.04
+          - platform: linux
+            arch: arm64
+            runner: ubuntu-24.04-arm
+
+    runs-on: ${{ matrix.runner }}
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Linux packaging tools
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes rpm xvfb
+
+      - name: Run native database and PTY smoke tests
+        run: npm run test:shell-smoke
+
+      - name: Build application
+        run: npm run build
+
+      - name: Create packages
+        run: npx electron-builder --${{ matrix.platform }} --${{ matrix.arch }} --publish never
+
+      - name: Verify Linux AppImage, installed sandbox, and production renderers
+        if: matrix.platform == 'linux'
+        run: |
+          shopt -s nullglob
+          appimages=(release/*.AppImage)
+          if (( ${#appimages[@]} != 1 )); then
+            echo "Expected exactly one AppImage, found ${#appimages[@]}" >&2
+            exit 1
+          fi
+          userns_policy=/proc/sys/kernel/apparmor_restrict_unprivileged_userns
+          original_userns_policy=
+          restore_userns_policy() {
+            local saved_userns_policy=$original_userns_policy
+            original_userns_policy=
+            if [[ -n "$saved_userns_policy" ]]; then
+              sudo sysctl -w "kernel.apparmor_restrict_unprivileged_userns=$saved_userns_policy"
+            fi
+          }
+          trap restore_userns_policy EXIT
+          if [[ -e "$userns_policy" ]]; then
+            original_userns_policy=$(<"$userns_policy")
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          xvfb-run -a npm run test:linux-package -- "${appimages[0]}"
+          restore_userns_policy
+          trap - EXIT
+          sudo apt-get install --yes ./release/*.deb
+          xvfb-run -a npm run test:linux-package -- /opt/CLILoom/cliloom
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: CLILoom-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/*.exe
+            release/*.AppImage
+            release/*.deb
+            release/*.rpm
+          if-no-files-found: error
+          retention-days: 14

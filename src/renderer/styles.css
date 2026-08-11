@@ -1,0 +1,826 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/jetbrains-mono/wght.css";
+
+@custom-variant dark (&:is(.dark *));
+
+.assistant-drag-region {
+  -webkit-app-region: drag;
+}
+
+.assistant-no-drag {
+  -webkit-app-region: no-drag;
+}
+
+:root {
+  color-scheme: light;
+  --app-background: var(--background);
+  --font-code: 'JetBrains Mono Variable', ui-monospace, 'SFMono-Regular', 'Menlo', 'Monaco', 'Cascadia Mono', 'Consolas', 'Liberation Mono', 'DejaVu Sans Mono', monospace;
+  --font-size-base: 16px;
+  --font-line-height: 1.5;
+  --spacing-scale: 1;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --radius: 0.625rem;
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+  --terminal: oklch(0.145 0 0);
+  --terminal-foreground: oklch(0.985 0 0);
+  --status-neutral-background: oklch(0.967 0.001 286.375);
+  --status-neutral-border: oklch(0.871 0.006 286.286);
+  --status-neutral-foreground: oklch(0.442 0.017 285.786);
+  --status-running-background: oklch(0.97 0.014 254.604);
+  --status-running-border: oklch(0.882 0.059 254.128);
+  --status-running-foreground: oklch(0.488 0.243 264.376);
+  --status-waiting-input-background: oklch(0.987 0.022 95.277);
+  --status-waiting-input-border: oklch(0.924 0.12 95.746);
+  --status-waiting-input-foreground: oklch(0.473 0.137 46.201);
+  --status-completed-background: oklch(0.979 0.021 166.113);
+  --status-completed-border: oklch(0.905 0.093 164.15);
+  --status-completed-foreground: oklch(0.508 0.118 165.612);
+  --status-failed-background: oklch(0.971 0.013 17.38);
+  --status-failed-border: oklch(0.885 0.062 18.334);
+  --status-failed-foreground: oklch(0.505 0.213 27.518);
+  --status-stopped-background: oklch(0.968 0.007 247.896);
+  --status-stopped-border: oklch(0.869 0.022 252.894);
+  --status-stopped-foreground: oklch(0.446 0.043 257.281);
+  --status-interrupted-background: oklch(0.98 0.016 73.684);
+  --status-interrupted-border: oklch(0.901 0.076 70.697);
+  --status-interrupted-foreground: oklch(0.553 0.195 38.402);
+}
+
+.dark {
+  color-scheme: dark;
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
+  --terminal: oklch(0.145 0 0);
+  --terminal-foreground: oklch(0.985 0 0);
+  --status-neutral-background: oklch(0.274 0.006 286.033 / 55%);
+  --status-neutral-border: oklch(0.442 0.017 285.786 / 65%);
+  --status-neutral-foreground: oklch(0.871 0.006 286.286);
+  --status-running-background: oklch(0.379 0.146 265.522 / 40%);
+  --status-running-border: oklch(0.488 0.243 264.376 / 65%);
+  --status-running-foreground: oklch(0.809 0.105 251.813);
+  --status-waiting-input-background: oklch(0.414 0.112 45.904 / 35%);
+  --status-waiting-input-border: oklch(0.555 0.163 48.998 / 65%);
+  --status-waiting-input-foreground: oklch(0.879 0.169 91.605);
+  --status-completed-background: oklch(0.378 0.077 168.94 / 40%);
+  --status-completed-border: oklch(0.508 0.118 165.612 / 65%);
+  --status-completed-foreground: oklch(0.845 0.143 164.978);
+  --status-failed-background: oklch(0.396 0.141 25.723 / 40%);
+  --status-failed-border: oklch(0.505 0.213 27.518 / 65%);
+  --status-failed-foreground: oklch(0.808 0.114 19.571);
+  --status-stopped-background: oklch(0.279 0.041 260.031 / 55%);
+  --status-stopped-border: oklch(0.446 0.043 257.281 / 65%);
+  --status-stopped-foreground: oklch(0.869 0.022 252.894);
+  --status-interrupted-background: oklch(0.408 0.123 38.172 / 40%);
+  --status-interrupted-border: oklch(0.553 0.195 38.402 / 65%);
+  --status-interrupted-foreground: oklch(0.837 0.128 66.29);
+}
+
+@theme inline {
+  --font-heading: var(--font-sans);
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: var(--font-code);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --color-terminal: var(--terminal);
+  --color-terminal-foreground: var(--terminal-foreground);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  html {
+    @apply font-sans;
+    font-size: var(--font-size-base);
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    line-height: var(--font-line-height);
+  }
+}
+
+.status-badge {
+  border-color: var(--status-neutral-border);
+  background-color: var(--status-neutral-background);
+  color: var(--status-neutral-foreground);
+}
+
+.status-badge[data-status-tone='running'] {
+  border-color: var(--status-running-border);
+  background-color: var(--status-running-background);
+  color: var(--status-running-foreground);
+}
+
+.status-badge[data-status-tone='waiting-input'] {
+  border-color: var(--status-waiting-input-border);
+  background-color: var(--status-waiting-input-background);
+  color: var(--status-waiting-input-foreground);
+}
+
+.status-badge[data-status-tone='completed'] {
+  border-color: var(--status-completed-border);
+  background-color: var(--status-completed-background);
+  color: var(--status-completed-foreground);
+}
+
+.status-badge[data-status-tone='failed'] {
+  border-color: var(--status-failed-border);
+  background-color: var(--status-failed-background);
+  color: var(--status-failed-foreground);
+}
+
+.status-badge[data-status-tone='stopped'] {
+  border-color: var(--status-stopped-border);
+  background-color: var(--status-stopped-background);
+  color: var(--status-stopped-foreground);
+}
+
+.status-badge[data-status-tone='interrupted'] {
+  border-color: var(--status-interrupted-border);
+  background-color: var(--status-interrupted-background);
+  color: var(--status-interrupted-foreground);
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+.app-shell {
+  grid-template-areas: 'project-rail project-resizer task-sidebar task-resizer workspace';
+  grid-template-columns:
+    var(--project-rail-width, 64px)
+    6px
+    var(--task-sidebar-width, 168px)
+    6px
+    minmax(0, 1fr);
+}
+
+.project-rail {
+  grid-area: project-rail;
+  min-width: 0;
+}
+
+.task-sidebar {
+  grid-area: task-sidebar;
+  min-width: 0;
+}
+
+.app-shell__project-resizer {
+  grid-area: project-resizer;
+}
+
+.app-shell__task-resizer {
+  grid-area: task-resizer;
+}
+
+.workspace-shell {
+  grid-area: workspace;
+  grid-template-rows: minmax(3rem, auto) minmax(0, 1fr);
+}
+
+.is-resizing-columns,
+.is-resizing-columns * {
+  cursor: col-resize !important;
+  user-select: none;
+}
+
+.workspace-header {
+  container-type: inline-size;
+}
+
+.workspace-header__workflow-select {
+  max-width: 18rem;
+}
+
+.workspace-header__workflow-stats,
+.workspace-header__view-label {
+  display: none;
+}
+
+@container (min-width: 620px) {
+  .workspace-header__view-label {
+    display: inline;
+  }
+}
+
+@container (max-width: 520px) {
+  .workspace-header__task-title {
+    max-width: 35%;
+  }
+}
+
+@container (min-width: 760px) {
+  .workspace-header__workflow-stats {
+    display: inline;
+  }
+}
+
+.workflow-graph {
+  container-type: inline-size;
+}
+
+.workspace-minimap {
+  width: clamp(7rem, 25vw, 11rem) !important;
+  height: clamp(4.5rem, 16vw, 7rem) !important;
+}
+
+.node-detail-panel {
+  container: node-detail / inline-size;
+}
+
+@container node-detail (max-width: 420px) {
+  .node-detail-panel > .node-detail-panel__header {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .node-detail-panel__actions {
+    grid-column: 1;
+    grid-row: 2;
+    justify-content: flex-end;
+    justify-self: stretch;
+    flex-wrap: wrap;
+  }
+}
+
+.workflow-designer {
+  width: calc(100vw - 2rem);
+  width: calc(100dvw - 2rem);
+  height: calc(100vh - 2rem);
+  height: calc(100dvh - 2rem);
+  max-width: none;
+  grid-template-areas:
+    'designer-header designer-header designer-header designer-header'
+    'designer-workflows designer-palette designer-canvas designer-inspector';
+  grid-template-columns:
+    clamp(180px, 18vw, 220px)
+    clamp(150px, 15vw, 180px)
+    minmax(0, 1fr)
+    clamp(280px, 26vw, 320px);
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.workflow-designer__header {
+  grid-area: designer-header;
+  display: grid;
+  min-height: max-content;
+  grid-template-areas: 'designer-heading designer-name designer-actions';
+  grid-template-columns: minmax(10rem, max-content) minmax(10rem, 24rem) minmax(max-content, 1fr);
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.workflow-designer__heading {
+  grid-area: designer-heading;
+}
+
+.workflow-designer__name {
+  grid-area: designer-name;
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+}
+
+.workflow-designer__actions {
+  grid-area: designer-actions;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.workflow-designer__workflows {
+  grid-area: designer-workflows;
+}
+
+.workflow-designer__palette {
+  grid-area: designer-palette;
+}
+
+.workflow-designer__canvas {
+  grid-area: designer-canvas;
+}
+
+.workflow-designer__inspector {
+  grid-area: designer-inspector;
+  container: designer-inspector / inline-size;
+}
+
+@container designer-inspector (max-width: 260px) {
+  .env-editor__row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .env-editor__row > :nth-child(1) {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .env-editor__row > :nth-child(2) {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .env-editor__row > :nth-child(3) {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    align-self: center;
+  }
+}
+
+@media (max-width: 1199px) {
+  .workflow-designer {
+    grid-template-areas:
+      'designer-header designer-header designer-header'
+      'designer-workflows designer-canvas designer-inspector'
+      'designer-palette designer-canvas designer-inspector';
+    grid-template-columns: clamp(10rem, 18vw, 12rem) minmax(0, 1fr) clamp(15rem, 26vw, 18rem);
+    grid-template-rows: auto minmax(7rem, 0.35fr) minmax(0, 0.65fr);
+  }
+
+  .workflow-designer__workflows {
+    border-bottom: 1px solid var(--border);
+  }
+}
+
+@media (max-width: 1100px) {
+  .workflow-designer__header {
+    grid-template-areas:
+      'designer-heading designer-actions'
+      'designer-name designer-name';
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+}
+
+@media (max-width: 900px) {
+  .app-shell {
+    grid-template-areas: 'project-rail task-sidebar workspace';
+    grid-template-columns: 56px clamp(9rem, 24vw, 11rem) minmax(0, 1fr);
+  }
+
+  .app-shell__resize-handle {
+    display: none;
+  }
+
+  .workspace-header {
+    gap: 0.5rem;
+    padding-inline: 0.75rem;
+  }
+
+  .workspace-content {
+    padding: 0.5rem;
+  }
+}
+
+@media (max-width: 850px) {
+  .workflow-designer {
+    width: calc(100vw - 1rem);
+    width: calc(100dvw - 1rem);
+    height: calc(100vh - 1rem);
+    height: calc(100dvh - 1rem);
+    grid-template-areas:
+      'designer-header designer-header'
+      'designer-workflows designer-canvas'
+      'designer-palette designer-canvas'
+      'designer-palette designer-inspector';
+    grid-template-columns: clamp(8.75rem, 24vw, 10.5rem) minmax(0, 1fr);
+    grid-template-rows: auto minmax(6.5rem, 0.18fr) minmax(7rem, 0.72fr) minmax(9rem, 0.55fr);
+  }
+
+  .workflow-designer__inspector {
+    border-top: 1px solid var(--border);
+  }
+}
+
+@media (max-width: 700px) {
+  .workflow-designer__action-label {
+    display: none;
+  }
+}
+
+@media (max-width: 850px) and (max-height: 520px) {
+  .workflow-designer {
+    grid-template-rows: auto minmax(4.5rem, 0.18fr) minmax(6.5rem, 0.72fr) minmax(8rem, 0.55fr);
+  }
+}
+
+@media (max-width: 600px) {
+  .app-shell {
+    grid-template-columns: 52px 8.5rem minmax(0, 1fr);
+  }
+
+  .project-rail {
+    padding-inline: 0.375rem;
+  }
+
+  .workspace-header {
+    padding-inline: 0.5rem;
+  }
+}
+
+@media (min-width: 851px) and (max-height: 650px) {
+  .workflow-designer {
+    height: calc(100vh - 1rem);
+    height: calc(100dvh - 1rem);
+  }
+}
+
+.xterm-host .xterm {
+  height: 100%;
+  width: 100%;
+  max-width: 100%;
+  padding: 0.75rem;
+}
+
+.xterm-host .xterm-scrollable-element {
+  overscroll-behavior: contain;
+}
+
+/*
+ * xterm 6 still creates a legacy .xterm-viewport and leaves it with
+ * overflow-y: scroll from its own stylesheet (xterm.css). Scrolling has moved
+ * to .xterm-scrollable-element above, so the viewport no longer holds content
+ * or a usable thumb, but Chromium still reserves its native overflow gutter and
+ * would render a default-styled gray track beside the themed div slider below.
+ *
+ * scrollbar-width: none suppresses the gutter on Chromium 121+ (Electron 43
+ * ships Chromium 130+). The ::-webkit-scrollbar rule below is a belt-and-
+ * suspenders safeguard for older builds and for any future Chromium regression;
+ * it is harmless on current versions. This is independent of the div scrollbar
+ * here and of the plain-text .terminal-output WebKit scrollbar further down.
+ */
+.xterm-host .xterm-viewport {
+  scrollbar-width: none;
+}
+
+.xterm-host .xterm-viewport::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+/*
+ * xterm 6 renders its own scrollbar as a div structure
+ * (.xterm-scrollable-element > .scrollbar.vertical > .slider) rather than the
+ * Chromium ::-webkit-scrollbar pseudo-element used by the plain-text output
+ * pane below. These are two independent mechanisms. Only the vertical slider is
+ * customized here; xterm 6 also creates a hidden horizontal slider, so the
+ * selectors stay direction-scoped to avoid affecting it.
+ *
+ * xterm 6 appends its own <style> element after Terminal.open that writes
+ * background rules for the normal/:hover/.active slider states at the same
+ * specificity as these selectors. Because that runtime style appears later in
+ * the document, each custom background here uses !important to win; only the
+ * background property needs the override, and border-radius stays at normal
+ * specificity in the base rule. XtermTerminal configures a 12px overview ruler
+ * so xterm and FitAddon reserve the same amount of layout width. The visible
+ * thumb is kept at 6px and aligned to the outer edge, leaving the inner 6px as
+ * a dedicated safety gap between terminal glyphs and the scrollbar.
+ */
+.xterm-host .xterm-scrollable-element > .scrollbar.vertical > .slider {
+  background: color-mix(in srgb, var(--terminal-foreground) 15%, transparent) !important;
+  border-radius: 9999px;
+  left: auto !important;
+  right: 0;
+  width: 6px !important;
+}
+
+.xterm-host .xterm-scrollable-element > .scrollbar.vertical > .slider:hover {
+  background: color-mix(in srgb, var(--terminal-foreground) 30%, transparent) !important;
+}
+
+.xterm-host .xterm-scrollable-element > .scrollbar.vertical > .slider.active {
+  background: color-mix(in srgb, var(--terminal-foreground) 45%, transparent) !important;
+}
+
+/*
+ * The plain-text TerminalOutputPane keeps the classic thin Chromium WebKit
+ * scrollbar: a transparent track with a translucent rounded thumb and a
+ * brighter thumb on hover. This is distinct from the xterm 6 div scrollbar
+ * above; Electron is Chromium, so ::-webkit-scrollbar controls sizing here, and
+ * scrollbar-width is intentionally omitted because it conflicts with these
+ * webkit rules. A stable gutter handles classic scrollbars, while an extra 10px
+ * beyond the pane's standard 0.75rem padding protects content when Chromium
+ * uses an overlay scrollbar that does not consume gutter space.
+ */
+.terminal-output {
+  padding-inline-end: calc(0.75rem + 10px);
+  scrollbar-gutter: stable;
+}
+
+.terminal-output::-webkit-scrollbar {
+  width: 6px;
+  height: 0.5rem;
+}
+
+.terminal-output::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.terminal-output::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--terminal-foreground) 15%, transparent);
+  border-radius: 9999px;
+}
+
+.terminal-output:hover::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--terminal-foreground) 30%, transparent);
+}
+
+.mdxeditor.terminal-markdown-editor {
+  --accentBase: var(--background);
+  --accentBgSubtle: var(--muted);
+  --accentBg: var(--accent);
+  --accentBgHover: var(--accent);
+  --accentBgActive: var(--secondary);
+  --accentLine: var(--border);
+  --accentBorder: var(--border);
+  --accentBorderHover: var(--ring);
+  --accentSolid: var(--primary);
+  --accentSolidHover: var(--primary);
+  --accentText: var(--foreground);
+  --accentTextContrast: var(--primary-foreground);
+  --basePageBg: var(--popover);
+  --baseBase: var(--background);
+  --baseBgSubtle: var(--muted);
+  --baseBg: var(--muted);
+  --baseBgHover: var(--accent);
+  --baseBgActive: var(--secondary);
+  --baseLine: var(--border);
+  --baseBorder: var(--border);
+  --baseBorderHover: var(--ring);
+  --baseSolid: var(--muted-foreground);
+  --baseSolidHover: var(--foreground);
+  --baseText: var(--muted-foreground);
+  --baseTextContrast: var(--foreground);
+  background: var(--popover);
+  color: var(--popover-foreground);
+}
+
+.terminal-markdown-editor .mdxeditor-toolbar {
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: var(--muted);
+}
+
+.terminal-markdown-editor .mdxeditor-root-contenteditable,
+.terminal-markdown-editor .mdxeditor-source-editor,
+.terminal-markdown-editor .mdxeditor-rich-text-editor {
+  background: var(--popover);
+  color: var(--popover-foreground);
+}
+
+.terminal-markdown-content {
+  width: 100%;
+  max-width: none;
+  min-height: 100%;
+  padding: 1.25rem 1.5rem 4rem;
+  color: var(--popover-foreground);
+  font-family: var(--font-sans);
+  font-size: 0.9375rem;
+  line-height: 1.7;
+}
+
+.terminal-markdown-content h1,
+.terminal-markdown-content h2,
+.terminal-markdown-content h3,
+.terminal-markdown-content h4,
+.terminal-markdown-content h5,
+.terminal-markdown-content h6 {
+  margin-block: 1.25em 0.5em;
+  color: var(--foreground);
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+.terminal-markdown-content h1 {
+  font-size: 1.75rem;
+}
+
+.terminal-markdown-content h2 {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.3em;
+  font-size: 1.4rem;
+}
+
+.terminal-markdown-content h3 {
+  font-size: 1.2rem;
+}
+
+.terminal-markdown-content p,
+.terminal-markdown-content ul,
+.terminal-markdown-content ol,
+.terminal-markdown-content blockquote,
+.terminal-markdown-content pre,
+.terminal-markdown-content table {
+  margin-block: 0.75rem;
+}
+
+.terminal-markdown-content ul,
+.terminal-markdown-content ol {
+  padding-left: 1.5rem;
+}
+
+.terminal-markdown-content ul {
+  list-style: disc;
+}
+
+.terminal-markdown-content ol {
+  list-style: decimal;
+}
+
+.terminal-markdown-content blockquote {
+  border-left: 3px solid var(--border);
+  padding-left: 1rem;
+  color: var(--muted-foreground);
+}
+
+.terminal-markdown-content code {
+  border-radius: 0.25rem;
+  background: var(--muted);
+  padding: 0.1rem 0.3rem;
+  font-family: var(--font-code);
+  font-size: 0.875em;
+}
+
+.terminal-markdown-editor .mdxeditor-source-editor,
+.terminal-markdown-content .cm-editor,
+.terminal-markdown-content .cm-content {
+  font-family: var(--font-code);
+}
+
+.terminal-markdown-content .cm-editor {
+  background: var(--muted);
+  color: var(--foreground);
+}
+
+.terminal-markdown-content .cm-gutters {
+  border-right-color: var(--border);
+  background: var(--muted);
+  color: var(--muted-foreground);
+}
+
+.terminal-markdown-content .cm-activeLine,
+.terminal-markdown-content .cm-activeLineGutter {
+  background: var(--accent);
+}
+
+.terminal-markdown-content .cm-selectionBackground,
+.terminal-markdown-content .cm-content ::selection {
+  background: color-mix(in srgb, var(--ring) 35%, transparent) !important;
+}
+
+.terminal-markdown-content table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.terminal-markdown-content th,
+.terminal-markdown-content td {
+  border: 1px solid var(--border);
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+}
+
+.terminal-markdown-content a {
+  color: var(--foreground);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.react-flow__controls {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  box-shadow: 0 4px 14px rgb(0 0 0 / 0.08);
+}
+
+.react-flow__controls-button {
+  border-bottom-color: var(--border) !important;
+  background: var(--card) !important;
+  color: var(--card-foreground) !important;
+}
+
+.react-flow__controls-button:hover {
+  background: var(--muted) !important;
+}
+
+.react-flow__minimap {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card) !important;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 0.08);
+}
+
+.react-flow__minimap-mask {
+  fill: color-mix(in srgb, var(--muted) 65%, transparent);
+}
+
+.react-flow__attribution {
+  background: color-mix(in srgb, var(--card) 85%, transparent) !important;
+  color: var(--muted-foreground) !important;
+}

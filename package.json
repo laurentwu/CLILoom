@@ -1,0 +1,98 @@
+{
+  "name": "cliloom",
+  "productName": "CLILoom",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CLILoom desktop app for universal AI development workflows.",
+  "author": {
+    "name": "CLILoom Team",
+    "email": "laurentwu@users.noreply.github.com"
+  },
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/laurentwu/CLILoom",
+  "desktopName": "io.github.laurentwu.cliloom.desktop",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/laurentwu/CLILoom.git"
+  },
+  "main": "dist/main/main/main.js",
+  "engines": {
+    "node": ">=24.15.0 <25"
+  },
+  "overrides": {
+    "@mdxeditor/editor": {
+      "js-yaml": "4.3.1"
+    }
+  },
+  "scripts": {
+    "postinstall": "electron-builder install-app-deps",
+    "clean": "node scripts/clean.cjs all",
+    "licenses:generate": "node scripts/generate-third-party-notices.cjs",
+    "licenses:check": "node scripts/generate-third-party-notices.cjs --check",
+    "prebuild": "node scripts/clean.cjs build && npm run licenses:check",
+    "prebuild:main": "node scripts/clean.cjs main",
+    "dev": "vite",
+    "electron:dev": "npm run build:main && concurrently -k \"vite\" \"wait-on http://127.0.0.1:5173 && node scripts/electron-dev.cjs\"",
+    "electron:rebuild": "electron-builder install-app-deps",
+    "build": "tsc -b && vite build && npm run build:main",
+    "build:main": "tsc -p tsconfig.main.json",
+    "package:dir": "npm run build && electron-builder --dir --publish never",
+    "package:mac": "npm run build && electron-builder --mac --publish never",
+    "package:win": "npm run build && electron-builder --win --publish never",
+    "package:appimage": "npm run build && electron-builder --linux AppImage --publish never",
+    "package:linux": "npm run build && electron-builder --linux --publish never",
+    "test": "node scripts/vitest-electron.cjs --exclude src/main/shellSmoke.test.ts",
+    "test:shell-smoke": "node scripts/vitest-electron.cjs src/main/shellSmoke.test.ts",
+    "test:wsl-smoke": "npm run build:main && node scripts/wsl-smoke.cjs",
+    "test:coverage": "node scripts/vitest-electron.cjs --coverage --exclude src/main/shellSmoke.test.ts && npm run test:coverage:terminal",
+    "test:coverage:terminal": "node scripts/vitest-electron.cjs --config vitest.terminal-coverage.config.mts --coverage",
+    "test:e2e": "node scripts/playwright-electron.cjs",
+    "test:linux-package": "node scripts/linux-package-smoke.cjs",
+    "typecheck": "tsc -b --pretty false && tsc -p tsconfig.e2e.json --pretty false"
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "font-list": "^2.1.0",
+    "i18next": "^26.3.6",
+    "node-pty": "^1.1.0"
+  },
+  "devDependencies": {
+    "@babel/parser": "^7.29.8",
+    "@fontsource-variable/jetbrains-mono": "^5.3.0",
+    "@mdxeditor/editor": "^4.2.0",
+    "@tailwindcss/vite": "^4.3.3",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/react": "^16.3.2",
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^24.13.3",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^6.0.5",
+    "@vitest/coverage-v8": "^4.1.10",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "@xyflow/react": "^12.11.2",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "cmdk": "^1.1.1",
+    "concurrently": "^10.0.4",
+    "electron": "^43.3.0",
+    "electron-builder": "^26.15.7",
+    "jsdom": "^30.0.1",
+    "lucide-react": "^1.30.0",
+    "playwright": "^1.62.1",
+    "radix-ui": "^1.6.7",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-i18next": "^17.0.11",
+    "shadcn": "^4.16.2",
+    "sonner": "^2.0.7",
+    "tailwind-merge": "^3.6.0",
+    "tailwindcss": "^4.3.3",
+    "tw-animate-css": "^1.4.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.1",
+    "vitest": "^4.1.10",
+    "wait-on": "^9.1.0"
+  }
+}

@@ -1,0 +1,94 @@
+appId: io.github.laurentwu.cliloom
+productName: CLILoom
+
+toolsets:
+  appimage: 1.0.3
+
+directories:
+  buildResources: build
+  output: release
+
+files:
+  - dist/**/*
+  - '!dist/**/*.d.ts'
+  - '!dist/**/*.d.ts.map'
+  - '!dist/**/*.tsbuildinfo'
+  - package.json
+  - LICENSE
+  - THIRD_PARTY_NOTICES.md
+
+asar: true
+asarUnpack:
+  - node_modules/better-sqlite3/prebuilds/**
+  - node_modules/better-sqlite3/build/Release/**
+  - node_modules/font-list/libs/darwin/fontlist
+  - node_modules/node-pty/**
+
+npmRebuild: true
+nativeRebuilder: sequential
+afterPack: ./scripts/linux-sandbox-after-pack.cjs
+
+mac:
+  category: public.app-category.developer-tools
+  icon: icons/icon.icns
+  identity: null
+  artifactName: ${productName}-${version}-macOS-${arch}.${ext}
+  target:
+    - dmg
+    - zip
+
+win:
+  icon: icons/icon.ico
+  target:
+    - nsis
+    - portable
+
+nsis:
+  guid: 2af5650f-5c23-520c-b262-debedf73652c
+  artifactName: ${productName}-Setup-${version}-Windows-${arch}.${ext}
+  buildUniversalInstaller: false
+
+portable:
+  artifactName: ${productName}-Portable-${version}-Windows-${arch}.${ext}
+  buildUniversalInstaller: false
+
+linux:
+  category: Development
+  executableName: cliloom
+  icon: icons
+  syncDesktopName: true
+  artifactName: ${productName}-${version}-Linux-${arch}.${ext}
+  target:
+    - AppImage
+    - deb
+    - rpm
+
+appImage:
+  executableArgs: []
+
+deb:
+  afterInstall: ./scripts/linux-after-install.sh
+  depends:
+    - libgtk-3-0
+    - libnotify4
+    - libnss3
+    - libxss1
+    - libxtst6
+    - xdg-utils
+    - libatspi2.0-0
+    - libuuid1
+    - libsecret-1-0
+    - libasound2t64 | libasound2
+
+rpm:
+  afterInstall: ./scripts/linux-after-install.sh
+  depends:
+    - gtk3
+    - libnotify
+    - nss
+    - libXScrnSaver
+    - (libXtst or libXtst6)
+    - xdg-utils
+    - at-spi2-core
+    - (libuuid or libuuid1)
+    - alsa-lib
