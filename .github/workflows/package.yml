@@ -140,6 +140,10 @@ jobs:
       - name: Create packages
         run: npx electron-builder --${{ matrix.platform }} --${{ matrix.arch }} --publish never
 
+      - name: Verify packaged Windows Console CLI stdin pipeline
+        if: matrix.platform == 'win'
+        run: npm run test:windows-cli-smoke -- --packaged
+
       - name: Verify Linux AppImage, installed sandbox, and production renderers
         if: matrix.platform == 'linux'
         run: |

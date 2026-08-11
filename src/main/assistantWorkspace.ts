@@ -16,6 +16,7 @@ import { t } from './i18n'
 
 export const ASSISTANT_WORKSPACE_DIRECTORY = 'assistant-workspace'
 export const MAX_ASSISTANT_INPUT_FILE_BYTES = 2 * 1024 * 1024
+export const WINDOWS_ASSISTANT_CLI_EXECUTABLE = 'cliloom-cli.exe'
 
 export type AssistantWorkspace = {
   rootPath: string
@@ -30,6 +31,7 @@ export type AssistantWorkspace = {
 export function ensureAssistantWorkspace(options: {
   userDataPath: string
   executablePath: string
+  windowsConsoleLauncherPath?: string
   appEntryPath?: string
   noSandbox?: boolean
 }): AssistantWorkspace {
@@ -52,7 +54,10 @@ You are running inside CLILoom's private assistant workspace.
   atomicManagedWrite(path.join(rootPath, 'AGENTS.md'), instructions, 0o600)
   atomicManagedWrite(path.join(rootPath, 'CLAUDE.md'), instructions, 0o600)
 
-  const launcherArguments = [options.executablePath]
+  const launcherArguments = [
+    ...(options.windowsConsoleLauncherPath ? [options.windowsConsoleLauncherPath] : []),
+    options.executablePath
+  ]
   if (options.noSandbox) launcherArguments.push('--no-sandbox')
   if (options.appEntryPath) launcherArguments.push(options.appEntryPath)
   launcherArguments.push('--cliloom-cli')

@@ -10,6 +10,7 @@ directories:
 
 files:
   - dist/**/*
+  - '!dist/native/**'
   - '!dist/**/*.d.ts'
   - '!dist/**/*.d.ts.map'
   - '!dist/**/*.tsbuildinfo'
@@ -26,7 +27,7 @@ asarUnpack:
 
 npmRebuild: true
 nativeRebuilder: sequential
-afterPack: ./scripts/linux-sandbox-after-pack.cjs
+afterPack: ./scripts/packaging-after-pack.cjs
 
 mac:
   category: public.app-category.developer-tools

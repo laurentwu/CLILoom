@@ -216,7 +216,7 @@ describe('AssistantTerminalService global shell integration', () => {
         'C:\\private\\assistant': '/mnt/c/private/assistant',
         'C:\\private\\assistant\\wsl-bin': '/mnt/c/private/assistant/wsl-bin',
         'C:\\private\\assistant\\wsl-bin\\cliloom': '/mnt/c/private/assistant/wsl-bin/cliloom',
-        'C:\\Program Files\\CLILoom\\CLILoom.exe': '/mnt/c/Program Files/CLILoom/CLILoom.exe',
+        'C:\\Program Files\\CLILoom\\cliloom-cli.exe': '/mnt/c/Program Files/CLILoom/cliloom-cli.exe',
         'C:\\source\\cliloom': '/mnt/c/source/cliloom'
       }
       return paths[value] ?? value
@@ -232,6 +232,7 @@ describe('AssistantTerminalService global shell integration', () => {
         windowsLauncherPath: 'C:\\private\\assistant\\bin\\cliloom.cmd',
         wslLauncherPath: 'C:\\private\\assistant\\wsl-bin\\cliloom',
         hostLauncherArguments: [
+          'C:\\Program Files\\CLILoom\\cliloom-cli.exe',
           'C:\\Program Files\\CLILoom\\CLILoom.exe',
           '--no-sandbox',
           'C:\\source\\cliloom',
@@ -266,7 +267,8 @@ describe('AssistantTerminalService global shell integration', () => {
     expect(mocks.ensureWslAssistantLauncher).toHaveBeenCalledWith(
       expect.objectContaining({ wslBinPath: 'C:\\private\\assistant\\wsl-bin' }),
       [
-        '/mnt/c/Program Files/CLILoom/CLILoom.exe',
+        '/mnt/c/Program Files/CLILoom/cliloom-cli.exe',
+        'C:\\Program Files\\CLILoom\\CLILoom.exe',
         '--no-sandbox',
         'C:\\source\\cliloom',
         '--cliloom-cli'
@@ -326,7 +328,7 @@ describe('AssistantTerminalService global shell integration', () => {
       'C:\\private\\assistant': '/mnt/c/private/assistant',
       'C:\\private\\assistant\\wsl-bin': '/mnt/c/private/assistant/wsl-bin',
       'C:\\private\\assistant\\wsl-bin\\cliloom': '/mnt/c/private/assistant/wsl-bin/cliloom',
-      'C:\\CLILoom.exe': '/mnt/c/CLILoom.exe'
+      'C:\\cliloom-cli.exe': '/mnt/c/cliloom-cli.exe'
     }
     const finalizeWslSession = vi.fn(async () => ({ terminated: true }))
     const service = new AssistantTerminalService({
@@ -337,7 +339,7 @@ describe('AssistantTerminalService global shell integration', () => {
         launcherPath: 'C:\\private\\assistant\\bin\\cliloom',
         windowsLauncherPath: 'C:\\private\\assistant\\bin\\cliloom.cmd',
         wslLauncherPath: 'C:\\private\\assistant\\wsl-bin\\cliloom',
-        hostLauncherArguments: ['C:\\CLILoom.exe', '--cliloom-cli']
+        hostLauncherArguments: ['C:\\cliloom-cli.exe', 'C:\\CLILoom.exe', '--cliloom-cli']
       },
       environment: { SystemRoot: 'C:\\Windows', PATH: 'C:\\Windows\\System32' },
       commandHandler: {} as never,
