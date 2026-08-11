@@ -49,7 +49,6 @@ import {
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { cn } from '@/lib/utils'
 
 type ProjectRailProps = {
   projects: ProjectRecord[]
@@ -162,10 +161,7 @@ export function ProjectRail({
                   <TooltipTrigger asChild>
                     <Button
                       aria-label={t('project:action.openProject', { name: project.name })}
-                      className={cn(
-                        'size-10 shrink-0 rounded-xl font-heading text-sm',
-                        isActive && 'ring-2 ring-primary/20'
-                      )}
+                      className="size-10 shrink-0 rounded-xl font-heading text-sm"
                       draggable
                       title={project.path}
                       variant={isActive ? 'default' : 'ghost'}
@@ -186,7 +182,7 @@ export function ProjectRail({
                 </Tooltip>
                 <Button
                   aria-label={t('project:action.deleteProject', { name: project.name })}
-                  className="absolute -top-1 right-0 opacity-0 shadow-sm transition-opacity group-hover:opacity-100"
+                  className="absolute -top-1 right-0 size-4 rounded-sm bg-transparent opacity-0 shadow-none transition-opacity hover:bg-transparent focus-visible:bg-transparent focus-visible:opacity-100 dark:bg-transparent dark:hover:bg-transparent group-hover:opacity-100"
                   size="icon-xs"
                   title={t('project:tooltip.deleteProject')}
                   variant="destructive"

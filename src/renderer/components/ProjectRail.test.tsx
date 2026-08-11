@@ -101,6 +101,75 @@ afterEach(() => {
   cleanup()
 })
 
+describe('ProjectRail project actions', () => {
+  it('uses a smaller transparent delete target without an active-project ring', () => {
+    i18n.changeLanguage('zh')
+    render(<I18nextProvider i18n={i18n}>
+      <ProjectRail
+        activeProjectId="project-1"
+        activeSkinId="builtin.light.neutral"
+        language="zh"
+        projects={[
+          {
+            id: 'project-1',
+            name: 'Demo',
+            path: '/repo/demo',
+            sort_order: 0,
+            created_at: '2026-08-11T00:00:00.000Z'
+          },
+          {
+            id: 'project-2',
+            name: 'Other',
+            path: '/repo/other',
+            sort_order: 1,
+            created_at: '2026-08-11T00:00:00.000Z'
+          }
+        ]}
+        shellSnapshot={{
+          platform: 'linux',
+          preferences: { version: 2, selection: { mode: 'automatic' } },
+          candidates: [],
+          effectiveShell: null,
+          error: undefined
+        }}
+        onAddProject={() => undefined}
+        onLanguageChange={() => undefined}
+        onOpenAppearance={() => undefined}
+        onDeleteProject={async () => undefined}
+        onOpenAssistant={() => undefined}
+        onOpenDesigner={() => undefined}
+        onRefreshShells={async () => undefined}
+        onReorderProject={() => undefined}
+        onSelectProject={() => undefined}
+        onShellChange={async () => undefined}
+        onSkinChange={() => undefined}
+        userSkins={[]}
+      />
+    </I18nextProvider>)
+
+    const projectButton = screen.getByRole('button', { name: '打开项目 Demo' })
+    const projectButtonClasses = projectButton.className.split(/\s+/)
+    expect(projectButtonClasses).not.toContain('ring-2')
+    expect(projectButtonClasses).not.toContain('ring-primary/20')
+    expect(projectButton.getAttribute('data-variant')).toBe('default')
+    expect(screen.getByRole('button', { name: '打开项目 Other' }).getAttribute('data-variant')).toBe('ghost')
+
+    const deleteButton = screen.getByRole('button', { name: '删除项目 Demo' })
+    const deleteButtonClasses = deleteButton.className.split(/\s+/)
+    expect(deleteButtonClasses).toContain('size-4')
+    expect(deleteButtonClasses).not.toContain('size-6')
+    expect(deleteButtonClasses).toContain('bg-transparent')
+    expect(deleteButtonClasses).toContain('hover:bg-transparent')
+    expect(deleteButtonClasses).toContain('focus-visible:bg-transparent')
+    expect(deleteButtonClasses).toContain('dark:bg-transparent')
+    expect(deleteButtonClasses).toContain('dark:hover:bg-transparent')
+    expect(deleteButtonClasses).toContain('shadow-none')
+    expect(deleteButtonClasses).toContain('opacity-0')
+    expect(deleteButtonClasses).toContain('group-hover:opacity-100')
+    expect(deleteButtonClasses).toContain('focus-visible:opacity-100')
+  })
+})
+
 describe('ProjectRail Shell settings', () => {
   it('shows an unavailable persisted choice and keeps it selected after update rejection', async () => {
     i18n.changeLanguage('zh')
