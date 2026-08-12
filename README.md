@@ -124,8 +124,6 @@ Use the installer for a standard installation, or download the portable EXE to r
 
 Windows release builds are currently unsigned, so Microsoft Defender SmartScreen may display an unknown-publisher warning. Confirm that the file came from the CLILoom GitHub Releases page before continuing.
 
-CLILoom does not provide WSL integration. It neither discovers nor launches WSL distributions, and project folders under `\\wsl$` or `\\wsl.localhost` are unsupported. Commands entered by a user are still arbitrary shell input; if `wsl.exe` must be prohibited, enforce that with Windows, AppLocker, or organization policy. See [terminal environment troubleshooting](SHELLS.md).
-
 ### Linux
 
 Choose the package for your distribution:
@@ -142,7 +140,7 @@ sudo apt install ./CLILoom-*.deb
 sudo dnf install ./CLILoom-*.rpm
 ```
 
-Linux packages require glibc; Ubuntu 24.04 or an equivalent environment is recommended. Alpine Linux and other musl-based distributions are not supported. Running the Linux package inside WSL is unsupported and untested. The AppImage is portable and requires the host to permit Chromium's user-namespace sandbox. Ubuntu 23.10 and newer block that capability for downloaded applications by default; use the DEB package there unless you have explicitly configured an AppArmor policy for the AppImage. DEB and RPM install Electron's root-owned SUID sandbox helper. CLILoom never falls back to `--no-sandbox`.
+Linux packages require glibc; Ubuntu 24.04 or an equivalent environment is recommended. Alpine Linux and other musl-based distributions are not supported. The AppImage is portable and requires the host to permit Chromium's user-namespace sandbox. Ubuntu 23.10 and newer block that capability for downloaded applications by default; use the DEB package there unless you have explicitly configured an AppArmor policy for the AppImage. DEB and RPM install Electron's root-owned SUID sandbox helper. CLILoom never falls back to `--no-sandbox`.
 
 ## 6. Security and local data
 
