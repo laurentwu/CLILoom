@@ -735,7 +735,7 @@ export default {
     menu: {
       label: '设置',
       skin: '主题',
-      defaultShell: '默认终端环境',
+      defaultShell: '终端 Shell',
       globalShell: '全局终端环境'
     },
     shell: {

@@ -735,7 +735,7 @@ export default {
     menu: {
       label: 'Settings',
       skin: 'Skin',
-      defaultShell: 'Default terminal environment',
+      defaultShell: 'Terminal Shell',
       globalShell: 'Global terminal environment'
     },
     shell: {
