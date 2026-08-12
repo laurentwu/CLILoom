@@ -14,7 +14,6 @@ import {
 } from 'lucide-react'
 import type { ProjectRecord } from '../appTypes'
 import {
-  isWslExecutionTarget,
   type DetectedExecutionTarget,
   type ExecutionTargetDescriptor,
   type ShellSnapshot
@@ -55,7 +54,7 @@ type ProjectRailProps = {
   activeProjectId: string | null
   onSelectProject: (project: ProjectRecord) => void
   onReorderProject: (dragId: string, dropId: string) => void
-  onAddProject: (source: 'windows' | 'wsl') => void
+  onAddProject: () => void
   onDeleteProject: (project: ProjectRecord) => Promise<void>
   onOpenDesigner: () => void
   onOpenAssistant: () => void
@@ -105,16 +104,12 @@ export function ProjectRail({
     : explicitSelection!.id
   const unavailableSelection = explicitSelection !== null &&
     !shellSnapshot.candidates.some((target) => (
-      target.id === explicitSelection.id &&
-      (!isWslExecutionTarget(target) || target.validationState !== 'unavailable')
+      target.id === explicitSelection.id
     ))
   const visibleCandidates = unavailableSelection
     ? shellSnapshot.candidates.filter((target) => target.id !== explicitSelection?.id)
     : shellSnapshot.candidates
-  const nativeCandidates = visibleCandidates.filter((target) => !isWslExecutionTarget(target))
-  const wslCandidates = visibleCandidates.filter(isWslExecutionTarget)
-  const canChooseWslProject = shellSnapshot.platform === 'win32' &&
-    explicitSelection !== null && isWslExecutionTarget(explicitSelection)
+  const nativeCandidates = visibleCandidates
 
   const performShellAction = async (action: () => Promise<void>) => {
     setShellBusy(true)
@@ -130,7 +125,7 @@ export function ProjectRail({
 
   const renderTargetOption = (target: DetectedExecutionTarget, busy: boolean) => (
     <DropdownMenuRadioItem
-      disabled={busy || (isWslExecutionTarget(target) && target.validationState === 'unavailable')}
+      disabled={busy}
       key={target.id}
       value={target.id}
     >
@@ -138,12 +133,9 @@ export function ProjectRail({
         <span>
           {target.displayName}
           {' '}<span className="text-xs text-muted-foreground">{target.family}</span>
-          {isWslExecutionTarget(target) && target.isSystemDefault && (
-            <span className="ml-1 text-xs text-muted-foreground">{t('settings:shell.systemDefault')}</span>
-          )}
         </span>
         <span className="truncate text-xs text-muted-foreground" title={getTargetDetail(target)}>
-          {isWslExecutionTarget(target) && target.error ? target.error : getTargetDetail(target)}
+          {getTargetDetail(target)}
         </span>
       </span>
     </DropdownMenuRadioItem>
@@ -194,40 +186,19 @@ export function ProjectRail({
             )
           })}
 
-          <DropdownMenu>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    aria-label={t('project:action.addFolder')}
-                    size="icon-lg"
-                    variant="outline"
-                  >
-                    <FolderPlus />
-                  </Button>
-                </DropdownMenuTrigger>
-              </TooltipTrigger>
-              <TooltipContent side="right">{t('project:action.addFolder')}</TooltipContent>
-            </Tooltip>
-            <DropdownMenuContent align="start" side="right">
-              <DropdownMenuItem onSelect={() => onAddProject('windows')}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                aria-label={t('project:action.addFolder')}
+                size="icon-lg"
+                variant="outline"
+                onClick={onAddProject}
+              >
                 <FolderPlus />
-                {t(shellSnapshot.platform === 'win32'
-                  ? 'project:action.addWindowsFolder'
-                  : 'project:action.addNativeFolder')}
-              </DropdownMenuItem>
-              {shellSnapshot.platform === 'win32' && (
-                <DropdownMenuItem
-                  disabled={!canChooseWslProject}
-                  title={canChooseWslProject ? undefined : t('project:hint.selectWslFirst')}
-                  onSelect={() => onAddProject('wsl')}
-                >
-                  <TerminalSquare />
-                  {t('project:action.addWslFolder')}
-                </DropdownMenuItem>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="right">{t('project:action.addFolder')}</TooltipContent>
+          </Tooltip>
         </div>
 
         <div className="flex flex-col items-center gap-1">
@@ -378,14 +349,10 @@ export function ProjectRail({
                           : 'settings:shell.nativeGroup')}</DropdownMenuLabel>
                       )}
                       {nativeCandidates.map((target) => renderTargetOption(target, shellBusy))}
-                      {wslCandidates.length > 0 && (
-                        <DropdownMenuLabel>{t('settings:shell.wslGroup')}</DropdownMenuLabel>
-                      )}
-                      {wslCandidates.map((target) => renderTargetOption(target, shellBusy))}
                     </DropdownMenuRadioGroup>
-                    {(shellSnapshot.error || shellSnapshot.catalogError || shellActionError) && (
+                    {(shellSnapshot.error || shellActionError) && (
                       <DropdownMenuLabel className="whitespace-normal text-destructive">
-                        {shellActionError ?? shellSnapshot.error ?? shellSnapshot.catalogError}
+                        {shellActionError ?? shellSnapshot.error}
                       </DropdownMenuLabel>
                     )}
                     <DropdownMenuSeparator />
@@ -435,9 +402,5 @@ export function ProjectRail({
 }
 
 function getTargetDetail(target: DetectedExecutionTarget | ExecutionTargetDescriptor): string {
-  if (!isWslExecutionTarget(target)) return target.executablePath
-  const parts = [target.distributionName]
-  if ('wslVersion' in target && target.wslVersion) parts.push(`WSL ${target.wslVersion}`)
-  if ('loginShellPath' in target && typeof target.loginShellPath === 'string') parts.push(target.loginShellPath)
-  return parts.join(' · ')
+  return target.executablePath
 }

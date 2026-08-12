@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { CircleAlert, Minus, Play, RotateCcw, Settings, TerminalSquare, X } from 'lucide-react'
 import type { AppSettingsSnapshot } from '../../shared/appSettings'
 import type { AssistantTerminalStatus } from '../../shared/assistant'
-import { isWslExecutionTarget, type ShellSnapshot } from '../../shared/shell'
+import type { ShellSnapshot } from '../../shared/shell'
 import { applySkin } from '../theme'
 import { i18n, syncI18nLanguage } from '../i18n'
 import { XtermTerminal } from '../components/XtermTerminal'
@@ -269,13 +269,7 @@ export function AssistantApp({
 
 function GlobalShellInfo({ snapshot }: { snapshot: ShellSnapshot }) {
   const shell = snapshot.effectiveShell
-  const detail = shell
-    ? isWslExecutionTarget(shell)
-      ? [shell.distributionName, shell.wslVersion ? `WSL ${shell.wslVersion}` : '', shell.loginShellPath ?? '']
-          .filter(Boolean)
-          .join(' · ')
-      : shell.executablePath
-    : ''
+  const detail = shell?.executablePath ?? ''
   return shell ? (
     <Field className="mb-3">
       <FieldLabel>{i18n.t('assistant:globalShell')}</FieldLabel>

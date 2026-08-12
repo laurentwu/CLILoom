@@ -18,6 +18,7 @@ import type { NodeRunStatus, WorkflowDefinition } from '../shared/workflow'
 import type { TerminalTranscriptSnapshot } from '../shared/terminalBuffer'
 import { getAutomaticTaskTitle } from '../shared/taskTitle'
 import {
+  isUnsupportedWslExecutionTarget,
   parseExecutionTargetDescriptor,
   type WorkflowExecutionContext
 } from '../shared/shell'
@@ -353,6 +354,9 @@ function restoreStateFromRun(db: AppDatabase, run: WorkflowRunRow): WorkflowRunt
 
 function parseWorkflowExecutionContext(value: unknown): WorkflowExecutionContext | undefined {
   if (!isRecord(value) || value.version !== 1) return undefined
+  if (isUnsupportedWslExecutionTarget(value.target)) {
+    throw new Error(t('errors:runtime.executionTargetUnsupported'))
+  }
   const target = parseExecutionTargetDescriptor(value.target)
   if (
     !target ||

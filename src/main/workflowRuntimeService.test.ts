@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { addProject, openDatabase, type AppDatabase } from './database'
-import type { ResolvedExecutionTarget, ResolvedWslTarget } from '../shared/shell'
+import type { ResolvedExecutionTarget } from '../shared/shell'
+import { isUnsupportedProjectPath } from '../shared/projectPath'
 import { persistWorkflowRuntimeState } from './runtimePersistence'
 import { WorkflowRuntimeService } from './workflowRuntimeService'
 import type { WorkflowDefinition } from '../shared/workflow'
@@ -881,32 +882,85 @@ describe('WorkflowRuntimeService restore', () => {
 })
 
 describe('WorkflowRuntimeService execution targets', () => {
-  it('re-reads the project path, freezes the WSL target, and applies it to nodes and hooks', async () => {
+  it('rejects a stored WSL namespace project before launching or mutating it', async () => {
     const db = createDb()
-    const project = addProject(db, 'C:\\work\\demo', () => true)
-    const target: ResolvedWslTarget = {
-      kind: 'wsl',
-      id: 'wsl:v1:Ubuntu',
-      displayName: 'Ubuntu',
+    db.prepare(
+      'insert into projects (id, name, path, sort_order, default_workflow_id, created_at) values (?, ?, ?, ?, ?, ?)'
+    ).run(
+      'legacy-project',
+      'Legacy project',
+      '\\\\wsl$\\Ubuntu\\home\\me\\repo',
+      0,
+      null,
+      '2026-08-04T00:00:00.000Z'
+    )
+    const target: ResolvedExecutionTarget = {
+      id: 'posix:%2Fbin%2Fbash',
+      displayName: 'bash',
       family: 'posix',
-      distributionName: 'Ubuntu',
-      validationState: 'ready',
-      wslVersion: 2,
-      wslExecutablePath: 'C:\\Windows\\System32\\wsl.exe',
-      loginShellPath: '/bin/bash',
-      homeDirectory: '/home/me',
-      defaultUid: 1000,
-      userShellPath: '/home/me/.local/bin:/usr/local/bin:/usr/bin:/bin'
+      executablePath: '/bin/bash',
+      source: 'system'
+    }
+    const run = vi.fn()
+    const killByTask = vi.fn()
+    const runner = {
+      run,
+      runHook: vi.fn(),
+      killByTask,
+      hasLiveSession: () => false
+    }
+    const targets = {
+      resolveEffectiveTarget: vi.fn(async () => target),
+      resolveTarget: vi.fn(async () => target),
+      resolveTargetPath: vi.fn(async (_target: ResolvedExecutionTarget, value: string) => value),
+      resolveProjectPath: vi.fn(async (_target: ResolvedExecutionTarget, value: string) => {
+        if (isUnsupportedProjectPath(value)) throw new Error('This project path is not supported')
+        return value
+      })
+    }
+    const workflow: WorkflowDefinition = {
+      id: 'legacy-project-workflow',
+      name: 'Legacy project workflow',
+      nodes: [
+        { id: 'start', type: 'start', name: 'Start', config: { variables: [] } },
+        { id: 'end', type: 'end', name: 'End', config: {} }
+      ],
+      edges: [{ id: 'start-end', from: 'start', to: 'end' }]
+    }
+    const service = new WorkflowRuntimeService(db, runner as never, () => null, undefined, targets)
+
+    await expect(service.start({
+      taskId: 'legacy-project-task',
+      projectId: 'legacy-project',
+      workflow,
+      variables: {}
+    })).rejects.toThrow('This project path is not supported')
+
+    expect(run).not.toHaveBeenCalled()
+    expect(killByTask).not.toHaveBeenCalled()
+    expect((db.prepare('select path from projects where id = ?').get('legacy-project') as { path: string }).path)
+      .toBe('\\\\wsl$\\Ubuntu\\home\\me\\repo')
+  })
+
+  it('re-reads the project path, freezes the native target, and applies it to nodes and hooks', async () => {
+    const db = createDb()
+    const project = addProject(db, '/work/demo', () => true)
+    const target: ResolvedExecutionTarget = {
+      id: 'posix:%2Fbin%2Fbash',
+      displayName: 'bash',
+      family: 'posix',
+      executablePath: '/bin/bash',
+      source: 'system'
     }
     const run = vi.fn(async () => ({
-      sessionId: 'wsl-session',
+      sessionId: 'native-session',
       stdout: '',
       stderr: '',
       exitCode: 0,
       status: 'closed' as const
     }))
     const runHook = vi.fn(async () => ({
-      hookRunId: 'wsl-hook',
+      hookRunId: 'native-hook',
       stdout: '',
       stderr: '',
       exitCode: 0,
@@ -921,12 +975,12 @@ describe('WorkflowRuntimeService execution targets', () => {
     const targets = {
       resolveEffectiveTarget: vi.fn(async () => target),
       resolveTarget: vi.fn(async () => target),
-      resolveProjectPath: vi.fn(async () => '/home/me/demo'),
+      resolveProjectPath: vi.fn(async (_target: ResolvedExecutionTarget, value: string) => value),
       resolveTargetPath: vi.fn(async (_target: ResolvedExecutionTarget, value: string) => value)
     }
     const workflow: WorkflowDefinition = {
-      id: 'wsl-workflow',
-      name: 'WSL workflow',
+      id: 'native-workflow',
+      name: 'Native workflow',
       nodes: [
         { id: 'start', type: 'start', name: 'Start', config: { variables: [] } },
         {
@@ -963,62 +1017,56 @@ describe('WorkflowRuntimeService execution targets', () => {
     )
 
     const started = await service.start({
-      taskId: 'wsl-task',
+      taskId: 'native-task',
       projectId: project.id,
-      projectDir: 'C:\\renderer\\forged',
+      projectDir: '/renderer/forged',
       workflow,
       variables: {}
     })
     expect(started.executionContext).toEqual({
       version: 1,
       target: {
-        kind: 'wsl',
+        kind: 'native',
         id: target.id,
-        displayName: 'Ubuntu',
+        displayName: 'bash',
         family: 'posix',
-        distributionName: 'Ubuntu'
+        executablePath: '/bin/bash'
       },
-      hostProjectDir: 'C:\\work\\demo',
-      targetProjectDir: '/home/me/demo'
+      hostProjectDir: '/work/demo',
+      targetProjectDir: '/work/demo'
     })
-    expect(started.projectDir).toBe('/home/me/demo')
-    expect(targets.resolveProjectPath).toHaveBeenCalledWith(target, 'C:\\work\\demo')
+    expect(started.projectDir).toBe('/work/demo')
+    expect(targets.resolveProjectPath).toHaveBeenCalledWith(target, '/work/demo')
 
     await vi.waitFor(() => expect(run).toHaveBeenCalledOnce())
     expect(runHook).toHaveBeenCalledWith(expect.objectContaining({
-      cwd: '/home/me/demo',
-      sourceCwd: '/home/me/demo',
+      cwd: '/work/demo',
+      sourceCwd: '/work/demo',
       executionTarget: started.executionContext?.target,
       env: { HOOK_LITERAL: '${HOME}' }
     }))
     expect(run).toHaveBeenCalledWith(expect.objectContaining({
-      cwd: '/home/me/demo',
-      sourceCwd: '/home/me/demo',
+      cwd: '/work/demo',
+      sourceCwd: '/work/demo',
       executionTarget: started.executionContext?.target,
-      displayCommand: 'printf "/home/me/demo"',
+      displayCommand: 'printf "/work/demo"',
       env: { LITERAL: '${sys_project_dir}' }
     }))
     expect(targets.resolveEffectiveTarget).toHaveBeenCalledOnce()
   })
 
-  it('does not launch after a task is stopped during WSL target validation', async () => {
+  it('does not launch after a task is stopped during native target validation', async () => {
     const db = createDb()
-    const project = addProject(db, 'C:\\work\\demo', () => true)
-    const target: ResolvedWslTarget = {
-      kind: 'wsl',
-      id: 'wsl:v1:Ubuntu',
-      displayName: 'Ubuntu',
+    const project = addProject(db, '/work/demo', () => true)
+    const target: ResolvedExecutionTarget = {
+      id: 'posix:%2Fbin%2Fbash',
+      displayName: 'bash',
       family: 'posix',
-      distributionName: 'Ubuntu',
-      validationState: 'ready',
-      wslExecutablePath: 'C:\\Windows\\System32\\wsl.exe',
-      loginShellPath: '/bin/bash',
-      homeDirectory: '/home/me',
-      defaultUid: 1000,
-      userShellPath: '/home/me/.local/bin:/usr/local/bin:/usr/bin:/bin'
+      executablePath: '/bin/bash',
+      source: 'system'
     }
-    let finishValidation: (value: ResolvedWslTarget) => void = () => undefined
-    const validation = new Promise<ResolvedWslTarget>((resolve) => {
+    let finishValidation: (value: ResolvedExecutionTarget) => void = () => undefined
+    const validation = new Promise<ResolvedExecutionTarget>((resolve) => {
       finishValidation = resolve
     })
     const run = vi.fn(async () => ({
@@ -1036,12 +1084,12 @@ describe('WorkflowRuntimeService execution targets', () => {
     const targets = {
       resolveEffectiveTarget: vi.fn(async () => target),
       resolveTarget: vi.fn(async () => validation),
-      resolveProjectPath: vi.fn(async () => '/home/me/demo'),
+      resolveProjectPath: vi.fn(async (_target: ResolvedExecutionTarget, value: string) => value),
       resolveTargetPath: vi.fn(async (_target: ResolvedExecutionTarget, value: string) => value)
     }
     const workflow: WorkflowDefinition = {
-      id: 'cancel-wsl-start',
-      name: 'Cancel WSL start',
+      id: 'cancel-native-start',
+      name: 'Cancel native start',
       nodes: [
         { id: 'start', type: 'start', name: 'Start', config: { variables: [] } },
         {
@@ -1066,37 +1114,31 @@ describe('WorkflowRuntimeService execution targets', () => {
     )
 
     await service.start({
-      taskId: 'cancel-wsl-task',
+      taskId: 'cancel-native-task',
       projectId: project.id,
       workflow,
       variables: {}
     })
     await vi.waitFor(() => expect(targets.resolveTarget).toHaveBeenCalledOnce())
-    await expect(service.stop('cancel-wsl-task')).resolves.toMatchObject({ status: 'stopped' })
+    await expect(service.stop('cancel-native-task')).resolves.toMatchObject({ status: 'stopped' })
     finishValidation(target)
     await new Promise<void>((resolve) => setImmediate(resolve))
 
     expect(run).not.toHaveBeenCalled()
     expect(targets.resolveTargetPath).not.toHaveBeenCalled()
     expect((db.prepare('select status from tasks where id = ?')
-      .get('cancel-wsl-task') as { status: string }).status).toBe('stopped')
+      .get('cancel-native-task') as { status: string }).status).toBe('stopped')
   })
 
   it('turns a target cwd conversion error into a persisted terminal failure', async () => {
     const db = createDb()
-    const project = addProject(db, 'C:\\work\\demo', () => true)
-    const target: ResolvedWslTarget = {
-      kind: 'wsl',
-      id: 'wsl:v1:Ubuntu',
-      displayName: 'Ubuntu',
+    const project = addProject(db, '/work/demo', () => true)
+    const target: ResolvedExecutionTarget = {
+      id: 'posix:%2Fbin%2Fbash',
+      displayName: 'bash',
       family: 'posix',
-      distributionName: 'Ubuntu',
-      validationState: 'ready',
-      wslExecutablePath: 'C:\\Windows\\System32\\wsl.exe',
-      loginShellPath: '/bin/bash',
-      homeDirectory: '/home/me',
-      defaultUid: 1000,
-      userShellPath: '/home/me/.local/bin:/usr/local/bin:/usr/bin:/bin'
+      executablePath: '/bin/bash',
+      source: 'system'
     }
     const run = vi.fn(async (request: { preparationError?: string }) => ({
       sessionId: 'failed-path-session',
@@ -1114,14 +1156,14 @@ describe('WorkflowRuntimeService execution targets', () => {
     const targets = {
       resolveEffectiveTarget: vi.fn(async () => target),
       resolveTarget: vi.fn(async () => target),
-      resolveProjectPath: vi.fn(async () => '/home/me/demo'),
+      resolveProjectPath: vi.fn(async (_target: ResolvedExecutionTarget, value: string) => value),
       resolveTargetPath: vi.fn(async () => {
-        throw new Error('WSL target directory does not exist')
+        throw new Error('Target directory does not exist')
       })
     }
     const workflow: WorkflowDefinition = {
-      id: 'wsl-path-failure',
-      name: 'WSL path failure',
+      id: 'native-path-failure',
+      name: 'Native path failure',
       nodes: [
         { id: 'start', type: 'start', name: 'Start', config: { variables: [] } },
         {
@@ -1140,7 +1182,7 @@ describe('WorkflowRuntimeService execution targets', () => {
     const service = new WorkflowRuntimeService(db, runner as never, () => null, undefined, targets)
 
     await service.start({
-      taskId: 'wsl-path-failure-task',
+      taskId: 'native-path-failure-task',
       projectId: project.id,
       workflow,
       variables: {}
@@ -1150,11 +1192,11 @@ describe('WorkflowRuntimeService execution targets', () => {
     expect(run).toHaveBeenCalledWith(expect.objectContaining({
       cwd: '/missing',
       sourceCwd: '/missing',
-      preparationError: 'WSL target directory does not exist'
+      preparationError: 'Target directory does not exist'
     }))
     await vi.waitFor(() => {
       expect((db.prepare('select status from tasks where id = ?')
-        .get('wsl-path-failure-task') as { status: string }).status).toBe('failed')
+        .get('native-path-failure-task') as { status: string }).status).toBe('failed')
     })
   })
 })

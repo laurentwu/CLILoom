@@ -1,5 +1,4 @@
 import path from 'node:path'
-import { randomUUID } from 'node:crypto'
 import { spawn as ptySpawn, type IPty } from 'node-pty'
 import {
   ASSISTANT_BRIDGE_PORT_ENV,
@@ -11,7 +10,6 @@ import {
   type ResolvedAssistantCommand
 } from '../shared/assistant'
 import {
-  isWslExecutionTarget,
   type ExecutionTargetDescriptor,
   type ResolvedExecutionTarget
 } from '../shared/shell'
@@ -22,24 +20,17 @@ import {
   type AssistantBridgeSession
 } from './assistantCommandBridge'
 import type { AssistantCommandHandler } from './assistantCommandHandler'
-import {
-  ensureWslAssistantLauncher,
-  type AssistantWorkspace
-} from './assistantWorkspace'
+import type { AssistantWorkspace } from './assistantWorkspace'
 import { t } from './i18n'
 import type { ShellService } from './shellService'
 import { buildNonInteractiveInvocation, buildShellEnvironment } from './shellExecution'
 import { terminateProcessTree, type ProcessTerminationResult } from './processTermination'
-import { prepareExecutionInvocation } from './executionInvocation'
-import type { WslSessionHandle } from './wslService'
 
 export class AssistantTerminalService {
   private terminal: IPty | null = null
   private bridge: AssistantBridgeSession | null = null
   private cleanupTerminal: IPty | null = null
   private cleanupBridge: AssistantBridgeSession | null = null
-  private wslSession: WslSessionHandle | null = null
-  private cleanupWslSession: WslSessionHandle | null = null
   private redactor: StreamingSecretRedactor | null = null
   private transcript = ''
   private status: AssistantTerminalStatus = { state: 'idle' }
@@ -61,10 +52,8 @@ export class AssistantTerminalService {
   }
 
   async validate(command: unknown): Promise<ResolvedAssistantCommand> {
-    const target = await this.resolveEffectiveTarget()
-    return isWslExecutionTarget(target)
-      ? this.options.shellService.resolveAssistantCommand(target, command)
-      : resolveAssistantCommand(command, this.options.environment)
+    await this.resolveEffectiveTarget()
+    return resolveAssistantCommand(command, this.options.environment)
   }
 
   setEnvironment(environment: NodeJS.ProcessEnv): void {
@@ -82,7 +71,6 @@ export class AssistantTerminalService {
     let bridge: AssistantBridgeSession | null = null
     let startedTerminal: IPty | null = null
     let shell: ResolvedExecutionTarget | null = null
-    let wslSession: WslSessionHandle | undefined
     let stage = t('errors:assistantTerminal.stageParse')
 
     try {
@@ -90,9 +78,7 @@ export class AssistantTerminalService {
       this.options.workspace.synchronize()
       stage = t('errors:assistantTerminal.stageDetect')
       shell = await this.resolveEffectiveTarget()
-      const resolved = isWslExecutionTarget(shell)
-        ? await this.options.shellService.resolveAssistantCommand(shell, command)
-        : resolveAssistantCommand(command, this.options.environment)
+      const resolved = resolveAssistantCommand(command, this.options.environment)
       stage = t('errors:assistantTerminal.stageStart')
       bridge = await startAssistantCommandBridge(this.options.commandHandler)
       if (generation !== this.generation) {
@@ -106,77 +92,21 @@ export class AssistantTerminalService {
         [ASSISTANT_BRIDGE_TOKEN_ENV]: bridge.token
       }
       stage = t('errors:assistantTerminal.stageParse')
-      let invocation: {
-        executable: string
-        args: string[]
-        cwd: string
-        env: Record<string, string>
-      }
-      if (isWslExecutionTarget(shell)) {
-        const linuxWorkspace = await this.options.shellService.resolveTargetPath(shell, this.options.workspace.rootPath)
-        const hostWslBin = this.options.workspace.wslBinPath
-        if (!hostWslBin) throw new Error(t('errors:assistantWorkspace.unsafeLauncherPath'))
-        const linuxBin = await this.options.shellService.resolveTargetPath(shell, hostWslBin)
-        const hostLauncherArguments = this.options.workspace.hostLauncherArguments
-        if (!hostLauncherArguments?.length) throw new Error(t('errors:assistantWorkspace.unsafeLauncherPath'))
-        const linuxExecutable = await this.options.shellService.resolveTargetPath(
-          shell,
-          hostLauncherArguments[0]
-        )
-        // The shim command itself is launched by Linux and therefore needs a
-        // WSL path. Its remaining arguments, including the GUI Electron path
-        // behind the Console launcher, are consumed by Windows processes and
-        // must retain Win32 path semantics.
-        const linuxLauncherArguments = [linuxExecutable, ...hostLauncherArguments.slice(1)]
-        const hostWslLauncher = ensureWslAssistantLauncher(
-          this.options.workspace,
-          linuxLauncherArguments
-        )
-        const linuxWslLauncher = await this.options.shellService.resolveTargetPath(shell, hostWslLauncher)
-        await this.options.shellService.makeWslExecutable(shell, linuxWslLauncher)
-        await this.options.shellService.validateWslAssistantInterop(
-          shell,
-          linuxWslLauncher,
-          requestEnvironment
-        )
-        const bootstrap = buildAssistantBootstrapCommand(
-          'posix',
-          resolved.executablePath,
-          resolved.args,
-          linuxBin
-        )
-        const prepared = prepareExecutionInvocation({
-          target: shell,
-          mode: 'assistant',
-          command: bootstrap,
-          targetCwd: linuxWorkspace,
-          hostCwd: this.options.workspace.rootPath,
-          sessionId: randomUUID(),
-          baseEnvironment: this.options.environment,
-          requestEnvironment,
-          allowInternalEnvironment: true,
-          platform: this.options.platform
-        })
-        wslSession = prepared.wslSession
-        invocation = {
-          executable: prepared.executable,
-          args: prepared.args,
-          cwd: prepared.hostCwd,
-          env: prepared.env
-        }
-      } else {
-        const bootstrap = buildAssistantBootstrapCommand(
-          shell.family,
-          resolved.executablePath,
-          resolved.args,
-          this.options.workspace.binPath
-        )
-        const nativeInvocation = shell.family === 'posix'
-          ? { executable: shell.executablePath, args: ['-ilc', bootstrap] }
-          : shell.family === 'cmd'
-            ? { executable: shell.executablePath, args: ['/d', '/v:off', '/s', '/c', bootstrap] }
-            : buildNonInteractiveInvocation(shell, bootstrap)
-        const env = buildShellEnvironment({
+      const bootstrap = buildAssistantBootstrapCommand(
+        shell.family,
+        resolved.executablePath,
+        resolved.args,
+        this.options.workspace.binPath
+      )
+      const nativeInvocation = shell.family === 'posix'
+        ? { executable: shell.executablePath, args: ['-ilc', bootstrap] }
+        : shell.family === 'cmd'
+          ? { executable: shell.executablePath, args: ['/d', '/v:off', '/s', '/c', bootstrap] }
+          : buildNonInteractiveInvocation(shell, bootstrap)
+      const invocation = {
+        ...nativeInvocation,
+        cwd: this.options.workspace.rootPath,
+        env: buildShellEnvironment({
           base: this.options.environment,
           overlay: {
             PATH: prependPath(
@@ -187,11 +117,6 @@ export class AssistantTerminalService {
           },
           family: shell.family
         })
-        invocation = {
-          ...nativeInvocation,
-          cwd: this.options.workspace.rootPath,
-          env
-        }
       }
 
       stage = t('errors:assistantTerminal.stageStart')
@@ -204,7 +129,6 @@ export class AssistantTerminalService {
       })
       startedTerminal = terminal
       this.terminal = terminal
-      this.wslSession = wslSession ?? null
       terminal.onData((content) => {
         if (generation !== this.generation || terminal !== this.terminal) return
         this.emitSanitized(this.redactor?.push(content) ?? content)
@@ -213,7 +137,6 @@ export class AssistantTerminalService {
         void this.enqueue(() => this.performNaturalExit(
           generation,
           terminal,
-          wslSession,
           exitCode,
           signal
         ))
@@ -222,13 +145,12 @@ export class AssistantTerminalService {
       return resolved
     } catch (error) {
       await Promise.allSettled([
-        ...(startedTerminal ? [this.terminateTerminal(startedTerminal, wslSession)] : []),
+        ...(startedTerminal ? [this.terminateTerminal(startedTerminal)] : []),
         ...(bridge ? [bridge.close()] : [])
       ])
       this.bridge = null
       this.redactor = null
       this.terminal = null
-      this.wslSession = null
       const message = this.formatStartError(stage, error, shell)
       this.setStatus({ state: 'failed', message })
       throw new Error(message, { cause: error })
@@ -282,17 +204,14 @@ export class AssistantTerminalService {
     this.generation += 1
     const bridge = this.bridge ?? this.cleanupBridge
     const terminal = this.terminal ?? this.cleanupTerminal
-    const wslSession = this.wslSession ?? this.cleanupWslSession ?? undefined
     this.bridge = null
     this.terminal = null
-    this.wslSession = null
     this.cleanupBridge = null
     this.cleanupTerminal = null
-    this.cleanupWslSession = null
     this.redactor = null
     const [bridgeResult, terminalResult] = await Promise.allSettled([
       bridge?.close(),
-      terminal ? this.terminateTerminal(terminal, wslSession) : undefined
+      terminal ? this.terminateTerminal(terminal) : undefined
     ])
     const failures: string[] = []
     if (bridge && bridgeResult.status === 'rejected') {
@@ -304,13 +223,11 @@ export class AssistantTerminalService {
     if (terminal) {
       if (terminalResult.status === 'rejected') {
         this.cleanupTerminal = terminal
-        this.cleanupWslSession = wslSession ?? null
         failures.push(terminalResult.reason instanceof Error
           ? terminalResult.reason.message
           : String(terminalResult.reason))
       } else if (terminalResult.value && !terminalResult.value.terminated) {
         this.cleanupTerminal = terminal
-        this.cleanupWslSession = wslSession ?? null
         failures.push(terminalResult.value.error ?? t('errors:assistantTerminal.treeNotTerminated'))
       }
     }
@@ -326,7 +243,6 @@ export class AssistantTerminalService {
   private async performNaturalExit(
     generation: number,
     terminal: IPty,
-    wslSession: WslSessionHandle | undefined,
     exitCode: number,
     signal?: number
   ): Promise<void> {
@@ -334,28 +250,14 @@ export class AssistantTerminalService {
     this.emitSanitized(this.redactor?.flush() ?? '')
     const activeBridge = this.bridge
     this.terminal = null
-    this.wslSession = null
     this.bridge = null
     this.redactor = null
 
-    const [linuxResult, bridgeResult] = await Promise.allSettled([
-      wslSession
-        ? this.finalizeWslTerminal(wslSession)
-        : Promise.resolve<ProcessTerminationResult>({ terminated: true }),
-      activeBridge?.close()
-    ])
+    const bridgeResult = await Promise.resolve(activeBridge?.close()).then(
+      () => ({ status: 'fulfilled' as const }),
+      (reason: unknown) => ({ status: 'rejected' as const, reason })
+    )
     const failures: string[] = []
-    if (linuxResult.status === 'rejected') {
-      this.cleanupTerminal = terminal
-      this.cleanupWslSession = wslSession ?? null
-      failures.push(linuxResult.reason instanceof Error
-        ? linuxResult.reason.message
-        : String(linuxResult.reason))
-    } else if (!linuxResult.value.terminated) {
-      this.cleanupTerminal = terminal
-      this.cleanupWslSession = wslSession ?? null
-      failures.push(linuxResult.value.error ?? t('errors:assistantTerminal.treeNotTerminated'))
-    }
     if (activeBridge && bridgeResult.status === 'rejected') {
       this.cleanupBridge = activeBridge
       failures.push(bridgeResult.reason instanceof Error
@@ -404,32 +306,14 @@ export class AssistantTerminalService {
       // Keep the original launch error actionable even if snapshot generation fails.
     }
     const shellDescription = configuredShell
-      ? isWslExecutionTarget(configuredShell)
-        ? `${configuredShell.displayName} (${configuredShell.distributionName}, ${configuredShell.family})`
-        : `${configuredShell.displayName} (${configuredShell.executablePath}, ${configuredShell.family})`
+      ? `${configuredShell.displayName} (${configuredShell.executablePath}, ${configuredShell.family})`
       : t('errors:assistantTerminal.autoRecommendedUnparsed')
     const detail = error instanceof Error ? error.message : String(error)
     return t('errors:assistantTerminal.stageFailed', { platform: process.platform, shell: shellDescription, stage, detail })
   }
 
-  private async terminateTerminal(
-    terminal: IPty,
-    wslSession: WslSessionHandle | undefined
-  ): Promise<ProcessTerminationResult> {
-    if (wslSession) {
-      const linux = await this.options.shellService.terminateWslSession(wslSession)
-      if (!linux.terminated) return linux
-    }
+  private async terminateTerminal(terminal: IPty): Promise<ProcessTerminationResult> {
     return terminateProcessTree(terminal)
-  }
-
-  private finalizeWslTerminal(handle: WslSessionHandle): Promise<ProcessTerminationResult> {
-    const service = this.options.shellService as ShellService & {
-      finalizeWslSession?: (session: WslSessionHandle) => Promise<ProcessTerminationResult>
-    }
-    return service.finalizeWslSession
-      ? service.finalizeWslSession(handle)
-      : service.terminateWslSession(handle)
   }
 
   private resolveEffectiveTarget(): Promise<ResolvedExecutionTarget> {

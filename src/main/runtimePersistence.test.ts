@@ -91,14 +91,14 @@ describe('runtime persistence', () => {
     const executionContext = {
       version: 1 as const,
       target: {
-        kind: 'wsl' as const,
-        id: 'wsl:v1:Ubuntu',
-        displayName: 'Ubuntu',
+        kind: 'native' as const,
+        id: 'posix:%2Fbin%2Fbash',
+        displayName: 'bash',
         family: 'posix' as const,
-        distributionName: 'Ubuntu'
+        executablePath: '/bin/bash'
       },
-      hostProjectDir: 'C:\\work\\demo',
-      targetProjectDir: '/mnt/c/work/demo'
+      hostProjectDir: '/work/demo',
+      targetProjectDir: '/work/demo'
     }
     persistState(db, state({
       status: 'completed',
@@ -114,10 +114,39 @@ describe('runtime persistence', () => {
     const row = db.prepare('select context_json from workflow_runs where task_id = ?')
       .get('task-1') as { context_json: string }
     const tampered = JSON.parse(row.context_json)
-    tampered.executionContext.target.id = 'wsl:v1:Debian'
+    tampered.executionContext.target.executablePath = ''
     db.prepare('update workflow_runs set context_json = ? where task_id = ?')
       .run(JSON.stringify(tampered), 'task-1')
     expect(restoreWorkflowRuntimeState(db, 'task-1').state?.executionContext).toBeUndefined()
+  })
+
+  it('fails closed when restoring a legacy WSL execution context', () => {
+    const db = createDb()
+    persistState(db, state({
+      status: 'waiting-input',
+      nodeRuns: {},
+      executionOrder: []
+    }), 'waiting-input')
+    const row = db.prepare('select context_json from workflow_runs where task_id = ?')
+      .get('task-1') as { context_json: string }
+    const stored = JSON.parse(row.context_json)
+    stored.executionContext = {
+      version: 1,
+      target: {
+        kind: 'wsl',
+        id: 'wsl:v1:Ubuntu',
+        displayName: 'Ubuntu',
+        family: 'posix',
+        distributionName: 'Ubuntu'
+      },
+      hostProjectDir: 'C:\\work\\demo',
+      targetProjectDir: '/mnt/c/work/demo'
+    }
+    db.prepare('update workflow_runs set context_json = ? where task_id = ?')
+      .run(JSON.stringify(stored), 'task-1')
+
+    expect(() => restoreWorkflowRuntimeState(db, 'task-1'))
+      .toThrow('historical execution target that is no longer supported')
   })
 
   it('generates the title once from the first ordered variable and preserves manual renames', () => {

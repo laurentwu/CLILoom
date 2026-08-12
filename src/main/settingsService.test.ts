@@ -5,7 +5,9 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   APPEARANCE_PREFERENCES_SETTING_KEY,
   DEFAULT_APPEARANCE_PREFERENCES,
-  DEFAULT_ACTIVE_SKIN_ID
+  DEFAULT_ACTIVE_SKIN_ID,
+  DEFAULT_SHELL_PREFERENCES,
+  SHELL_PREFERENCES_SETTING_KEY
 } from '../shared/appSettings'
 import { BUILTIN_SKIN_DARK_ID, MAX_IMPORT_BYTES, MAX_USER_SKINS } from '../shared/skin'
 import { openDatabase, getSetting, setSetting, type AppDatabase } from './database'
@@ -55,11 +57,11 @@ describe('settings persistence', () => {
     const service = createService()
 
     expect(service.getSnapshot().shell).toEqual({
-      version: 2,
+      version: 3,
       selection: { mode: 'automatic' }
     })
     service.setShellPreferences({
-      version: 2,
+      version: 3,
       selection: {
         mode: 'explicit',
         shell: {
@@ -76,6 +78,75 @@ describe('settings persistence', () => {
       mode: 'explicit',
       shell: { displayName: 'bash', executablePath: '/bin/bash' }
     })
+  })
+
+  it('persists migration of a legacy WSL selection to automatic mode', () => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'cliloom-settings-'))
+    const db = openDatabase(directory)
+    databases.push({ db, directory })
+    setSetting(db, SHELL_PREFERENCES_SETTING_KEY, {
+      version: 2,
+      selection: {
+        mode: 'explicit',
+        shell: {
+          kind: 'wsl',
+          id: 'wsl:v1:Ubuntu',
+          displayName: 'Ubuntu',
+          family: 'posix',
+          distributionName: 'Ubuntu'
+        }
+      }
+    })
+
+    const service = new SettingsService(db)
+
+    expect(service.getSnapshot().shell).toEqual(DEFAULT_SHELL_PREFERENCES)
+    expect(getSetting(db, SHELL_PREFERENCES_SETTING_KEY, null))
+      .toEqual(DEFAULT_SHELL_PREFERENCES)
+
+    db.prepare('update settings set updated_at = ? where key = ?')
+      .run('migration-complete', SHELL_PREFERENCES_SETTING_KEY)
+    new SettingsService(db)
+    expect((db.prepare('select updated_at from settings where key = ?')
+      .get(SHELL_PREFERENCES_SETTING_KEY) as { updated_at: string }).updated_at)
+      .toBe('migration-complete')
+  })
+
+  it('persists a legacy native shell selection at the current version', () => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'cliloom-settings-'))
+    const db = openDatabase(directory)
+    databases.push({ db, directory })
+    setSetting(db, SHELL_PREFERENCES_SETTING_KEY, {
+      version: 2,
+      selection: {
+        mode: 'explicit',
+        shell: {
+          kind: 'native',
+          id: 'posix:%2Fbin%2Fbash',
+          displayName: 'bash',
+          family: 'posix',
+          executablePath: '/bin/bash'
+        }
+      }
+    })
+
+    const service = new SettingsService(db)
+
+    expect(service.getSnapshot().shell).toEqual({
+      version: 3,
+      selection: {
+        mode: 'explicit',
+        shell: {
+          kind: 'native',
+          id: 'posix:%2Fbin%2Fbash',
+          displayName: 'bash',
+          family: 'posix',
+          executablePath: '/bin/bash'
+        }
+      }
+    })
+    expect(getSetting(db, SHELL_PREFERENCES_SETTING_KEY, null))
+      .toEqual(service.getSnapshot().shell)
   })
 
   it('does not persist an unavailable initialization executable', () => {

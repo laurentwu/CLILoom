@@ -44,7 +44,6 @@
     "test": "node scripts/vitest-electron.cjs --exclude src/main/shellSmoke.test.ts",
     "test:shell-smoke": "node scripts/vitest-electron.cjs src/main/shellSmoke.test.ts",
     "test:windows-cli-smoke": "npm run build:main && node scripts/windows-cli-smoke.cjs",
-    "test:wsl-smoke": "npm run build:main && node scripts/windows-cli-smoke.cjs --wsl && node scripts/wsl-smoke.cjs",
     "test:coverage": "node scripts/vitest-electron.cjs --coverage --exclude src/main/shellSmoke.test.ts && npm run test:coverage:terminal",
     "test:coverage:terminal": "node scripts/vitest-electron.cjs --config vitest.terminal-coverage.config.mts --coverage",
     "test:e2e": "node scripts/playwright-electron.cjs",

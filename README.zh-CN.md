@@ -38,7 +38,7 @@ CLILoom 是一款面向 AI CLI 开发场景的跨平台桌面应用。
 
 ### 跨操作系统工作
 
-CLILoom 支持 macOS、Windows 和 Linux，并可使用 PowerShell、cmd、sh、bash、zsh 和 Git Bash 等常见 Shell。在 Windows 上还可把已注册的 WSL 发行版选为全局终端环境，工作流可直接填写 Linux 命令，无需手工添加 `wsl` 前缀。
+CLILoom 支持 macOS、Windows 和 Linux，并可使用 PowerShell、cmd、sh、bash、zsh 和 Git Bash 等原生 Shell。
 
 ### 工作空间数据保存在本地
 
@@ -78,7 +78,7 @@ CLILoom 支持 macOS、Windows 和 Linux，并可使用 PowerShell、cmd、sh、
   - 支持键盘输入和自适应尺寸的交互式 PTY 会话。
   - 为每个节点配置工作目录、环境变量、超时时间和成功退出码。
   - 保存终端输出，并对历史命令进行安全重试。
-  - 在 Windows 上将 WSL 一等接入终端、Hook、历史重试和 AI CLI 助手。
+  - 终端、Hook、历史重试和 AI CLI 助手共享原生 Shell 目标快照。
 
 - **变量与 Hook**
   - 定义文本和数字变量，并设置标签、默认值、排列顺序和必填规则。
@@ -124,7 +124,7 @@ CLILoom 的发布构建当前尚未进行 Apple 代码签名或公证。首次�
 
 Windows 发布构建当前尚未签名，因此 Microsoft Defender SmartScreen 可能显示未知发布者警告。继续运行前，请确认文件来自 CLILoom 的 GitHub Releases 页面。
 
-如需通过 WSL 运行 Linux 命令，请先使用 Windows 安装 WSL 和至少一个发行版，再在 CLILoom 中打开“设置 → 默认终端环境”并显式选择该发行版；“自动”仍只会选择 Windows 原生 Shell。随后可添加 Windows 文件夹，或添加所选发行版 `\\wsl$` / `\\wsl.localhost` 共享中的文件夹。发行版必须使用普通默认用户，并将 bash、zsh 或 sh 配为默认登录 Shell。Linux 工具频繁访问项目时，通常建议把仓库放在 WSL 原生文件系统以减少跨文件系统开销。详见[终端环境与 WSL 故障排查](SHELLS.md)。
+CLILoom 不提供 WSL 集成，不会发现或启动 WSL 发行版，也不支持 `\\wsl$` 或 `\\wsl.localhost` 下的项目文件夹。用户填写的命令仍是任意 Shell 输入；如需禁止 `wsl.exe`，请使用 Windows、AppLocker 或组织级策略。详见[终端环境故障排查](SHELLS.md)。
 
 ### Linux
 
@@ -142,7 +142,7 @@ sudo apt install ./CLILoom-*.deb
 sudo dnf install ./CLILoom-*.rpm
 ```
 
-Linux 安装包需要 glibc，推荐使用 Ubuntu 24.04 或同等环境；暂不支持 Alpine Linux 等基于 musl 的发行版。AppImage 无需安装，但系统必须允许 Chromium 使用 user namespace 沙箱。Ubuntu 23.10 及更高版本默认会阻止下载的应用使用该能力；除非你已为 AppImage 显式配置 AppArmor 策略，否则请在这些系统上使用 DEB。DEB 和 RPM 会安装由 root 所有、启用 SUID 的 Electron 沙箱辅助程序。CLILoom 始终不会降级使用 `--no-sandbox`。
+Linux 安装包需要 glibc，推荐使用 Ubuntu 24.04 或同等环境；暂不支持 Alpine Linux 等基于 musl 的发行版。在 WSL 内运行 Linux 安装包属于不支持、未测试场景。AppImage 无需安装，但系统必须允许 Chromium 使用 user namespace 沙箱。Ubuntu 23.10 及更高版本默认会阻止下载的应用使用该能力；除非你已为 AppImage 显式配置 AppArmor 策略，否则请在这些系统上使用 DEB。DEB 和 RPM 会安装由 root 所有、启用 SUID 的 Electron 沙箱辅助程序。CLILoom 始终不会降级使用 `--no-sandbox`。
 
 ## 6. 安全与本地数据
 

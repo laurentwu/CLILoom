@@ -10,7 +10,7 @@ import type {
   ShellNeutralCommand
 } from '../shared/shell'
 import {
-  isWslExecutionTarget,
+  isUnsupportedWslExecutionTarget,
   parseExecutionTargetDescriptor,
   parseShellNeutralCommand,
   toExecutionTargetDescriptor
@@ -34,7 +34,6 @@ import {
   prepareExecutionInvocation,
   type PreparedExecutionInvocation
 } from './executionInvocation'
-import type { WslSessionHandle } from './wslService'
 
 const SESSION_PERSIST_INTERVAL_MS = 5000
 const TERMINAL_DATA_FLUSH_INTERVAL_MS = 16
@@ -150,12 +149,10 @@ type Session = {
   finalization?: Promise<boolean>
   inputReady?: boolean
   flushDisplay?: () => void
-  wslSession?: WslSessionHandle
   finish: (
     status: 'closed' | 'killed' | 'failed',
     exitCode: number | null,
-    terminate: boolean,
-    naturalWslExit?: boolean
+    terminate: boolean
   ) => Promise<boolean>
 }
 
@@ -166,13 +163,11 @@ type HookSession = {
   settled: boolean
   finalizing: boolean
   terminationPending: boolean
-  wslSession?: WslSessionHandle
   finalization?: Promise<boolean>
   finish: (
     status: 'completed' | 'failed' | 'killed',
     exitCode: number | null,
-    terminate: boolean,
-    naturalWslExit?: boolean
+    terminate: boolean
   ) => Promise<boolean>
 }
 
@@ -205,13 +200,10 @@ type StoredRunEnvelope = {
   retry: StoredRunRetry
   diagnostic?: {
     targetId: string
-    kind: 'native' | 'wsl'
+    kind: 'native'
     family: ResolvedExecutionTarget['family']
     displayName: string
-    executablePath?: string
-    distributionName?: string
-    wslVersion?: 1 | 2
-    loginShellPath?: string
+    executablePath: string
   }
 }
 
@@ -237,8 +229,6 @@ export type EffectiveShellResolver = {
   resolveEffectiveTarget?: () => Promise<ResolvedExecutionTarget>
   resolveTarget?: (target: ExecutionTargetDescriptor) => Promise<ResolvedExecutionTarget>
   resolveTargetPath?: (target: ResolvedExecutionTarget, value: string) => Promise<string>
-  terminateWslSession?: (handle: WslSessionHandle) => Promise<ProcessTerminationResult>
-  finalizeWslSession?: (handle: WslSessionHandle) => Promise<ProcessTerminationResult>
 }
 
 export type ProcessTreeTerminator = (
@@ -482,16 +472,10 @@ export class ProcessRunner {
       ...(target ? {
         diagnostic: {
           targetId: target.id,
-          kind: isWslExecutionTarget(target) ? 'wsl' : 'native',
+          kind: 'native',
           family: target.family,
           displayName: target.displayName,
-          ...(isWslExecutionTarget(target)
-            ? {
-                distributionName: target.distributionName,
-                ...(target.wslVersion ? { wslVersion: target.wslVersion } : {}),
-                loginShellPath: target.loginShellPath
-              }
-            : { executablePath: target.executablePath })
+          executablePath: target.executablePath
         }
       } : {})
     }
@@ -521,7 +505,11 @@ export class ProcessRunner {
           ? parseExecutionTargetDescriptor(retry.target)
           : null
         if (parsed.version === 3 && !target) {
-          throw new TerminalRetryError(t('errors:session.retryDataInvalid'))
+          throw new TerminalRetryError(
+            isUnsupportedWslExecutionTarget(retry.target)
+              ? t('errors:session.executionTargetUnsupported')
+              : t('errors:session.retryDataInvalid')
+          )
         }
         const sourceCwd = typeof retry.sourceCwd === 'string' && retry.sourceCwd
           ? retry.sourceCwd
@@ -581,7 +569,7 @@ export class ProcessRunner {
   ): Promise<RunProcessResult> {
     const isInteractive = request.kind === 'interactive'
     let shell: ResolvedExecutionTarget | null = null
-    let launchRequest = request
+    const launchRequest = request
     let invocation: PreparedExecutionInvocation
     if (this.isPendingCancelled(this.pendingSessions, sessionId)) {
       return this.cancelUnstartedSession(request, sessionId, initialTranscript)
@@ -607,17 +595,6 @@ export class ProcessRunner {
       return this.cancelUnstartedSession(request, sessionId, initialTranscript)
     }
     try {
-      if (isWslExecutionTarget(shell) && !request.executionTarget) {
-        if (!this.shellResolver.resolveTargetPath) {
-          throw new Error(t('errors:wsl.pathConversionFailed'))
-        }
-        const targetCwd = await this.shellResolver.resolveTargetPath(shell, request.cwd)
-        launchRequest = {
-          ...request,
-          sourceCwd: request.sourceCwd ?? request.cwd,
-          cwd: targetCwd
-        }
-      }
       if (this.isPendingCancelled(this.pendingSessions, sessionId)) {
         return this.cancelUnstartedSession(request, sessionId, initialTranscript)
       }
@@ -627,7 +604,6 @@ export class ProcessRunner {
         command: launchRequest.command,
         targetCwd: launchRequest.cwd,
         hostCwd: this.hostRunDirectory,
-        sessionId,
         baseEnvironment: this.environment,
         requestEnvironment: launchRequest.env,
         platform: this.platform
@@ -700,7 +676,6 @@ export class ProcessRunner {
       settled: false,
       finalizing: false,
       terminationPending: false,
-      ...(invocation.wslSession ? { wslSession: invocation.wslSession } : {}),
       finish: async () => false
     }
     this.sessions.set(sessionId, session)
@@ -741,14 +716,14 @@ export class ProcessRunner {
 
     term.onData((data: string) => append('stdout', data))
     let timeout: NodeJS.Timeout | undefined
-    session.finish = (status, exitCode, terminate, naturalWslExit = false) => {
+    session.finish = (status, exitCode, terminate) => {
       if (session.settled) {
         if (!terminate || !session.terminationPending) return Promise.resolve(false)
         if (session.finalizing) return session.finalization ?? Promise.resolve(false)
         const retryTermination = (async () => {
           session.finalizing = true
           try {
-            const result = await this.terminateSessionTree(term, session.wslSession)
+            const result = await this.terminateTree(term)
             if (result.terminated) {
               session.terminationPending = false
               this.sessions.delete(sessionId)
@@ -773,11 +748,7 @@ export class ProcessRunner {
         if (terminate) {
           let terminationError: string | undefined
           try {
-            const termination = await this.terminateSessionTree(
-              term,
-              session.wslSession,
-              naturalWslExit
-            )
+            const termination = await this.terminateTree(term)
             terminationSucceeded = termination.terminated
             terminationError = termination.error
           } catch (error) {
@@ -790,27 +761,25 @@ export class ProcessRunner {
             appendTerminalContent('stderr', content)
           }
         }
-        const resolvedStatus = naturalWslExit && !terminationSucceeded ? 'failed' : status
-        const resolvedExitCode = naturalWslExit && !terminationSucceeded ? -1 : exitCode
         session.terminationPending = terminate && !terminationSucceeded
         session.settled = true
         session.finalizing = false
         session.flushDisplay?.()
         if (!session.terminationPending) this.sessions.delete(sessionId)
-        this.persistSession(sessionId, session.transcript, resolvedStatus)
+        this.persistSession(sessionId, session.transcript, status)
         this.getWindow()?.webContents.send('terminal:closed', {
           sessionId,
           taskId: request.taskId,
           nodeId: request.nodeId,
-          exitCode: resolvedExitCode,
-          status: resolvedStatus
+          exitCode,
+          status
         })
         resolveResult({
           sessionId,
           stdout,
           stderr,
-          exitCode: resolvedStatus === 'killed' ? null : (resolvedExitCode ?? -1),
-          status: resolvedStatus
+          exitCode: status === 'killed' ? null : (exitCode ?? -1),
+          status
         })
         return terminationSucceeded
       })()
@@ -818,8 +787,7 @@ export class ProcessRunner {
       return finalization
     }
     term.onExit(({ exitCode }) => {
-      const naturalWslExit = Boolean(session.wslSession)
-      void session.finish('closed', exitCode ?? -1, naturalWslExit, naturalWslExit)
+      void session.finish('closed', exitCode ?? -1, false)
     })
 
     if (!isInteractive && request.timeoutMs) {
@@ -932,17 +900,13 @@ export class ProcessRunner {
     if (pending.cancelled) return this.cancelUnstartedHook(hookRunId)
     let invocation: PreparedExecutionInvocation
     try {
-      const targetCwd = isWslExecutionTarget(shell) && !request.executionTarget
-        ? await this.resolveLegacyWslTargetPath(shell, request.cwd)
-        : request.cwd
       if (pending.cancelled) return this.cancelUnstartedHook(hookRunId)
       invocation = prepareExecutionInvocation({
         target: shell,
         mode: 'non-interactive',
         command: normalized.command,
-        targetCwd,
+        targetCwd: request.cwd,
         hostCwd: this.hostRunDirectory,
-        sessionId: hookRunId,
         baseEnvironment: this.environment,
         requestEnvironment: normalized.env,
         platform: this.platform
@@ -965,7 +929,7 @@ export class ProcessRunner {
     } catch (error) {
       if (child) {
         try {
-          await this.terminateSessionTree(child, invocation.wslSession)
+          await this.terminateTree(child)
         } catch {
           // The launch error remains the primary actionable failure.
         }
@@ -995,19 +959,18 @@ export class ProcessRunner {
       settled: false,
       finalizing: false,
       terminationPending: false,
-      ...(invocation.wslSession ? { wslSession: invocation.wslSession } : {}),
       finish: async () => false
     }
     this.hookSessions.set(hookRunId, hookSession)
     this.finishPendingLaunch(this.pendingHooks, pending)
-    hookSession.finish = (status, exitCode, terminate, naturalWslExit = false) => {
+    hookSession.finish = (status, exitCode, terminate) => {
       if (hookSession.settled) {
         if (!terminate || !hookSession.terminationPending) return Promise.resolve(false)
         if (hookSession.finalizing) return hookSession.finalization ?? Promise.resolve(false)
         const retryTermination = (async () => {
           hookSession.finalizing = true
           try {
-            const result = await this.terminateSessionTree(activeChild, hookSession.wslSession)
+            const result = await this.terminateTree(activeChild)
             if (result.terminated) {
               hookSession.terminationPending = false
               this.hookSessions.delete(hookRunId)
@@ -1031,11 +994,7 @@ export class ProcessRunner {
         if (terminate) {
           let terminationError: string | undefined
           try {
-            const termination = await this.terminateSessionTree(
-              activeChild,
-              hookSession.wslSession,
-              naturalWslExit
-            )
+            const termination = await this.terminateTree(activeChild)
             terminationSucceeded = termination.terminated
             terminationError = termination.error
           } catch (error) {
@@ -1050,22 +1009,20 @@ export class ProcessRunner {
             )
           }
         }
-        const resolvedStatus = naturalWslExit && !terminationSucceeded ? 'failed' : status
-        const resolvedExitCode = naturalWslExit && !terminationSucceeded ? -1 : exitCode
         hookSession.terminationPending = terminate && !terminationSucceeded
         hookSession.settled = true
         hookSession.finalizing = false
         if (!hookSession.terminationPending) this.hookSessions.delete(hookRunId)
-        const persistedStatus = resolvedStatus === 'completed' ? 'completed' : resolvedStatus
+        const persistedStatus = status === 'completed' ? 'completed' : status
         this.db
           .prepare('update hook_runs set status = ?, stdout = ?, stderr = ?, exit_code = ? where id = ?')
-          .run(persistedStatus, stdout, stderr, resolvedExitCode, hookRunId)
+          .run(persistedStatus, stdout, stderr, exitCode, hookRunId)
         resolveResult({
           hookRunId,
           stdout,
           stderr,
-          exitCode: resolvedExitCode,
-          status: resolvedStatus
+          exitCode,
+          status
         })
         return terminationSucceeded
       })()
@@ -1082,12 +1039,10 @@ export class ProcessRunner {
     })
 
     activeChild.on('close', (exitCode) => {
-      const naturalWslExit = Boolean(hookSession.wslSession)
       void hookSession.finish(
         exitCode === 0 ? 'completed' : 'failed',
         exitCode,
-        naturalWslExit,
-        naturalWslExit
+        false
       )
     })
     return result
@@ -1424,7 +1379,6 @@ export class ProcessRunner {
   ): ResolvedExecutionTarget | Promise<ResolvedExecutionTarget> {
     if (target) {
       if (this.shellResolver.resolveTarget) return this.shellResolver.resolveTarget(target)
-      if (isWslExecutionTarget(target)) throw new Error(t('errors:wsl.targetRequiresAsyncResolution'))
       const shell = this.shellResolver.resolveEffectiveShell()
       if (shell.id !== target.id) throw new Error(t('errors:shell.mustBeDetected'))
       return shell
@@ -1432,35 +1386,6 @@ export class ProcessRunner {
     return this.shellResolver.resolveEffectiveTarget
       ? this.shellResolver.resolveEffectiveTarget()
       : this.shellResolver.resolveEffectiveShell()
-  }
-
-  private resolveLegacyWslTargetPath(
-    target: ResolvedExecutionTarget,
-    value: string
-  ): Promise<string> {
-    if (!this.shellResolver.resolveTargetPath) {
-      return Promise.reject(new Error(t('errors:wsl.pathConversionFailed')))
-    }
-    return this.shellResolver.resolveTargetPath(target, value)
-  }
-
-  private async terminateSessionTree(
-    handle: ProcessTreeHandle,
-    wslSession: WslSessionHandle | undefined,
-    naturalWslExit = false
-  ): Promise<ProcessTerminationResult> {
-    if (wslSession) {
-      const finalize = naturalWslExit
-        ? this.shellResolver.finalizeWslSession ?? this.shellResolver.terminateWslSession
-        : this.shellResolver.terminateWslSession
-      if (!finalize) {
-        return { terminated: false, error: t('errors:wsl.sessionTerminationFailed') }
-      }
-      const linux = await finalize.call(this.shellResolver, wslSession)
-      if (!linux.terminated) return linux
-      if (naturalWslExit) return { terminated: true }
-    }
-    return this.terminateTree(handle)
   }
 
   private isPendingCancelled(
@@ -1511,22 +1436,10 @@ function createPendingLaunch(id: string, taskId: string): PendingLaunch {
 }
 
 function executionTargetMetadata(target: ExecutionTargetDescriptor | ResolvedExecutionTarget) {
-  return isWslExecutionTarget(target)
-    ? {
-        kind: 'wsl' as const,
-        displayName: target.displayName,
-        distributionName: target.distributionName,
-        ...('wslVersion' in target && target.wslVersion
-          ? { wslVersion: target.wslVersion }
-          : {}),
-        ...('loginShellPath' in target && target.loginShellPath
-          ? { loginShellPath: target.loginShellPath }
-          : {})
-      }
-    : {
-        kind: 'native' as const,
-        displayName: target.displayName
-      }
+  return {
+    kind: 'native' as const,
+    displayName: target.displayName
+  }
 }
 
 const INTERNAL_BINDING_PATTERN = /^CLILOOM_INTERNAL_VALUE_\d+$/
@@ -1654,9 +1567,7 @@ function formatShellError(
 ): string {
   const detail = error instanceof Error ? error.message : String(error)
   const shellDescription = shell
-    ? isWslExecutionTarget(shell)
-      ? `${shell.displayName} (${shell.distributionName}, ${shell.loginShellPath}, WSL)`
-      : `${shell.displayName} (${shell.executablePath}, ${shell.family})`
+    ? `${shell.displayName} (${shell.executablePath}, ${shell.family})`
     : error instanceof ShellUnavailableError && error.shell
       ? `${error.shell.displayName} (${error.shell.executablePath}, ${error.shell.family})`
       : t('errors:shell.unparsed')

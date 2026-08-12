@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_SHELL_PREFERENCES,
-  createWslTargetId,
+  isUnsupportedWslExecutionTarget,
   parseShellNeutralCommand,
   parseShellPreferences
 } from './shell'
@@ -40,7 +40,7 @@ describe('shell settings contract', () => {
     })
 
     expect(preferences).toMatchObject({
-      version: 2,
+      version: 3,
       selection: {
         mode: 'explicit',
         shell: {
@@ -52,87 +52,47 @@ describe('shell settings contract', () => {
     })
   })
 
-  it('persists a concrete WSL identity and rejects malformed descriptors', () => {
-    const distributionName = 'Ubuntu Dev 中文'
-    const id = createWslTargetId(distributionName)
-    expect(id).toBe('wsl:v1:Ubuntu%20Dev%20%E4%B8%AD%E6%96%87')
+  it('migrates native version 2 settings and resets legacy WSL selections', () => {
     expect(parseShellPreferences({
       version: 2,
       selection: {
         mode: 'explicit',
         shell: {
-          kind: 'wsl',
-          id,
-          displayName: distributionName,
+          kind: 'native',
+          id: 'posix:%2Fbin%2Fbash',
+          displayName: 'bash',
           family: 'posix',
-          distributionName
+          executablePath: '/bin/bash'
         }
       }
     })).toEqual({
-      version: 2,
+      version: 3,
       selection: {
         mode: 'explicit',
         shell: {
-          kind: 'wsl',
-          id,
-          displayName: distributionName,
+          kind: 'native',
+          id: 'posix:%2Fbin%2Fbash',
+          displayName: 'bash',
           family: 'posix',
-          distributionName
+          executablePath: '/bin/bash'
         }
       }
     })
-    expect(parseShellPreferences({
+    const legacyWsl = {
       version: 2,
       selection: {
         mode: 'explicit',
         shell: {
           kind: 'wsl',
-          id,
-          displayName: distributionName,
+          id: 'wsl:v1:Ubuntu',
+          displayName: 'Ubuntu',
           family: 'posix',
-          distributionName: 'bad\nname'
+          distributionName: 'Ubuntu'
         }
       }
-    })).toEqual(DEFAULT_SHELL_PREFERENCES)
-    expect(parseShellPreferences({
-      version: 2,
-      selection: {
-        mode: 'explicit',
-        shell: {
-          kind: 'wsl',
-          id: createWslTargetId('Ubuntu'),
-          displayName: distributionName,
-          family: 'posix',
-          distributionName
-        }
-      }
-    })).toEqual(DEFAULT_SHELL_PREFERENCES)
-    expect(() => parseShellPreferences({
-      version: 2,
-      selection: {
-        mode: 'explicit',
-        shell: {
-          kind: 'wsl',
-          id: 'wsl:v1:malformed',
-          displayName: 'Malformed',
-          family: 'posix',
-          distributionName: '\ud800'
-        }
-      }
-    })).not.toThrow()
-    expect(parseShellPreferences({
-      version: 2,
-      selection: {
-        mode: 'explicit',
-        shell: {
-          kind: 'wsl',
-          id: 'wsl:v1:malformed',
-          displayName: 'Malformed',
-          family: 'posix',
-          distributionName: '\ud800'
-        }
-      }
-    })).toEqual(DEFAULT_SHELL_PREFERENCES)
+    }
+    expect(isUnsupportedWslExecutionTarget(legacyWsl.selection.shell)).toBe(true)
+    expect(parseShellPreferences(legacyWsl)).toEqual(DEFAULT_SHELL_PREFERENCES)
   })
 })
 

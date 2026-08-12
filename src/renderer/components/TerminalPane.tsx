@@ -202,13 +202,7 @@ export const TerminalPane = memo(function TerminalPane({
 
 function formatExecutionTarget(session: TerminalSession): string | null {
   const target = session.execution_target
-  if (!target) return null
-  if (target.kind === 'native') return target.displayName
-  const detail = [
-    target.wslVersion ? `WSL ${target.wslVersion}` : 'WSL',
-    target.loginShellPath
-  ].filter(Boolean).join(', ')
-  return `${target.distributionName ?? target.displayName} (${detail})`
+  return target?.displayName ?? null
 }
 
 export const TerminalOutputPane = memo(function TerminalOutputPane({

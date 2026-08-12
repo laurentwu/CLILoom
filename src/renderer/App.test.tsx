@@ -1584,7 +1584,7 @@ describe('App Shell synchronization', () => {
     const explicitZsh: ShellSnapshot = {
       platform: 'linux',
       preferences: {
-        version: 2,
+        version: 3,
         selection: {
           mode: 'explicit',
           shell: {

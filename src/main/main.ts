@@ -62,8 +62,7 @@ import {
 import { InstanceHandoffCoordinator } from './instanceHandoffCoordinator'
 import { SettingsService } from './settingsService'
 import { ShellService } from './shellService'
-import { isWslExecutionTarget } from '../shared/shell'
-import { parseWslUncPath } from './wslService'
+import { isUnsupportedProjectPath } from '../shared/projectPath'
 import { clampWindowBounds } from './windowState'
 import { WorkflowConfigService } from './workflowConfigService'
 import { buildApplicationMenuTemplate } from './applicationMenu'
@@ -707,9 +706,9 @@ function registerIpc(): void {
     assertMainSender(event)
     return setLastOpenedWorkspace(db, value)
   })
-  ipcMain.handle('projects:choose-add', async (event, source: unknown) => {
+  ipcMain.handle('projects:choose-add', async (event) => {
     assertMainSender(event)
-    return chooseAndAddProject(source)
+    return chooseAndAddProject()
   })
   ipcMain.handle('projects:list', (event) => {
     assertMainSender(event)
@@ -863,46 +862,17 @@ function registerIpc(): void {
   })
 }
 
-async function chooseAndAddProject(source: unknown) {
-  if (source !== 'windows' && source !== 'wsl') {
-    throw new Error(t('errors:database.projectSelectionInvalid'))
-  }
-
-  let defaultPath: string | undefined
-  let wslTarget: Awaited<ReturnType<ShellService['resolveEffectiveTarget']>> | undefined
-  if (source === 'wsl') {
-    wslTarget = await shellService.resolveEffectiveTarget()
-    if (!isWslExecutionTarget(wslTarget)) {
-      throw new Error(t('project:hint.selectWslFirst'))
-    }
-    defaultPath = await shellService.getWslHomeWindowsPath(wslTarget)
-  }
-
-  const options = {
-    properties: ['openDirectory'],
-    ...(defaultPath ? { defaultPath } : {})
-  } as Electron.OpenDialogOptions
+async function chooseAndAddProject() {
+  const options = { properties: ['openDirectory'] } as Electron.OpenDialogOptions
   const result = mainWindow
     ? await dialog.showOpenDialog(mainWindow, options)
     : await dialog.showOpenDialog(options)
   if (result.canceled || !result.filePaths[0]) return null
 
-  let projectPath: string
-  if (source === 'wsl') {
-    if (!wslTarget || !isWslExecutionTarget(wslTarget)) {
-      throw new Error(t('project:hint.selectWslFirst'))
-    }
-    const canonical = await shellService.canonicalizeWslProjectPath(
-      wslTarget,
-      result.filePaths[0]
-    )
-    projectPath = canonical.hostPath
-  } else {
-    if (process.platform === 'win32' && parseWslUncPath(result.filePaths[0])) {
-      throw new Error(t('errors:wsl.projectUseWslPicker'))
-    }
-    projectPath = await fs.promises.realpath(result.filePaths[0])
+  if (isUnsupportedProjectPath(result.filePaths[0])) {
+    throw new Error(t('errors:database.projectPathUnsupported'))
   }
+  const projectPath = await fs.promises.realpath(result.filePaths[0])
   const stat = await fs.promises.stat(projectPath)
   if (!stat.isDirectory()) throw new Error(t('errors:database.projectPathNotDirectory'))
   return addProject(db, projectPath)

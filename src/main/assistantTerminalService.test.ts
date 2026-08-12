@@ -1,11 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { DetectedShell, ResolvedWslTarget } from '../shared/shell'
+import type { DetectedShell } from '../shared/shell'
 
 const mocks = vi.hoisted(() => ({
   bridgeClose: vi.fn(),
   ptySpawn: vi.fn(),
   resolveAssistantCommand: vi.fn(),
-  ensureWslAssistantLauncher: vi.fn(),
   startBridge: vi.fn(),
   terminateProcessTree: vi.fn()
 }))
@@ -16,10 +15,6 @@ vi.mock('./assistantCommand', () => ({
 }))
 vi.mock('./assistantCommandBridge', () => ({
   startAssistantCommandBridge: mocks.startBridge
-}))
-vi.mock('./assistantWorkspace', async (importOriginal) => ({
-  ...await importOriginal<typeof import('./assistantWorkspace')>(),
-  ensureWslAssistantLauncher: mocks.ensureWslAssistantLauncher
 }))
 vi.mock('./processTermination', () => ({
   terminateProcessTree: mocks.terminateProcessTree
@@ -64,7 +59,7 @@ function createTerminal(pid: number) {
 
 function createWorkspaceStatus() {
   return {
-    workspaceVersion: 1,
+    workspaceVersion: 2,
     appVersion: '0.1.0',
     buildId: `sha256:${'a'.repeat(64)}`,
     synchronized: true,
@@ -110,13 +105,13 @@ function createService(
         platform: 'linux',
         preferences: configuredShell
           ? {
-              version: 1,
+              version: 3,
               selection: {
                 mode: 'explicit',
                 shell: configuredShell
               }
             }
-          : { version: 1, selection: { mode: 'automatic' } },
+          : { version: 3, selection: { mode: 'automatic' } },
         candidates: [],
         effectiveShell: null
       })
@@ -138,7 +133,6 @@ describe('AssistantTerminalService global shell integration', () => {
       args: ['--model', 'gpt 5'],
       executablePath: '/usr/bin/codex'
     })
-    mocks.ensureWslAssistantLauncher.mockReturnValue('/private/assistant/wsl-bin/cliloom')
     mocks.terminateProcessTree.mockResolvedValue({ terminated: true })
   })
 
@@ -264,185 +258,21 @@ describe('AssistantTerminalService global shell integration', () => {
     )
   })
 
-  it('starts a WSL-native CLI through the token-free interop shim and cleans Linux first', async () => {
-    const terminal = createTerminal(2501)
-    mocks.ptySpawn.mockReturnValue(terminal)
-    mocks.ensureWslAssistantLauncher.mockReturnValue('C:\\private\\assistant\\wsl-bin\\cliloom')
-    const target: ResolvedWslTarget = {
-      kind: 'wsl',
-      id: 'wsl:v1:Ubuntu',
-      displayName: 'Ubuntu',
-      family: 'posix',
-      distributionName: 'Ubuntu',
-      validationState: 'ready',
-      wslVersion: 2,
-      wslExecutablePath: 'C:\\Windows\\System32\\wsl.exe',
-      loginShellPath: '/bin/bash',
-      homeDirectory: '/home/me',
-      defaultUid: 1000,
-      userShellPath: '/home/me/.nvm/versions/node/v24/bin:/usr/local/bin:/usr/bin:/bin'
-    }
-    const resolveTargetPath = vi.fn(async (_target: ResolvedWslTarget, value: string) => {
-      const paths: Record<string, string> = {
-        'C:\\private\\assistant': '/mnt/c/private/assistant',
-        'C:\\private\\assistant\\wsl-bin': '/mnt/c/private/assistant/wsl-bin',
-        'C:\\private\\assistant\\wsl-bin\\cliloom': '/mnt/c/private/assistant/wsl-bin/cliloom',
-        'C:\\Program Files\\CLILoom\\cliloom-cli.exe': '/mnt/c/Program Files/CLILoom/cliloom-cli.exe',
-        'C:\\source\\cliloom': '/mnt/c/source/cliloom'
-      }
-      return paths[value] ?? value
-    })
-    const validateWslAssistantInterop = vi.fn(async () => undefined)
-    const terminateWslSession = vi.fn(async () => ({ terminated: true }))
-    const service = new AssistantTerminalService({
-      workspace: {
-        rootPath: 'C:\\private\\assistant',
-        binPath: 'C:\\private\\assistant\\bin',
-        wslBinPath: 'C:\\private\\assistant\\wsl-bin',
-        launcherPath: 'C:\\private\\assistant\\bin\\cliloom',
-        windowsLauncherPath: 'C:\\private\\assistant\\bin\\cliloom.cmd',
-        wslLauncherPath: 'C:\\private\\assistant\\wsl-bin\\cliloom',
-        hostLauncherArguments: [
-          'C:\\Program Files\\CLILoom\\cliloom-cli.exe',
-          'C:\\Program Files\\CLILoom\\CLILoom.exe',
-          '--no-sandbox',
-          'C:\\source\\cliloom',
-          '--cliloom-cli'
-        ],
-        ...createWorkspaceMetadata()
-      },
-      environment: { SystemRoot: 'C:\\Windows', PATH: 'C:\\Windows\\System32' },
-      commandHandler: {} as never,
-      platform: 'win32',
-      shellService: {
-        resolveEffectiveTarget: async () => target,
-        resolveAssistantCommand: async () => ({
-          executable: 'codex',
-          args: ['--model', 'gpt 5'],
-          executablePath: '/usr/local/bin/codex'
-        }),
-        resolveTargetPath,
-        makeWslExecutable: async () => undefined,
-        validateWslAssistantInterop,
-        terminateWslSession,
-        getSnapshot: () => ({
-          platform: 'win32',
-          preferences: { version: 2, selection: { mode: 'automatic' } },
-          candidates: [target],
-          effectiveShell: target
-        })
-      } as never
-    })
-
-    await service.start('codex --model "gpt 5"')
-
-    expect(mocks.ensureWslAssistantLauncher).toHaveBeenCalledWith(
-      expect.objectContaining({ wslBinPath: 'C:\\private\\assistant\\wsl-bin' }),
-      [
-        '/mnt/c/Program Files/CLILoom/cliloom-cli.exe',
-        'C:\\Program Files\\CLILoom\\CLILoom.exe',
-        '--no-sandbox',
-        'C:\\source\\cliloom',
-        '--cliloom-cli'
-      ]
-    )
-    expect(resolveTargetPath).not.toHaveBeenCalledWith(target, 'C:\\source\\cliloom')
-    expect(validateWslAssistantInterop).toHaveBeenCalledWith(
-      target,
-      '/mnt/c/private/assistant/wsl-bin/cliloom',
-      expect.objectContaining({
-        CLILOOM_ASSISTANT_BRIDGE_PORT: '32123',
-        CLILOOM_ASSISTANT_BRIDGE_TOKEN: 'secret-token'
-      })
-    )
-    const [executable, args, options] = mocks.ptySpawn.mock.calls[0]
-    expect(executable).toBe('C:\\Windows\\System32\\wsl.exe')
-    expect(args).toEqual(expect.arrayContaining([
-      '--distribution', 'Ubuntu', '--cd', '/mnt/c/private/assistant', '--exec', '/bin/sh'
-    ]))
-    expect(args.join('\n')).not.toContain('secret-token')
-    expect(options.env.CLILOOM_ASSISTANT_BRIDGE_TOKEN).toBeUndefined()
-    expect(Object.values(options.env)).toContain('secret-token')
-    expect(options.env.WSLENV).toMatch(/CLILOOM_WSL_TRANSPORT_/)
-
-    await service.close()
-    expect(terminateWslSession).toHaveBeenCalledOnce()
-    expect(mocks.terminateProcessTree).toHaveBeenCalledWith(terminal)
-    expect(terminateWslSession.mock.invocationCallOrder[0])
-      .toBeLessThan(mocks.terminateProcessTree.mock.invocationCallOrder[0])
-  })
-
-  it('confirms WSL cleanup after a natural assistant exit', async () => {
+  it('closes the bridge after a natural native assistant exit', async () => {
     let exitHandler: ((event: { exitCode: number; signal?: number }) => void) | undefined
     const terminal = {
-      ...createTerminal(2502),
+      ...createTerminal(2501),
       onExit: vi.fn((handler: (event: { exitCode: number; signal?: number }) => void) => {
         exitHandler = handler
       })
     }
     mocks.ptySpawn.mockReturnValue(terminal)
-    mocks.ensureWslAssistantLauncher.mockReturnValue('C:\\private\\assistant\\wsl-bin\\cliloom')
-    const target: ResolvedWslTarget = {
-      kind: 'wsl',
-      id: 'wsl:v1:Ubuntu',
-      displayName: 'Ubuntu',
-      family: 'posix',
-      distributionName: 'Ubuntu',
-      validationState: 'ready',
-      wslVersion: 2,
-      wslExecutablePath: 'C:\\Windows\\System32\\wsl.exe',
-      loginShellPath: '/bin/bash',
-      homeDirectory: '/home/me',
-      defaultUid: 1000,
-      userShellPath: '/home/me/.nvm/versions/node/v24/bin:/usr/local/bin:/usr/bin:/bin'
-    }
-    const paths: Record<string, string> = {
-      'C:\\private\\assistant': '/mnt/c/private/assistant',
-      'C:\\private\\assistant\\wsl-bin': '/mnt/c/private/assistant/wsl-bin',
-      'C:\\private\\assistant\\wsl-bin\\cliloom': '/mnt/c/private/assistant/wsl-bin/cliloom',
-      'C:\\cliloom-cli.exe': '/mnt/c/cliloom-cli.exe'
-    }
-    const finalizeWslSession = vi.fn(async () => ({ terminated: true }))
-    const service = new AssistantTerminalService({
-      workspace: {
-        rootPath: 'C:\\private\\assistant',
-        binPath: 'C:\\private\\assistant\\bin',
-        wslBinPath: 'C:\\private\\assistant\\wsl-bin',
-        launcherPath: 'C:\\private\\assistant\\bin\\cliloom',
-        windowsLauncherPath: 'C:\\private\\assistant\\bin\\cliloom.cmd',
-        wslLauncherPath: 'C:\\private\\assistant\\wsl-bin\\cliloom',
-        hostLauncherArguments: ['C:\\cliloom-cli.exe', 'C:\\CLILoom.exe', '--cliloom-cli'],
-        ...createWorkspaceMetadata()
-      },
-      environment: { SystemRoot: 'C:\\Windows', PATH: 'C:\\Windows\\System32' },
-      commandHandler: {} as never,
-      platform: 'win32',
-      shellService: {
-        resolveEffectiveTarget: async () => target,
-        resolveAssistantCommand: async () => ({
-          executable: 'codex',
-          args: [],
-          executablePath: '/usr/local/bin/codex'
-        }),
-        resolveTargetPath: async (_target: ResolvedWslTarget, value: string) => paths[value] ?? value,
-        makeWslExecutable: async () => undefined,
-        validateWslAssistantInterop: async () => undefined,
-        terminateWslSession: vi.fn(async () => ({ terminated: true })),
-        finalizeWslSession,
-        getSnapshot: () => ({
-          platform: 'win32',
-          preferences: { version: 2, selection: { mode: 'automatic' } },
-          candidates: [target],
-          effectiveShell: target
-        })
-      } as never
-    })
+    const service = createService(() => shells.posix)
 
     await service.start('codex')
     exitHandler?.({ exitCode: 0 })
 
     await vi.waitFor(() => expect(service.getStatus()).toEqual({ state: 'exited', exitCode: 0 }))
-    expect(finalizeWslSession).toHaveBeenCalledOnce()
     expect(mocks.bridgeClose).toHaveBeenCalledOnce()
     expect(mocks.terminateProcessTree).not.toHaveBeenCalled()
   })

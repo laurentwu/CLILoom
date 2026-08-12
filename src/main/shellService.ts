@@ -3,26 +3,17 @@ import path from 'node:path'
 import type { SettingsService } from './settingsService'
 import { t } from './i18n'
 import {
-  isWslExecutionTarget,
   toExecutionTargetDescriptor,
   type DetectedShell,
-  type DetectedExecutionTarget,
   type ExecutionTargetDescriptor,
   type ResolvedExecutionTarget,
-  type ResolvedWslTarget,
   type ShellDescriptor,
   type ShellDiscoverySource,
   type ShellFamily,
   type ShellPlatform,
   type ShellSnapshot
 } from '../shared/shell'
-import {
-  parseWslUncPath,
-  WslService,
-  type WslSessionHandle
-} from './wslService'
-import type { ProcessTerminationResult } from './processTermination'
-import type { ResolvedAssistantCommand } from '../shared/assistant'
+import { isUnsupportedProjectPath } from '../shared/projectPath'
 
 export type ShellProbe = {
   inspect: (
@@ -61,12 +52,9 @@ export class ShellService {
   private environment: NodeJS.ProcessEnv
   private readonly platform: NodeJS.Platform
   private readonly probe: ShellProbe
-  private readonly wslService: WslService
-  private candidates: DetectedExecutionTarget[] = []
+  private candidates: DetectedShell[] = []
   private initialized = false
   private discovering = false
-  private discoveryError: string | undefined
-  private refreshSequence = 0
   private readonly listeners = new Set<(snapshot: ShellSnapshot) => void>()
 
   constructor(private readonly options: {
@@ -74,15 +62,10 @@ export class ShellService {
     environment?: NodeJS.ProcessEnv
     platform?: NodeJS.Platform
     probe?: ShellProbe
-    wslService?: WslService
   }) {
     this.environment = options.environment ?? process.env
     this.platform = options.platform ?? process.platform
     this.probe = options.probe ?? defaultShellProbe
-    this.wslService = options.wslService ?? new WslService({
-      environment: this.environment,
-      platform: this.platform
-    })
   }
 
   getSnapshot(): ShellSnapshot {
@@ -91,19 +74,9 @@ export class ShellService {
   }
 
   async refresh(): Promise<ShellSnapshot> {
-    const sequence = ++this.refreshSequence
     this.discovering = true
     this.emit(this.buildSnapshot())
-    const nativeCandidates = this.discoverNative()
-    const priorWsl = this.candidates.filter(isWslExecutionTarget)
-    this.wslService.clearCache()
-    const discovery = await this.wslService.discover()
-    if (sequence !== this.refreshSequence) return this.buildSnapshot()
-    this.discoveryError = discovery.error
-    const wslCandidates = discovery.error && discovery.targets.length === 0 && !discovery.authoritative
-      ? priorWsl
-      : discovery.targets
-    this.replaceCandidates([...nativeCandidates, ...wslCandidates], false)
+    this.replaceCandidates(this.discoverNative(), false)
     this.discovering = false
     const snapshot = this.buildSnapshot()
     this.emit(snapshot)
@@ -112,8 +85,7 @@ export class ShellService {
 
   setEnvironment(environment: NodeJS.ProcessEnv): ShellSnapshot {
     this.environment = environment
-    const wslCandidates = this.candidates.filter(isWslExecutionTarget)
-    this.replaceCandidates([...this.discoverNative(), ...wslCandidates], false)
+    this.replaceCandidates(this.discoverNative(), false)
     const snapshot = this.buildSnapshot()
     this.emit(snapshot)
     return snapshot
@@ -122,11 +94,10 @@ export class ShellService {
   select(value: unknown): ShellSnapshot {
     if (value === 'automatic') {
       this.options.settingsService.setShellPreferences({
-        version: 2,
+        version: 3,
         selection: { mode: 'automatic' }
       })
-      const wslCandidates = this.candidates.filter(isWslExecutionTarget)
-      this.replaceCandidates([...this.discoverNative(), ...wslCandidates], false)
+      this.replaceCandidates(this.discoverNative(), false)
       const snapshot = this.buildSnapshot()
       this.emit(snapshot)
       return snapshot
@@ -138,7 +109,7 @@ export class ShellService {
     const target = this.candidates.find((candidate) => candidate.id === value)
     if (!target) throw new Error(t('errors:shell.mustBeDetected'))
     this.options.settingsService.setShellPreferences({
-      version: 2,
+      version: 3,
       selection: {
         mode: 'explicit',
         shell: toExecutionTargetDescriptor(target)
@@ -153,11 +124,10 @@ export class ShellService {
     // The catalog cache is for presentation only. Re-discover before every
     // process launch so an explicitly selected executable cannot disappear
     // between opening settings and starting a terminal.
-    const wslCandidates = this.candidates.filter(isWslExecutionTarget)
-    this.replaceCandidates([...this.discoverNative(), ...wslCandidates], true)
+    this.replaceCandidates(this.discoverNative(), true)
     const preferences = this.options.settingsService.getSnapshot().shell
     if (preferences.selection.mode === 'automatic') {
-      const shell = selectDefaultShell(this.nativeCandidates(), this.platform, this.environment)
+      const shell = selectDefaultShell(this.candidates, this.platform, this.environment)
       if (shell) return shell
       throw new ShellUnavailableError(
         t('errors:shell.noneDetectedPlatform', { platform: this.platform }),
@@ -166,10 +136,7 @@ export class ShellService {
     }
 
     const selected = preferences.selection.shell
-    if (isWslExecutionTarget(selected)) {
-      throw new ShellUnavailableError(t('errors:wsl.targetRequiresAsyncResolution'), null)
-    }
-    const shell = this.nativeCandidates().find((candidate) => candidate.id === selected.id)
+    const shell = this.candidates.find((candidate) => candidate.id === selected.id)
     if (shell && descriptorsMatch(shell, selected, this.platform)) return shell
     throw new ShellUnavailableError(
       t('errors:shell.unavailable', { name: selected.displayName, path: selected.executablePath }),
@@ -184,27 +151,6 @@ export class ShellService {
   }
 
   async resolveTarget(target: ExecutionTargetDescriptor): Promise<ResolvedExecutionTarget> {
-    if (isWslExecutionTarget(target)) {
-      try {
-        const resolved = await this.wslService.resolveTarget(target)
-        this.candidates = this.candidates.map((candidate) => (
-          isWslExecutionTarget(candidate) && candidate.id === resolved.id
-            ? { ...resolved }
-            : candidate
-        ))
-        this.emit(this.buildSnapshot())
-        return resolved
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        this.candidates = this.candidates.map((candidate) => (
-          isWslExecutionTarget(candidate) && candidate.id === target.id
-            ? { ...candidate, validationState: 'unavailable', error: message }
-            : candidate
-        ))
-        this.emit(this.buildSnapshot())
-        throw error
-      }
-    }
     const candidates = this.discoverNative()
     const resolved = candidates.find((candidate) => candidate.id === target.id)
     if (resolved && descriptorsMatch(resolved, target, this.platform)) return resolved
@@ -214,25 +160,16 @@ export class ShellService {
     )
   }
 
-  async resolveTargetPath(target: ResolvedExecutionTarget, value: string): Promise<string> {
-    return isWslExecutionTarget(target)
-      ? this.wslService.resolveTargetPath(target, value)
-      : value
+  async resolveTargetPath(_target: ResolvedExecutionTarget, value: string): Promise<string> {
+    return value
   }
 
-  async resolveProjectPath(target: ResolvedExecutionTarget, value: string): Promise<string> {
-    if (isWslExecutionTarget(target)) {
-      const targetPath = parseWslUncPath(value)
-        ? (await this.wslService.canonicalizeWslProjectPath(target, value)).targetPath
-        : await this.wslService.resolveTargetPath(target, value)
-      await this.wslService.assertDirectory(target, targetPath)
-      return targetPath
-    }
+  async resolveProjectPath(_target: ResolvedExecutionTarget, value: string): Promise<string> {
     if (typeof value !== 'string' || !value || value.includes('\0')) {
       throw new Error(t('errors:database.projectPathInvalid'))
     }
-    if (this.platform === 'win32' && parseWslUncPath(value)) {
-      throw new Error(t('errors:wsl.wslProjectRequiresWslTarget'))
+    if (isUnsupportedProjectPath(value)) {
+      throw new Error(t('errors:database.projectPathUnsupported'))
     }
     try {
       if (!statSync(value).isDirectory()) throw new Error()
@@ -240,41 +177,6 @@ export class ShellService {
       throw new Error(t('errors:database.projectPathNotDirectory'))
     }
     return value
-  }
-
-  async getWslHomeWindowsPath(target: ResolvedWslTarget): Promise<string> {
-    return this.wslService.getHomeWindowsPath(target)
-  }
-
-  async canonicalizeWslProjectPath(target: ResolvedWslTarget, value: string) {
-    return this.wslService.canonicalizeWslProjectPath(target, value)
-  }
-
-  async resolveAssistantCommand(
-    target: ResolvedWslTarget,
-    command: unknown
-  ): Promise<ResolvedAssistantCommand> {
-    return this.wslService.resolveAssistantCommand(target, command)
-  }
-
-  async makeWslExecutable(target: ResolvedWslTarget, linuxPath: string): Promise<void> {
-    return this.wslService.makeExecutable(target, linuxPath)
-  }
-
-  async validateWslAssistantInterop(
-    target: ResolvedWslTarget,
-    linuxLauncherPath: string,
-    transferred: Record<string, string>
-  ): Promise<void> {
-    return this.wslService.validateAssistantInterop(target, linuxLauncherPath, transferred)
-  }
-
-  terminateWslSession(handle: WslSessionHandle): Promise<ProcessTerminationResult> {
-    return this.wslService.terminateSession(handle)
-  }
-
-  finalizeWslSession(handle: WslSessionHandle): Promise<ProcessTerminationResult> {
-    return this.wslService.finalizeSession(handle)
   }
 
   onChanged(listener: (snapshot: ShellSnapshot) => void): () => void {
@@ -288,17 +190,13 @@ export class ShellService {
       platform: this.platform,
       environment: this.environment,
       probe: this.probe,
-      additionalPaths: preferences.selection.mode === 'explicit' && !isWslExecutionTarget(preferences.selection.shell)
+      additionalPaths: preferences.selection.mode === 'explicit'
         ? [preferences.selection.shell.executablePath]
         : undefined
     })
   }
 
-  private nativeCandidates(): DetectedShell[] {
-    return this.candidates.filter((candidate): candidate is DetectedShell => !isWslExecutionTarget(candidate))
-  }
-
-  private replaceCandidates(candidates: DetectedExecutionTarget[], emitIfChanged: boolean): void {
+  private replaceCandidates(candidates: DetectedShell[], emitIfChanged: boolean): void {
     const changed = JSON.stringify(candidates) !== JSON.stringify(this.candidates)
     this.candidates = candidates
     this.initialized = true
@@ -308,14 +206,13 @@ export class ShellService {
   private buildSnapshot(): ShellSnapshot {
     const preferences = this.options.settingsService.getSnapshot().shell
     if (preferences.selection.mode === 'automatic') {
-      const effectiveShell = selectDefaultShell(this.nativeCandidates(), this.platform, this.environment)
+      const effectiveShell = selectDefaultShell(this.candidates, this.platform, this.environment)
       return {
         platform: toShellPlatform(this.platform),
         preferences,
         candidates: [...this.candidates],
         effectiveShell,
         ...(this.discovering ? { discovering: true } : {}),
-        ...(this.discoveryError ? { catalogError: this.discoveryError } : {}),
         ...(effectiveShell
           ? {}
           : { error: t('errors:shell.noneDetectedPlatformShort', { platform: this.platform }) })
@@ -324,23 +221,18 @@ export class ShellService {
 
     const selected = preferences.selection.shell
     const matched = this.candidates.find((candidate) => (
-      candidate.id === selected.id && targetsMatch(candidate, selected, this.platform)
+      candidate.id === selected.id && descriptorsMatch(candidate, selected, this.platform)
     )) ?? null
-    const effectiveShell = matched && (!isWslExecutionTarget(matched) || matched.validationState !== 'unavailable')
-      ? matched
-      : null
+    const effectiveShell = matched
     return {
       platform: toShellPlatform(this.platform),
       preferences,
       candidates: [...this.candidates],
       effectiveShell,
       ...(this.discovering ? { discovering: true } : {}),
-      ...(this.discoveryError ? { catalogError: this.discoveryError } : {}),
       ...(effectiveShell
         ? {}
-        : { error: matched && isWslExecutionTarget(matched) && matched.error
-            ? matched.error
-            : formatUnavailableTarget(selected) })
+        : { error: formatUnavailableTarget(selected) })
     }
   }
 
@@ -591,23 +483,8 @@ function descriptorsMatch(
     normalizePathKey(candidate.executablePath, platform) === normalizePathKey(selected.executablePath, platform)
 }
 
-function targetsMatch(
-  candidate: DetectedExecutionTarget,
-  selected: ExecutionTargetDescriptor,
-  platform: NodeJS.Platform
-): boolean {
-  if (isWslExecutionTarget(candidate) || isWslExecutionTarget(selected)) {
-    return isWslExecutionTarget(candidate) && isWslExecutionTarget(selected) &&
-      candidate.id === selected.id &&
-      candidate.distributionName.toLocaleLowerCase('en-US') === selected.distributionName.toLocaleLowerCase('en-US')
-  }
-  return descriptorsMatch(candidate, selected, platform)
-}
-
 function formatUnavailableTarget(target: ExecutionTargetDescriptor): string {
-  return isWslExecutionTarget(target)
-    ? t('errors:wsl.distributionMissing', { distribution: target.distributionName })
-    : t('errors:shell.unavailableShort', { name: target.displayName, path: target.executablePath })
+  return t('errors:shell.unavailableShort', { name: target.displayName, path: target.executablePath })
 }
 
 function getEnvironmentValue(environment: NodeJS.ProcessEnv, name: string): string | undefined {

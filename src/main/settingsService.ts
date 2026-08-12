@@ -68,6 +68,7 @@ export class SettingsService {
     environment: NodeJS.ProcessEnv = process.env
   ) {
     this.environment = environment
+    this.migrateShellPreferences()
   }
 
   getSnapshot(): AppSettingsSnapshot {
@@ -98,6 +99,18 @@ export class SettingsService {
     setSetting(this.db, SHELL_PREFERENCES_SETTING_KEY, parsed)
     this.notify()
     return parsed
+  }
+
+  private migrateShellPreferences(): void {
+    const stored = getSetting<unknown>(
+      this.db,
+      SHELL_PREFERENCES_SETTING_KEY,
+      DEFAULT_SHELL_PREFERENCES
+    )
+    const parsed = parseShellPreferences(stored)
+    if (JSON.stringify(stored) !== JSON.stringify(parsed)) {
+      setSetting(this.db, SHELL_PREFERENCES_SETTING_KEY, parsed)
+    }
   }
 
   setAssistantInitializationCommand(

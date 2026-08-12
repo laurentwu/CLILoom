@@ -2,9 +2,11 @@ import {
   chmodSync,
   lstatSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   renameSync,
+  rmdirSync,
   statSync,
   unlinkSync,
   writeFileSync
@@ -16,7 +18,7 @@ import { t } from './i18n'
 
 export const ASSISTANT_WORKSPACE_DIRECTORY = 'assistant-workspace'
 export const ASSISTANT_WORKSPACE_MANIFEST = '.cliloom-workspace.json'
-export const ASSISTANT_WORKSPACE_VERSION = 1
+export const ASSISTANT_WORKSPACE_VERSION = 2
 export const MAX_ASSISTANT_INPUT_FILE_BYTES = 2 * 1024 * 1024
 export const WINDOWS_ASSISTANT_CLI_EXECUTABLE = 'cliloom-cli.exe'
 
@@ -33,11 +35,8 @@ export type AssistantWorkspaceSyncStatus = {
 export type AssistantWorkspace = {
   rootPath: string
   binPath: string
-  wslBinPath?: string
   launcherPath: string
   windowsLauncherPath: string
-  wslLauncherPath?: string
-  hostLauncherArguments?: string[]
   workspaceVersion: number
   appVersion: string
   buildId: string
@@ -66,10 +65,9 @@ export function ensureAssistantWorkspace(options: {
   }
   const rootPath = path.join(options.userDataPath, ASSISTANT_WORKSPACE_DIRECTORY)
   const binPath = path.join(rootPath, 'bin')
-  const wslBinPath = path.join(rootPath, 'wsl-bin')
   ensurePrivateDirectory(rootPath)
+  cleanupLegacyAssistantShim(rootPath)
   ensurePrivateDirectory(binPath)
-  ensurePrivateDirectory(wslBinPath)
 
   const instructions = `# CLILoom Assistant
 
@@ -91,9 +89,6 @@ You are running inside CLILoom's private assistant workspace.
   const windowsLauncher = `@echo off\r\n${launcherArguments.map(quoteCmd).join(' ')} %*\r\n`
   const launcherPath = path.join(binPath, 'cliloom')
   const windowsLauncherPath = path.join(binPath, 'cliloom.cmd')
-  // Keep the WSL shim in its own PATH directory under the canonical command
-  // name. The native launcher cannot safely double as a WSL interop shim.
-  const wslLauncherPath = path.join(wslBinPath, 'cliloom')
   const managedFiles: ManagedFile[] = [
     { relativePath: 'AGENTS.md', content: instructions, mode: 0o600 },
     { relativePath: 'CLAUDE.md', content: instructions, mode: 0o600 },
@@ -104,11 +99,8 @@ You are running inside CLILoom's private assistant workspace.
   const workspace: AssistantWorkspace = {
     rootPath,
     binPath,
-    wslBinPath,
     launcherPath,
     windowsLauncherPath,
-    wslLauncherPath,
-    hostLauncherArguments: launcherArguments,
     workspaceVersion: ASSISTANT_WORKSPACE_VERSION,
     appVersion: options.appVersion,
     buildId: options.buildId,
@@ -124,20 +116,6 @@ You are running inside CLILoom's private assistant workspace.
   }
   workspace.synchronize()
   return workspace
-}
-
-export function ensureWslAssistantLauncher(
-  workspace: AssistantWorkspace,
-  linuxLauncherArguments: string[]
-): string {
-  if (linuxLauncherArguments.length === 0 || linuxLauncherArguments.some((value) => value.includes('\0'))) {
-    throw new Error(t('errors:assistantWorkspace.unsafeLauncherPath'))
-  }
-  const launcherPath = workspace.wslLauncherPath
-    ?? path.join(workspace.wslBinPath ?? workspace.binPath, 'cliloom')
-  const content = `#!/bin/sh\nexec ${linuxLauncherArguments.map(quotePosix).join(' ')} "$@"\n`
-  atomicManagedWrite(launcherPath, content, 0o700)
-  return launcherPath
 }
 
 export function readAssistantWorkspaceFile(
@@ -191,7 +169,6 @@ function synchronizeAssistantWorkspace(
 ): AssistantWorkspaceSyncStatus {
   ensurePrivateDirectory(workspace.rootPath)
   ensurePrivateDirectory(workspace.binPath)
-  if (workspace.wslBinPath) ensurePrivateDirectory(workspace.wslBinPath)
 
   const repairedFiles: string[] = []
   for (const managedFile of managedFiles) {
@@ -346,6 +323,65 @@ function replaceManagedFile(temporaryPath: string, filePath: string): void {
 function isInside(rootPath: string, targetPath: string): boolean {
   const relative = path.relative(rootPath, targetPath)
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))
+}
+
+function cleanupLegacyAssistantShim(rootPath: string): void {
+  const legacyDirectory = path.join(rootPath, 'wsl-bin')
+  let directoryStat
+  try {
+    directoryStat = lstatSync(legacyDirectory)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+    warnLegacyCleanup(legacyDirectory)
+    return
+  }
+  if (directoryStat.isSymbolicLink() || !directoryStat.isDirectory()) {
+    warnLegacyCleanup(legacyDirectory)
+    return
+  }
+
+  try {
+    const realRoot = realpathSync(rootPath)
+    const realDirectory = realpathSync(legacyDirectory)
+    if (!isInside(realRoot, realDirectory)) {
+      warnLegacyCleanup(legacyDirectory)
+      return
+    }
+
+    const legacyLauncher = path.join(realDirectory, 'cliloom')
+    try {
+      const launcherStat = lstatSync(legacyLauncher)
+      if (launcherStat.isSymbolicLink() || !launcherStat.isFile() || launcherStat.size > 64 * 1024) {
+        warnLegacyCleanup(legacyLauncher)
+        return
+      }
+      const content = readFileSync(legacyLauncher, 'utf8')
+      if (!isManagedLegacyLauncher(content)) {
+        warnLegacyCleanup(legacyLauncher)
+        return
+      }
+      unlinkSync(legacyLauncher)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        warnLegacyCleanup(legacyLauncher)
+        return
+      }
+    }
+
+    if (readdirSync(realDirectory).length === 0) rmdirSync(realDirectory)
+  } catch {
+    warnLegacyCleanup(legacyDirectory)
+  }
+}
+
+function isManagedLegacyLauncher(content: string): boolean {
+  return content.startsWith('#!/bin/sh\nexec ') &&
+    content.endsWith(' "$@"\n') &&
+    content.includes("'--cliloom-cli'")
+}
+
+function warnLegacyCleanup(targetPath: string): void {
+  console.warn(`[AssistantWorkspace] Skipped unverified legacy launcher cleanup: ${targetPath}`)
 }
 
 function quotePosix(value: string): string {

@@ -29,6 +29,7 @@ import {
   tailText
 } from '../shared/terminalBuffer'
 import { parseShellNeutralCommand } from '../shared/shell'
+import { isUnsupportedProjectPath } from '../shared/projectPath'
 import { normalizeTaskTitle } from '../shared/taskTitle'
 import { NotFoundError } from './errors'
 import { t } from './i18n'
@@ -597,6 +598,9 @@ export function addProject(
 }
 
 function assertProjectPathForStorage(folderPath: string): void {
+  if (isUnsupportedProjectPath(folderPath)) {
+    throw new Error(t('errors:database.projectPathUnsupported'))
+  }
   if (
     typeof folderPath !== 'string' || !folderPath || folderPath.length > 16_384 ||
     folderPath.includes('\0') || folderPath.trim() !== folderPath ||
@@ -611,10 +615,6 @@ function defaultProjectDirectoryInspector(folderPath: string): boolean {
 }
 
 function projectPathIdentity(folderPath: string): string {
-  const wsl = folderPath.match(/^\\\\(?:wsl\$|wsl\.localhost)\\([^\\]+)(?:\\(.*))?$/i)
-  if (wsl) {
-    return `wsl:${wsl[1].toLocaleLowerCase('en-US')}:${(wsl[2] ?? '').replaceAll('\\', '/')}`
-  }
   if (path.win32.isAbsolute(folderPath)) {
     return `win:${path.win32.normalize(folderPath).toLocaleLowerCase('en-US')}`
   }
@@ -701,11 +701,8 @@ export type TerminalSessionRecord = {
 }
 
 export type TerminalExecutionTargetMetadata = {
-  kind: 'native' | 'wsl'
+  kind: 'native'
   displayName: string
-  distributionName?: string
-  wslVersion?: 1 | 2
-  loginShellPath?: string
 }
 
 export function getTerminalSessionDisplayCommand(
@@ -755,21 +752,12 @@ export function getTerminalSessionExecutionTarget(
     if (diagnostic && typeof diagnostic === 'object' && !Array.isArray(diagnostic)) {
       const value = diagnostic as Record<string, unknown>
       if (
-        (value.kind === 'native' || value.kind === 'wsl') &&
+        value.kind === 'native' &&
         typeof value.displayName === 'string' && value.displayName.length > 0 && value.displayName.length <= 512
       ) {
         return {
-          kind: value.kind,
-          displayName: value.displayName,
-          ...(value.kind === 'wsl' && typeof value.distributionName === 'string'
-            ? { distributionName: value.distributionName }
-            : {}),
-          ...(value.wslVersion === 1 || value.wslVersion === 2
-            ? { wslVersion: value.wslVersion }
-            : {}),
-          ...(typeof value.loginShellPath === 'string' && value.loginShellPath.startsWith('/')
-            ? { loginShellPath: value.loginShellPath }
-            : {})
+          kind: 'native',
+          displayName: value.displayName
         }
       }
     }
@@ -780,13 +768,6 @@ export function getTerminalSessionExecutionTarget(
     const value = target as Record<string, unknown>
     if (typeof value.displayName !== 'string' || !value.displayName || value.displayName.length > 512) {
       return undefined
-    }
-    if (value.kind === 'wsl' && typeof value.distributionName === 'string') {
-      return {
-        kind: 'wsl',
-        displayName: value.displayName,
-        distributionName: value.distributionName
-      }
     }
     return value.kind === 'native'
       ? { kind: 'native', displayName: value.displayName }

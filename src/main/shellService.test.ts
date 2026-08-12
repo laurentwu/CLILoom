@@ -1,6 +1,5 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import {
-  createWslTargetId,
   DEFAULT_SHELL_PREFERENCES,
   type DetectedShell,
   type ShellPreferences
@@ -13,7 +12,6 @@ import {
   selectDefaultShell,
   type ShellProbe
 } from './shellService'
-import type { WslService } from './wslService'
 
 function createProbe(
   files: Map<string, string>,
@@ -177,11 +175,7 @@ describe('ShellService selection', () => {
       settingsService: settings.service,
       platform: 'win32',
       environment: {},
-      probe: createProbe(new Map()),
-      wslService: {
-        discover: vi.fn(async () => ({ targets: [], authoritative: true })),
-        clearCache: vi.fn()
-      } as unknown as WslService
+      probe: createProbe(new Map())
     })
 
     await expect(service.resolveProjectPath({
@@ -191,7 +185,7 @@ describe('ShellService selection', () => {
       executablePath: 'C:\\Windows\\System32\\cmd.exe',
       source: 'comspec'
     }, '\\\\wsl.localhost\\Ubuntu\\home\\me\\repo'))
-      .rejects.toThrow(/matching WSL distribution/i)
+      .rejects.toThrow('This project path is not supported')
   })
 
   it('persists explicit selection and blocks launch when it disappears', () => {
@@ -260,102 +254,18 @@ describe('ShellService selection', () => {
     expect(settings.getPreferences()).toEqual(DEFAULT_SHELL_PREFERENCES)
   })
 
-  it('lists explicit WSL targets without adding them to Windows automatic selection', async () => {
-    const distributionName = 'Ubuntu Dev'
-    const wslCandidate = {
-      kind: 'wsl' as const,
-      id: createWslTargetId(distributionName),
-      displayName: distributionName,
-      family: 'posix' as const,
-      distributionName,
-      wslVersion: 2 as const,
-      validationState: 'unvalidated' as const
-    }
-    const resolved = {
-      ...wslCandidate,
-      validationState: 'ready' as const,
-      wslExecutablePath: 'C:\\Windows\\System32\\wsl.exe',
-      loginShellPath: '/bin/bash',
-      homeDirectory: '/home/me',
-      defaultUid: 1000,
-      userShellPath: '/home/me/.local/bin:/usr/local/bin:/usr/bin:/bin'
-    }
-    const discover = vi.fn(async () => ({ targets: [wslCandidate], authoritative: true }))
-    const wslService = {
-      discover,
-      clearCache: vi.fn(),
-      resolveTarget: vi.fn(async () => resolved)
-    } as unknown as WslService
+  it('refreshes only the native shell catalog', async () => {
+    const files = new Map([['/bin/sh', '/bin/sh']])
     const settings = createSettings()
     const service = new ShellService({
       settingsService: settings.service,
-      platform: 'win32',
-      environment: {
-        PATH: 'C:\\Windows\\System32',
-        ComSpec: 'C:\\Windows\\System32\\cmd.exe'
-      },
-      probe: createProbe(new Map([
-        ['c:\\windows\\system32\\cmd.exe', 'C:\\Windows\\System32\\cmd.exe']
-      ])),
-      wslService
+      platform: 'linux',
+      environment: { PATH: '/bin' },
+      probe: createProbe(files)
     })
 
-    const catalog = await service.refresh()
-    expect(catalog.candidates).toEqual(expect.arrayContaining([
-      expect.objectContaining({ displayName: 'Command Prompt' }),
-      expect.objectContaining({ id: wslCandidate.id, distributionName })
-    ]))
-    expect(catalog.effectiveShell).toMatchObject({ displayName: 'Command Prompt' })
-
-    service.select(wslCandidate.id)
-    await expect(service.resolveEffectiveTarget()).resolves.toMatchObject({
-      distributionName,
-      loginShellPath: '/bin/bash'
-    })
-    expect(settings.getPreferences()).toMatchObject({
-      version: 2,
-      selection: {
-        mode: 'explicit',
-        shell: { kind: 'wsl', distributionName }
-      }
-    })
-  })
-
-  it('removes an unregistered WSL target after an authoritative empty refresh', async () => {
-    const distributionName = 'Ubuntu'
-    const candidate = {
-      kind: 'wsl' as const,
-      id: createWslTargetId(distributionName),
-      displayName: distributionName,
-      family: 'posix' as const,
-      distributionName,
-      validationState: 'unvalidated' as const
-    }
-    const discover = vi.fn()
-      .mockResolvedValueOnce({ targets: [candidate], authoritative: true })
-      .mockResolvedValueOnce({
-        targets: [],
-        authoritative: true,
-        error: 'WSL is available, but no Linux distributions are registered'
-      })
-    const settings = createSettings()
-    const service = new ShellService({
-      settingsService: settings.service,
-      platform: 'win32',
-      environment: {},
-      probe: createProbe(new Map()),
-      wslService: {
-        discover,
-        clearCache: vi.fn()
-      } as unknown as WslService
-    })
-
-    await service.refresh()
-    service.select(candidate.id)
-    const snapshot = await service.refresh()
-
-    expect(snapshot.candidates).toEqual([])
-    expect(snapshot.effectiveShell).toBeNull()
-    expect(snapshot.catalogError).toContain('no Linux distributions')
+    expect((await service.refresh()).candidates).toEqual([
+      expect.objectContaining({ displayName: 'sh', executablePath: '/bin/sh' })
+    ])
   })
 })

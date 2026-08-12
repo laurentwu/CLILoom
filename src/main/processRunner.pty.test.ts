@@ -111,7 +111,6 @@ beforeEach(() => {
   mocks.spawn.mockReset()
   mocks.ptySpawn.mockReset()
 })
-
 describe('ProcessRunner non-interactive PTY output', () => {
   it('runs non-interactive commands in a PTY while rejecting input', async () => {
     const ptyWrite = vi.fn()
@@ -801,404 +800,107 @@ describe('ProcessRunner shell resolution and legacy retries', () => {
     db.close()
   })
 
-  it('retries a v3 WSL session with its original distribution and target cwd', async () => {
-    const resolveEffectiveShell = vi.fn(() => {
-      throw new Error('the current global target must not be used')
-    })
-    const resolveTarget = vi.fn(async () => ({
-      kind: 'wsl' as const,
-      id: 'wsl:v1:Ubuntu',
-      displayName: 'Ubuntu',
-      family: 'posix' as const,
-      distributionName: 'Ubuntu',
-      validationState: 'ready' as const,
-      wslVersion: 2 as const,
-      wslExecutablePath: 'C:\\Windows\\System32\\wsl.exe',
-      loginShellPath: '/bin/bash',
-      homeDirectory: '/home/me',
-      defaultUid: 1000,
-      userShellPath: '/home/me/.local/bin:/usr/local/bin:/usr/bin:/bin'
-    }))
-    const finalizeWslSession = vi.fn(async () => ({ terminated: true }))
+  it('rejects a legacy WSL retry before mutating history or spawning a process', () => {
     const shellResolver: EffectiveShellResolver = {
-      resolveEffectiveShell,
-      resolveTarget,
-      finalizeWslSession
-    }
-    mocks.ptySpawn.mockReturnValue({
-      pid: 7171,
-      onData: vi.fn(),
-      onExit: vi.fn((callback: (event: { exitCode: number }) => void) => {
-        mocks.ptyExitHandlers.push(callback)
-      }),
-      write: vi.fn(),
-      resize: vi.fn(),
-      kill: vi.fn()
-    })
-    const { db, runner } = createRunner(() => null, shellResolver, undefined, 'win32')
-    const now = new Date().toISOString()
-    db.prepare(
-      'insert into terminal_sessions (id, task_id, node_id, kind, command, cwd, status, transcript, created_at, updated_at, request_json) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-    ).run(
-      'wsl-retry',
-      'wsl-task',
-      'wsl-node',
-      'non-interactive',
-      'pwd',
-      '/wrong-display-column',
-      'closed',
-      '',
-      now,
-      now,
-      JSON.stringify({
-        version: 3,
-        retry: {
-          command: {
-            version: 1,
-            segments: [{ type: 'literal', value: 'pwd' }],
-            bindings: {}
-          },
-          sourceCwd: 'C:\\work\\demo',
-          targetCwd: '/tmp/original',
-          target: {
-            kind: 'wsl',
-            id: 'wsl:v1:Ubuntu',
-            displayName: 'Ubuntu',
-            family: 'posix',
-            distributionName: 'Ubuntu'
-          }
-        }
+      resolveEffectiveShell: () => ({
+        id: 'posix:%2Fbin%2Fbash',
+        displayName: 'bash',
+        family: 'posix',
+        executablePath: '/bin/bash',
+        source: 'system'
       })
-    )
-
-    const retried = runner.retry('wsl-retry')
-    await vi.waitFor(() => expect(mocks.ptySpawn).toHaveBeenCalledOnce())
-    const [executable, args] = mocks.ptySpawn.mock.calls[0]
-    expect(executable).toBe('C:\\Windows\\System32\\wsl.exe')
-    expect(args).toEqual(expect.arrayContaining([
-      '--distribution', 'Ubuntu', '--cd', '/tmp/original'
-    ]))
-    expect(resolveTarget).toHaveBeenCalledWith(expect.objectContaining({
-      kind: 'wsl',
-      distributionName: 'Ubuntu'
-    }))
-    expect(resolveEffectiveShell).not.toHaveBeenCalled()
-    mocks.ptyExitHandlers[0]({ exitCode: 0 })
-    await expect(retried.result).resolves.toMatchObject({ exitCode: 0 })
-    expect(finalizeWslSession).toHaveBeenCalledWith(expect.objectContaining({
-      distributionName: 'Ubuntu'
-    }))
-    const stored = db.prepare('select cwd from terminal_sessions where id = ?')
-      .get('wsl-retry') as { cwd: string }
-    expect(stored.cwd).toBe('/tmp/original')
-    db.close()
-  })
-
-  it('converts and upgrades a legacy retry when the current target is WSL', async () => {
-    const target = {
-      kind: 'wsl' as const,
-      id: 'wsl:v1:Ubuntu',
-      displayName: 'Ubuntu',
-      family: 'posix' as const,
-      distributionName: 'Ubuntu',
-      validationState: 'ready' as const,
-      wslVersion: 2 as const,
-      wslExecutablePath: 'C:\\Windows\\System32\\wsl.exe',
-      loginShellPath: '/bin/bash',
-      homeDirectory: '/home/me',
-      defaultUid: 1000,
-      userShellPath: '/home/me/.local/bin:/usr/local/bin:/usr/bin:/bin'
     }
-    const resolveTargetPath = vi.fn(async () => '/mnt/c/work/legacy repo')
-    const finalizeWslSession = vi.fn(async () => ({ terminated: true }))
-    const sends: Array<{
-      channel: string
-      payload: {
-        cwd?: string
-        execution_target?: {
-          distributionName?: string
-          wslVersion?: number
-          loginShellPath?: string
-        }
-      }
-    }> = []
-    const shellResolver: EffectiveShellResolver = {
-      resolveEffectiveShell: () => {
-        throw new Error('the async target resolver must be used')
-      },
-      resolveEffectiveTarget: async () => target,
-      resolveTargetPath,
-      finalizeWslSession
-    }
-    mocks.ptySpawn.mockReturnValue({
-      pid: 7181,
-      onData: vi.fn(),
-      onExit: vi.fn((callback: (event: { exitCode: number }) => void) => {
-        mocks.ptyExitHandlers.push(callback)
-      }),
-      write: vi.fn(),
-      resize: vi.fn(),
-      kill: vi.fn()
-    })
-    const { db, runner } = createRunner(() => ({
-      webContents: {
-        send: (channel: string, payload: unknown) => {
-          sends.push({ channel, payload: payload as (typeof sends)[number]['payload'] })
-        }
-      }
-    }), shellResolver, undefined, 'win32')
+    const { db, runner } = createRunner(() => null, shellResolver)
     const now = new Date().toISOString()
-    db.prepare(
-      'insert into terminal_sessions (id, task_id, node_id, kind, command, cwd, status, transcript, created_at, updated_at, request_json) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-    ).run(
-      'legacy-wsl-retry',
-      'legacy-wsl-task',
-      'legacy-wsl-node',
-      'non-interactive',
-      'pwd',
-      'C:\\work\\legacy repo',
-      'closed',
-      '',
-      now,
-      now,
-      JSON.stringify({
-        version: 2,
-        retry: {
-          command: {
-            version: 1,
-            segments: [{ type: 'literal', value: 'pwd' }],
-            bindings: {}
-          }
-        }
-      })
-    )
-
-    const retried = runner.retry('legacy-wsl-retry')
-    await vi.waitFor(() => expect(mocks.ptySpawn).toHaveBeenCalledOnce())
-
-    expect(resolveTargetPath).toHaveBeenCalledWith(target, 'C:\\work\\legacy repo')
-    expect(mocks.ptySpawn.mock.calls[0][1]).toEqual(expect.arrayContaining([
-      '--distribution', 'Ubuntu', '--cd', '/mnt/c/work/legacy repo'
-    ]))
-    const resolvedEvent = sends.filter((event) => event.channel === 'terminal:restarted').at(-1)
-    expect(resolvedEvent?.payload).toMatchObject({
-      cwd: '/mnt/c/work/legacy repo',
-      execution_target: {
-        distributionName: 'Ubuntu',
-        wslVersion: 2,
-        loginShellPath: '/bin/bash'
-      }
-    })
-    const stored = db.prepare(
-      'select cwd, request_json from terminal_sessions where id = ?'
-    ).get('legacy-wsl-retry') as { cwd: string; request_json: string }
-    expect(stored.cwd).toBe('/mnt/c/work/legacy repo')
-    expect(JSON.parse(stored.request_json)).toMatchObject({
+    const requestJson = JSON.stringify({
       version: 3,
       retry: {
-        sourceCwd: 'C:\\work\\legacy repo',
-        targetCwd: '/mnt/c/work/legacy repo',
-        target: { kind: 'wsl', distributionName: 'Ubuntu' }
-      }
-    })
-
-    mocks.ptyExitHandlers[0]({ exitCode: 0 })
-    await expect(retried.result).resolves.toMatchObject({ exitCode: 0 })
-    expect(finalizeWslSession).toHaveBeenCalledOnce()
-    db.close()
-  })
-
-  it('proves WSL-side cleanup before terminating the host proxy', async () => {
-    const target = {
-      kind: 'wsl' as const,
-      id: 'wsl:v1:Ubuntu',
-      displayName: 'Ubuntu',
-      family: 'posix' as const,
-      distributionName: 'Ubuntu',
-      validationState: 'ready' as const,
-      wslExecutablePath: 'C:\\Windows\\System32\\wsl.exe',
-      loginShellPath: '/bin/bash',
-      homeDirectory: '/home/me',
-      defaultUid: 1000,
-      userShellPath: '/home/me/.local/bin:/usr/local/bin:/usr/bin:/bin'
-    }
-    const terminateWslSession = vi.fn(async () => ({ terminated: true }))
-    const terminateTree = vi.fn(async () => ({ terminated: true }))
-    const terminal = {
-      pid: 7272,
-      onData: vi.fn(),
-      onExit: vi.fn(),
-      write: vi.fn(),
-      resize: vi.fn(),
-      kill: vi.fn()
-    }
-    mocks.ptySpawn.mockReturnValue(terminal)
-    const { db, runner } = createRunner(
-      () => null,
-      {
-        resolveEffectiveShell: () => {
-          throw new Error('not used')
+        command: {
+          version: 1,
+          segments: [{ type: 'literal', value: 'pwd' }],
+          bindings: {}
         },
-        resolveTarget: async () => target,
-        terminateWslSession
-      },
-      terminateTree,
-      'win32'
-    )
-
-    const result = runner.run({
-      taskId: 'wsl-cleanup-task',
-      nodeId: 'wsl-cleanup-node',
-      kind: 'non-interactive',
-      command: 'sleep 60',
-      cwd: '/home/me/repo',
-      executionTarget: {
-        kind: 'wsl',
-        id: target.id,
-        displayName: target.displayName,
-        family: 'posix',
-        distributionName: target.distributionName
+        sourceCwd: 'C:\\work\\demo',
+        targetCwd: '/mnt/c/work/demo',
+        target: {
+          kind: 'wsl',
+          id: 'wsl:v1:Ubuntu',
+          displayName: 'Ubuntu',
+          family: 'posix',
+          distributionName: 'Ubuntu'
+        }
       }
     })
-    await vi.waitFor(() => expect(mocks.ptySpawn).toHaveBeenCalledOnce())
-    const session = db.prepare('select id from terminal_sessions limit 1').get() as { id: string }
+    db.prepare(
+      'insert into terminal_sessions (id, task_id, node_id, kind, command, cwd, status, transcript, created_at, updated_at, request_json) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    ).run(
+      'legacy-target-retry',
+      'legacy-target-task',
+      'legacy-target-node',
+      'non-interactive',
+      'pwd',
+      '/mnt/c/work/demo',
+      'closed',
+      'preserved transcript',
+      now,
+      now,
+      requestJson
+    )
+    const before = db.prepare(
+      'select status, transcript, request_json from terminal_sessions where id = ?'
+    ).get('legacy-target-retry')
 
-    await expect(runner.kill(session.id)).resolves.toBe(true)
-    await expect(result).resolves.toMatchObject({ status: 'killed', exitCode: null })
-    expect(terminateWslSession).toHaveBeenCalledWith(expect.objectContaining({
-      distributionName: 'Ubuntu',
-      sessionId: session.id
-    }))
-    expect(terminateTree).toHaveBeenCalledWith(terminal)
-    expect(terminateWslSession.mock.invocationCallOrder[0])
-      .toBeLessThan(terminateTree.mock.invocationCallOrder[0])
+    expect(() => runner.retry('legacy-target-retry'))
+      .toThrow('historical execution target is no longer supported')
+    expect(db.prepare(
+      'select status, transcript, request_json from terminal_sessions where id = ?'
+    ).get('legacy-target-retry')).toEqual(before)
+    expect(mocks.ptySpawn).not.toHaveBeenCalled()
     db.close()
   })
 
-  it('keeps a naturally exited WSL session retryable when cleanup is unconfirmed', async () => {
+  it('cancels terminals and hooks still waiting for native target validation', async () => {
     const target = {
-      kind: 'wsl' as const,
-      id: 'wsl:v1:Ubuntu',
-      displayName: 'Ubuntu',
+      id: 'posix:%2Fbin%2Fbash',
+      displayName: 'bash',
       family: 'posix' as const,
-      distributionName: 'Ubuntu',
-      validationState: 'ready' as const,
-      wslExecutablePath: 'C:\\Windows\\System32\\wsl.exe',
-      loginShellPath: '/bin/bash',
-      homeDirectory: '/home/me',
-      defaultUid: 1000,
-      userShellPath: '/home/me/.local/bin:/usr/local/bin:/usr/bin:/bin'
-    }
-    const finalizeWslSession = vi.fn(async () => ({
-      terminated: false,
-      error: 'natural cleanup could not be confirmed'
-    }))
-    const terminateWslSession = vi.fn(async () => ({ terminated: true }))
-    const terminateTree = vi.fn(async () => ({ terminated: true }))
-    let exitHandler: ((event: { exitCode: number }) => void) | undefined
-    mocks.ptySpawn.mockReturnValue({
-      pid: 7273,
-      onData: vi.fn(),
-      onExit: vi.fn((handler: (event: { exitCode: number }) => void) => {
-        exitHandler = handler
-      }),
-      write: vi.fn(),
-      resize: vi.fn(),
-      kill: vi.fn()
-    })
-    const { db, runner } = createRunner(
-      () => null,
-      {
-        resolveEffectiveShell: () => {
-          throw new Error('not used')
-        },
-        resolveTarget: async () => target,
-        finalizeWslSession,
-        terminateWslSession
-      },
-      terminateTree,
-      'win32'
-    )
-    const result = runner.run({
-      taskId: 'natural-wsl-task',
-      nodeId: 'natural-wsl-node',
-      kind: 'non-interactive',
-      command: 'true',
-      cwd: '/home/me/repo',
-      executionTarget: {
-        kind: 'wsl',
-        id: target.id,
-        displayName: target.displayName,
-        family: 'posix',
-        distributionName: target.distributionName
-      }
-    })
-    await vi.waitFor(() => expect(mocks.ptySpawn).toHaveBeenCalledOnce())
-    const session = db.prepare('select id from terminal_sessions limit 1').get() as { id: string }
-
-    exitHandler?.({ exitCode: 0 })
-    await expect(result).resolves.toMatchObject({ status: 'failed', exitCode: -1 })
-    expect(runner.hasLiveSession(session.id)).toBe(true)
-    expect(terminateWslSession).not.toHaveBeenCalled()
-    expect(terminateTree).not.toHaveBeenCalled()
-
-    await expect(runner.killAll()).resolves.toBe(1)
-    expect(terminateWslSession).toHaveBeenCalledOnce()
-    expect(terminateTree).toHaveBeenCalledOnce()
-    expect(runner.hasLiveSession(session.id)).toBe(false)
-    db.close()
-  })
-
-  it('cancels terminals and hooks that are still waiting for WSL target validation', async () => {
-    const target = {
-      kind: 'wsl' as const,
-      id: 'wsl:v1:Ubuntu',
-      displayName: 'Ubuntu',
-      family: 'posix' as const,
-      distributionName: 'Ubuntu',
-      validationState: 'ready' as const,
-      wslExecutablePath: 'C:\\Windows\\System32\\wsl.exe',
-      loginShellPath: '/bin/bash',
-      homeDirectory: '/home/me',
-      defaultUid: 1000,
-      userShellPath: '/home/me/.local/bin:/usr/local/bin:/usr/bin:/bin'
+      executablePath: '/bin/bash',
+      source: 'system' as const
     }
     let completeResolution: (value: typeof target) => void = () => undefined
     const resolution = new Promise<typeof target>((resolve) => {
       completeResolution = resolve
     })
     const shellResolver: EffectiveShellResolver = {
-      resolveEffectiveShell: () => {
-        throw new Error('not used')
-      },
+      resolveEffectiveShell: () => target,
       resolveTarget: async () => resolution
     }
-    const { db, runner } = createRunner(() => null, shellResolver, undefined, 'win32')
+    const { db, runner } = createRunner(() => null, shellResolver)
     const descriptor = {
-      kind: 'wsl' as const,
+      kind: 'native' as const,
       id: target.id,
       displayName: target.displayName,
-      family: 'posix' as const,
-      distributionName: target.distributionName
+      family: target.family,
+      executablePath: target.executablePath
     }
     const terminal = runner.run({
-      taskId: 'pending-wsl-task',
+      taskId: 'pending-target-task',
       nodeId: 'pending-terminal',
       kind: 'non-interactive',
       command: 'echo terminal',
-      cwd: '/home/me/repo',
+      cwd: '/repo',
       executionTarget: descriptor
     })
     const hook = runner.runHook({
-      taskId: 'pending-wsl-task',
+      taskId: 'pending-target-task',
       nodeId: 'pending-hook',
       hookType: 'start',
       command: 'echo hook',
-      cwd: '/home/me/repo',
+      cwd: '/repo',
       executionTarget: descriptor
     })
 
-    const cleanup = runner.killByTask('pending-wsl-task')
+    const cleanup = runner.killByTask('pending-target-task')
     completeResolution(target)
 
     await expect(cleanup).resolves.toBe(2)

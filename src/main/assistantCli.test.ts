@@ -24,7 +24,7 @@ function collectOutput(): { stream: Writable; read: () => string } {
 
 describe('assistant CLI stdin', () => {
   it('forwards piped multiline Unicode input to the bridge without alteration', async () => {
-    const input = '{\n  "id": "管道-😀",\n  "name": "PowerShell 与 WSL"\n}\n'
+    const input = '{\n  "id": "管道-😀",\n  "name": "PowerShell 与 Bash"\n}\n'
     let received: AssistantBridgeRequest | undefined
     const bridge = await startAssistantCommandBridge({
       handle: async (request: AssistantBridgeRequest) => {
