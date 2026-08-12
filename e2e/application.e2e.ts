@@ -106,7 +106,7 @@ test('keeps settings menu rows on one line within the window', async () => {
 
   const shellTrigger = settingsMenu
     .locator('[data-slot="dropdown-menu-sub-trigger"]')
-    .filter({ hasText: 'Default terminal environment' })
+    .filter({ hasText: 'Terminal Shell' })
   await shellTrigger.hover()
   const shellMenu = mainPage.locator('[data-slot="dropdown-menu-sub-content"][data-state="open"]')
   await assertSingleLineMenu(shellMenu)
