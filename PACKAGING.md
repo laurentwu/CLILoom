@@ -16,7 +16,7 @@ Linux Wayland sessions use Electron's native Wayland default behavior. No `--ozo
 
 - Node.js `>=24.15.0 <25` and npm. This is the development/CI toolchain requirement (resolving dependencies, running npm, packaging); it is independent of the Node version embedded in Electron. The repository pins this baseline with an `.nvmrc` containing `24`, an `engines.node` range of `>=24.15.0 <25`, and `node-version: 24` in the GitHub Actions workflow. The minimum `24.15.0` also satisfies jsdom 30's Node 24 support range. The host Node 24 toolchain and Electron 43's embedded Node (24.18.1) are the same Node generation but released independently, so their patch versions need not match.
 - The native build toolchain for the host platform (C++20 capable):
-  - Windows: Visual Studio 2022 C++ build tools. ARM64 builds require the ARM64 toolchain.
+  - Windows: Visual Studio 2022 C++ build tools. ARM64 builds require the ARM64 toolchain. The same toolchain builds the small Console-subsystem `cliloom-cli.exe` used for reliable stdin forwarding.
   - macOS: current Xcode command line tools.
   - Linux: GCC or Clang supporting C++20. Ubuntu 24.04 runners satisfy this.
 - A host OS matching the package platform.
@@ -92,6 +92,7 @@ node scripts/clean.cjs all
 ```sh
 npm test
 npm run test:shell-smoke
+npm run test:windows-cli-smoke # real Windows only; PowerShell stdin pipeline
 npm run test:wsl-smoke       # real Windows only; explicit SKIP elsewhere
 npm run typecheck
 npm run build
@@ -102,7 +103,7 @@ npm run package:appimage
 npm run package:linux
 ```
 
-`npm test` intentionally excludes `src/main/shellSmoke.test.ts`, including when that path is passed as a filter. Use `npm run test:shell-smoke` to run it. The smoke suite uses the host's real Shell, `node-pty`, and child-process implementation, so run it on the same operating system as the package being validated. User-facing Shell selection and troubleshooting are documented in [SHELLS.md](SHELLS.md).
+`npm test` intentionally excludes `src/main/shellSmoke.test.ts`, including when that path is passed as a filter. Use `npm run test:shell-smoke` to run it. The smoke suite uses the host's real Shell, `node-pty`, and child-process implementation, so run it on the same operating system as the package being validated. On Windows, `npm run build:main` also builds `dist/native/cliloom-cli.exe`; `npm run test:windows-cli-smoke` verifies that it remains a Console application and that a multiline Unicode PowerShell pipeline reaches the assistant bridge intact. User-facing Shell selection and troubleshooting are documented in [SHELLS.md](SHELLS.md).
 
 ### Windows WSL smoke
 
@@ -115,7 +116,7 @@ $env:CLILOOM_WSL_ASSISTANT_COMMAND = 'codex'  # optional WSL-native CLI check
 npm run test:wsl-smoke
 ```
 
-The command builds the main process, re-enters Electron's Node runtime for native-module compatibility, uses the current trusted-launcher implementation and actual `node-pty`/`ProcessRunner`, and validates catalog discovery, default user/login Shell, Windows and WSL path round-trips, `WSLENV`, helper isolation from user `PATH`/`HOME`/`XDG_RUNTIME_DIR`, `--cd`, Windows interop, Hook execution, historical retry, timeout, immediate stop, `killAll`, cgroup cleanup of a background process that clears its environment and creates a new Linux session, and next-validation recovery after a session leader is killed. Reliable containment requires a working systemd user scope on cgroup v2; a distribution without that capability must fail validation rather than use PID/session heuristics. On non-Windows the command prints `SKIP` and explicitly states that no WSL behavior was validated; that result must never be recorded as a WSL pass. Run the matrix on WSL 1 and WSL 2 when available, on default and non-default distributions, with both drive and WSL-native project paths, and on x64/ARM64 for every published architecture. Store-serviced WSL must continue to work through `%SystemRoot%\System32\wsl.exe` (or `Sysnative` for a future 32-bit host), not a user WindowsApps alias.
+The command builds the main process and Console CLI, first pipes multiline Unicode JSON from WSL through `cliloom-cli.exe` into a real assistant bridge, then re-enters Electron's Node runtime for native-module compatibility. It uses the current trusted-launcher implementation and actual `node-pty`/`ProcessRunner`, and validates catalog discovery, default user/login Shell, Windows and WSL path round-trips, `WSLENV`, helper isolation from user `PATH`/`HOME`/`XDG_RUNTIME_DIR`, `--cd`, Windows interop, Hook execution, historical retry, timeout, immediate stop, `killAll`, cgroup cleanup of a background process that clears its environment and creates a new Linux session, and next-validation recovery after a session leader is killed. Reliable containment requires a working systemd user scope on cgroup v2; a distribution without that capability must fail validation rather than use PID/session heuristics. On non-Windows the command prints `SKIP` and explicitly states that no WSL behavior was validated; that result must never be recorded as a WSL pass. Run the matrix on WSL 1 and WSL 2 when available, on default and non-default distributions, with both drive and WSL-native project paths, and on x64/ARM64 for every published architecture. Store-serviced WSL must continue to work through `%SystemRoot%\System32\wsl.exe` (or `Sysnative` for a future 32-bit host), not a user WindowsApps alias.
 
 `package:dir` creates an unpacked application for the current platform and architecture. Platform commands also default to the current host architecture. `package:appimage` creates only the portable Linux AppImage, while `package:linux` creates AppImage, DEB, and RPM outputs. A Linux unpacked directory is a build intermediate, not an installable release: before launching it, configure `release/linux-unpacked/chrome-sandbox` as root-owned mode `4755` (run `chown` before `chmod`, because changing ownership clears the SUID bit), or use a host with permitted unprivileged user namespaces. DEB/RPM installation configures the packaged helper ownership and mode automatically; AppImage cannot install a privileged helper and therefore requires usable user namespaces. To select an architecture explicitly on matching hardware, append the electron-builder flag:
 
@@ -224,6 +225,7 @@ After satisfying the Linux sandbox prerequisite above, launch the `package:dir` 
 
 - `app.asar.unpacked/node_modules/better-sqlite3/prebuilds/` contains the `.node` file matching the target platform/architecture (for example `linux-x64.node`).
 - `app.asar.unpacked/node_modules/node-pty/` contains the target platform's native binding and runtime helper files.
+- Windows unpacked applications contain `cliloom-cli.exe` with PE subsystem `IMAGE_SUBSYSTEM_WINDOWS_CUI`, while `CLILoom.exe` remains `IMAGE_SUBSYSTEM_WINDOWS_GUI`. A PowerShell pipe and a WSL pipe must both deliver non-empty Unicode workflow JSON to the bridge.
 - The ASAR file list does not contain project declaration files (`dist/**/*.d.ts`, `dist/**/*.d.ts.map`, `dist/**/*.tsbuildinfo`).
 - The ASAR file list contains `LICENSE` and `THIRD_PARTY_NOTICES.md`, and the Electron runtime still contains its upstream `LICENSE` and `LICENSES.chromium.html` files.
 - Installed Linux DEB/RPM packages contain a root-owned `chrome-sandbox` with mode `4755`.
@@ -236,7 +238,7 @@ The `Package` workflow runs manually through `workflow_dispatch` or when a `v*` 
 
 1. **Validates the source** on Ubuntu: runs tests, type checks, builds the application, then runs Electron end-to-end tests.
 2. **Runs native shell smoke** on Windows, macOS, and Linux: cleanup contract tests first (`scripts/clean.test.ts`), then real Shell/PTY smoke tests.
-3. **Packages all six combinations** on native runners: after `npm ci`, runs the database/PTY smoke test on the target architecture, then builds and packages. Linux jobs first launch the generated AppImage, then install the generated DEB, and exercise both under Xvfb. The checks assert that neither the browser nor renderer process has `--no-sandbox`, both real production entries render without CSP violations, and renderer sandboxing remains enabled. AppImage, DEB, and RPM files are retained as workflow artifacts.
+3. **Packages all six combinations** on native runners: after `npm ci`, runs the database/PTY smoke test on the target architecture, then builds and packages. Windows jobs verify the final unpacked Console CLI with a real PowerShell stdin pipeline. Linux jobs first launch the generated AppImage, then install the generated DEB, and exercise both under Xvfb. The checks assert that neither the browser nor renderer process has `--no-sandbox`, both real production entries render without CSP violations, and renderer sandboxing remains enabled. AppImage, DEB, and RPM files are retained as workflow artifacts.
 
 Node setup uses `node-version: 24` (satisfying `>=24.15.0 <25`, matching `.nvmrc`) for all orchestration. The host Node version is distinct from Electron's embedded Node 24. Packaging waits for both source validation and all three native smoke jobs.
 

@@ -44,7 +44,10 @@ import { getAssistantCliArguments, runAssistantCliMode } from './assistantCli'
 import { AssistantCommandHandler } from './assistantCommandHandler'
 import { AssistantTerminalService } from './assistantTerminalService'
 import { AssistantWindowManager } from './assistantWindowManager'
-import { ensureAssistantWorkspace } from './assistantWorkspace'
+import {
+  ensureAssistantWorkspace,
+  WINDOWS_ASSISTANT_CLI_EXECUTABLE
+} from './assistantWorkspace'
 import { SettingsService } from './settingsService'
 import { ShellService } from './shellService'
 import { isWslExecutionTarget } from '../shared/shell'
@@ -204,6 +207,13 @@ function startDesktopApplication(): void {
     const workspace = ensureAssistantWorkspace({
       userDataPath: app.getPath('userData'),
       executablePath: process.execPath,
+      ...(process.platform === 'win32'
+        ? {
+            windowsConsoleLauncherPath: app.isPackaged
+              ? path.join(path.dirname(process.execPath), WINDOWS_ASSISTANT_CLI_EXECUTABLE)
+              : path.join(app.getAppPath(), 'dist', 'native', WINDOWS_ASSISTANT_CLI_EXECUTABLE)
+          }
+        : {}),
       ...(process.defaultApp ? { appEntryPath: app.getAppPath() } : {}),
       noSandbox: app.commandLine.hasSwitch('no-sandbox')
     })

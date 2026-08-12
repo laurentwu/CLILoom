@@ -74,4 +74,32 @@ describe('assistant workspace file boundary', () => {
       "'/mnt/c/opt/Electron/electron.exe' '--no-sandbox' '/mnt/c/opt/CLILoom/app' '--cliloom-cli'"
     )
   })
+
+  it('routes Windows and WSL commands through the Console-subsystem launcher', () => {
+    const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'cliloom-assistant-workspace-'))
+    temporaryDirectories.push(temporaryRoot)
+    const workspace = ensureAssistantWorkspace({
+      userDataPath: temporaryRoot,
+      executablePath: 'C:\\Program Files\\CLILoom\\CLILoom.exe',
+      windowsConsoleLauncherPath: 'C:\\Program Files\\CLILoom\\cliloom-cli.exe'
+    })
+
+    expect(workspace.hostLauncherArguments).toEqual([
+      'C:\\Program Files\\CLILoom\\cliloom-cli.exe',
+      'C:\\Program Files\\CLILoom\\CLILoom.exe',
+      '--cliloom-cli'
+    ])
+    expect(readAssistantWorkspaceFile(workspace.rootPath, 'bin/cliloom.cmd')).toContain(
+      '"C:\\Program Files\\CLILoom\\cliloom-cli.exe" "C:\\Program Files\\CLILoom\\CLILoom.exe" "--cliloom-cli"'
+    )
+
+    ensureWslAssistantLauncher(workspace, [
+      '/mnt/c/Program Files/CLILoom/cliloom-cli.exe',
+      'C:\\Program Files\\CLILoom\\CLILoom.exe',
+      '--cliloom-cli'
+    ])
+    expect(readAssistantWorkspaceFile(workspace.rootPath, 'wsl-bin/cliloom')).toContain(
+      "'/mnt/c/Program Files/CLILoom/cliloom-cli.exe' 'C:\\Program Files\\CLILoom\\CLILoom.exe' '--cliloom-cli'"
+    )
+  })
 })

@@ -122,8 +122,9 @@ export class AssistantTerminalService {
           hostLauncherArguments[0]
         )
         // The shim command itself is launched by Linux and therefore needs a
-        // WSL path. Its remaining arguments are consumed by the Windows
-        // executable through interop and must retain Win32 path semantics.
+        // WSL path. Its remaining arguments, including the GUI Electron path
+        // behind the Console launcher, are consumed by Windows processes and
+        // must retain Win32 path semantics.
         const linuxLauncherArguments = [linuxExecutable, ...hostLauncherArguments.slice(1)]
         const hostWslLauncher = ensureWslAssistantLauncher(
           this.options.workspace,
