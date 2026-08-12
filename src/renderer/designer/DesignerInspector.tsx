@@ -88,7 +88,7 @@ export function DesignerInspector({
               <SelectContent>
                 <SelectGroup>
                   {nodes.map((node) => (
-                    <SelectItem key={node.id} value={node.id}>
+                    <SelectItem key={node.id} title={node.name} value={node.id}>
                       {node.name}
                     </SelectItem>
                   ))}
@@ -105,7 +105,7 @@ export function DesignerInspector({
               <SelectContent>
                 <SelectGroup>
                   {nodes.map((node) => (
-                    <SelectItem key={node.id} value={node.id}>
+                    <SelectItem key={node.id} title={node.name} value={node.id}>
                       {node.name}
                     </SelectItem>
                   ))}

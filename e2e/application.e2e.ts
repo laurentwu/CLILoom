@@ -95,3 +95,46 @@ test('loads both real production renderer entries without CSP violations', async
   expect(assistantPage.url()).toMatch(/\/dist\/renderer\/assistant\.html$/)
   expect(failures).toEqual([])
 })
+
+test('keeps settings menu rows on one line within the window', async () => {
+  await mainPage.bringToFront()
+  const settingsTrigger = mainPage.locator('.project-rail button[aria-haspopup="menu"]').last()
+  await settingsTrigger.click()
+
+  const settingsMenu = mainPage.locator('[data-slot="dropdown-menu-content"][data-state="open"]')
+  await assertSingleLineMenu(settingsMenu)
+
+  const shellTrigger = settingsMenu
+    .locator('[data-slot="dropdown-menu-sub-trigger"]')
+    .filter({ hasText: 'Default terminal environment' })
+  await shellTrigger.hover()
+  const shellMenu = mainPage.locator('[data-slot="dropdown-menu-sub-content"][data-state="open"]')
+  await assertSingleLineMenu(shellMenu)
+
+  await mainPage.keyboard.press('Escape')
+})
+
+async function assertSingleLineMenu(menu: ReturnType<Page['locator']>) {
+  await expect(menu).toBeVisible()
+  const rows = menu.locator([
+    '[data-slot="dropdown-menu-item"]',
+    '[data-slot="dropdown-menu-label"]',
+    '[data-slot="dropdown-menu-radio-item"]',
+    '[data-slot="dropdown-menu-sub-trigger"]'
+  ].join(','))
+  expect(await rows.count()).toBeGreaterThan(0)
+
+  const measurements = await rows.evaluateAll((elements) => elements.map((element) => ({
+    height: element.getBoundingClientRect().height,
+    text: element.textContent?.trim() ?? '',
+    whiteSpace: getComputedStyle(element).whiteSpace
+  })))
+  expect(measurements.filter((row) => row.whiteSpace !== 'nowrap')).toEqual([])
+  expect(measurements.filter((row) => row.height > 32)).toEqual([])
+
+  const bounds = await menu.boundingBox()
+  const viewportWidth = await mainPage.evaluate(() => window.innerWidth)
+  expect(bounds).not.toBeNull()
+  expect(bounds!.x).toBeGreaterThanOrEqual(0)
+  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewportWidth)
+}

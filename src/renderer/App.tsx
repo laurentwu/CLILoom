@@ -1665,12 +1665,16 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
                   </SelectTrigger>
                   <SelectContent align="start">
                     {!currentWorkflowIsAvailable && (
-                      <SelectItem disabled value={workflow.id}>
+                      <SelectItem
+                        disabled
+                        title={t('workflow:deletedSuffix', { name: workflow.name })}
+                        value={workflow.id}
+                      >
                         {t('workflow:deletedSuffix', { name: workflow.name })}
                       </SelectItem>
                     )}
                     {availableWorkflows.map((item) => (
-                      <SelectItem key={item.id} value={item.id}>
+                      <SelectItem key={item.id} title={item.name} value={item.id}>
                         {item.name}
                       </SelectItem>
                     ))}
