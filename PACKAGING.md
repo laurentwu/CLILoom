@@ -10,7 +10,7 @@ CLILoom targets Electron 43.3.0, which embeds Chromium 150, Node 24.18.1, and No
 - Windows x64 and ARM64.
 - Linux glibc x64 and ARM64 (Ubuntu 24.04 or equivalent). musl/Alpine is not supported.
 
-Packages expose only native host Shell targets. CLILoom has no built-in WSL integration, and running the Linux package inside WSL is unsupported and untested.
+Packages expose only native host Shell targets.
 
 Linux Wayland sessions use Electron's native Wayland default behavior. No `--ozone-platform=x11` override is applied, so X11 sessions continue to use X11. Frameless assistant windows follow the system's default corner rounding on Linux.
 
@@ -202,7 +202,7 @@ After satisfying the Linux sandbox prerequisite above, launch the `package:dir` 
 
 - An existing project database opens correctly (projects, tasks, workflows, skins, terminal history).
 - Creating a new project/task and launching an interactive terminal works (PTY input, resize, exit, close).
-- On Windows, drive-backed and ordinary network UNC projects run with a selected native Shell; `\\wsl$` and `\\wsl.localhost` project paths are rejected before process launch.
+- On Windows, drive-backed and ordinary network UNC projects run with a selected native Shell.
 - The frameless assistant window opens, drags, and closes normally.
 - Replacing a Windows portable build with another build of the same semantic version offers a safe handoff, then updates `.cliloom-workspace.json` and the managed assistant launchers while preserving a user-created file in `assistant-workspace`.
 - Directory selection and skin import accept the Electron 43 default of starting from Downloads (or home if Downloads is absent) when no `defaultPath` is supplied.

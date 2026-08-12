@@ -60,6 +60,7 @@ import {
   type UserSkin
 } from '../shared/appSettings'
 import { getBuiltinSkin } from '../shared/skin'
+import { normalizeProjectName } from '../shared/projectName'
 import { normalizeTaskTitle } from '../shared/taskTitle'
 import {
   appendBoundedText,
@@ -1108,6 +1109,20 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
     }
   }
 
+  async function renameProjectRecord(project: ProjectRecord, name: string) {
+    const normalizedName = normalizeProjectName(name)
+    if (!normalizedName) return
+    try {
+      await window.cliLoom?.renameProject(project.id, normalizedName)
+      setProjects((current) => current.map((item) => (
+        item.id === project.id ? { ...item, name: normalizedName } : item
+      )))
+    } catch (error) {
+      handleError(error, 'renameProject')
+      throw error
+    }
+  }
+
   async function renameTask(task: TaskRecord, title: string) {
     const normalizedTitle = normalizeTaskTitle(title)
     if (!normalizedTitle) return
@@ -1533,6 +1548,7 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
         onSelectProject={selectProject}
         onReorderProject={reorderProject}
         onAddProject={chooseFolder}
+        onRenameProject={renameProjectRecord}
         onDeleteProject={deleteActiveProject}
         onOpenDesigner={() => openDesigner()}
         onOpenAssistant={() => {

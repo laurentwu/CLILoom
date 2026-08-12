@@ -23,6 +23,7 @@ import {
   openDatabase,
   reorderProjects,
   setLastOpenedWorkspace,
+  updateProjectName,
   updateTaskTitle,
   type AppDatabase
 } from './database'
@@ -718,6 +719,10 @@ function registerIpc(): void {
     assertMainSender(event)
     await deleteProjectWithProcesses(db, workflowRuntime, projectId)
     scheduleDatabaseMaintenance()
+  })
+  ipcMain.handle('projects:rename', (event, projectId: string, name: unknown) => {
+    assertMainSender(event)
+    return updateProjectName(db, projectId, name)
   })
   ipcMain.handle('projects:reorder', (event, projectIds: string[]) => {
     assertMainSender(event)

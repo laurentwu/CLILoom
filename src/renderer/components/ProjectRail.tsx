@@ -1,10 +1,11 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   CircleHelp,
   FolderPlus,
   Languages,
   Palette,
+  Pencil,
   RefreshCw,
   Settings,
   SlidersHorizontal,
@@ -20,6 +21,7 @@ import {
 } from '../../shared/shell'
 import type { SupportedLanguage, UserSkin } from '../../shared/appSettings'
 import { SUPPORTED_LANGUAGES } from '../../shared/appSettings'
+import { normalizeProjectName } from '../../shared/projectName'
 import { backgroundToCss, BUILTIN_SKIN_OPTIONS } from '../theme'
 import {
   AlertDialog,
@@ -34,6 +36,20 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger
+} from '@/components/ui/context-menu'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from '@/components/ui/dialog'
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
@@ -47,6 +63,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
+import { Input } from '@/components/ui/input'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 type ProjectRailProps = {
@@ -55,6 +72,7 @@ type ProjectRailProps = {
   onSelectProject: (project: ProjectRecord) => void
   onReorderProject: (dragId: string, dropId: string) => void
   onAddProject: () => void
+  onRenameProject: (project: ProjectRecord, name: string) => Promise<void>
   onDeleteProject: (project: ProjectRecord) => Promise<void>
   onOpenDesigner: () => void
   onOpenAssistant: () => void
@@ -75,6 +93,7 @@ export function ProjectRail({
   onSelectProject,
   onReorderProject,
   onAddProject,
+  onRenameProject,
   onDeleteProject,
   onOpenDesigner,
   onOpenAssistant,
@@ -89,6 +108,8 @@ export function ProjectRail({
   onRefreshShells
 }: ProjectRailProps) {
   const { t } = useTranslation()
+  const [projectToRename, setProjectToRename] = useState<ProjectRecord | null>(null)
+  const [renameValue, setRenameValue] = useState('')
   const [projectToDelete, setProjectToDelete] = useState<ProjectRecord | null>(null)
   const [shellBusy, setShellBusy] = useState(false)
   const [shellActionError, setShellActionError] = useState<string | null>(null)
@@ -116,6 +137,11 @@ export function ProjectRail({
       : t('settings:shell.noneDetected')
     : t('settings:shell.automaticHint')
   const shellError = shellActionError ?? shellSnapshot.error
+  const normalizedRenameValue = normalizeProjectName(renameValue)
+
+  useEffect(() => {
+    setRenameValue(projectToRename?.name ?? '')
+  }, [projectToRename])
 
   const performShellAction = async (action: () => Promise<void>) => {
     setShellBusy(true)
@@ -157,39 +183,43 @@ export function ProjectRail({
           {projects.map((project) => {
             const isActive = project.id === activeProjectId
             return (
-              <div className="group relative flex w-full justify-center" key={project.id}>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      aria-label={t('project:action.openProject', { name: project.name })}
-                      className="size-10 shrink-0 rounded-xl font-heading text-sm"
-                      draggable
-                      variant={isActive ? 'default' : 'ghost'}
-                      onClick={() => onSelectProject(project)}
-                      onDragStart={(event) => event.dataTransfer.setData('text/project-id', project.id)}
-                      onDragOver={(event) => event.preventDefault()}
-                      onDrop={(event) => onReorderProject(event.dataTransfer.getData('text/project-id'), project.id)}
-                    >
-                      {project.name.slice(0, 1).toUpperCase()}
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="right">
-                    <div className="flex max-w-64 flex-col gap-0.5">
-                      <strong>{project.name}</strong>
-                      <span className="truncate text-xs text-muted-foreground">{project.path}</span>
-                    </div>
-                  </TooltipContent>
-                </Tooltip>
-                <Button
-                  aria-label={t('project:action.deleteProject', { name: project.name })}
-                  className="absolute -top-1 right-0 size-4 rounded-sm bg-transparent opacity-0 shadow-none transition-opacity hover:bg-transparent focus-visible:bg-transparent focus-visible:opacity-100 dark:bg-transparent dark:hover:bg-transparent group-hover:opacity-100"
-                  size="icon-xs"
-                  title={t('project:tooltip.deleteProject')}
-                  variant="destructive"
-                  onClick={() => setProjectToDelete(project)}
-                >
-                  <Trash2 />
-                </Button>
+              <div className="flex w-full justify-center" key={project.id}>
+                <ContextMenu>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <ContextMenuTrigger asChild>
+                        <Button
+                          aria-label={t('project:action.openProject', { name: project.name })}
+                          className="size-10 shrink-0 rounded-xl font-heading text-sm"
+                          draggable
+                          variant={isActive ? 'default' : 'ghost'}
+                          onClick={() => onSelectProject(project)}
+                          onDragStart={(event) => event.dataTransfer.setData('text/project-id', project.id)}
+                          onDragOver={(event) => event.preventDefault()}
+                          onDrop={(event) => onReorderProject(event.dataTransfer.getData('text/project-id'), project.id)}
+                        >
+                          {project.name.slice(0, 1).toUpperCase()}
+                        </Button>
+                      </ContextMenuTrigger>
+                    </TooltipTrigger>
+                    <TooltipContent side="right">
+                      <div className="flex max-w-64 flex-col gap-0.5">
+                        <strong>{project.name}</strong>
+                        <span className="truncate text-xs text-muted-foreground">{project.path}</span>
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
+                  <ContextMenuContent>
+                    <ContextMenuItem onSelect={() => setProjectToRename(project)}>
+                      <Pencil />
+                      {t('common:action.rename')}
+                    </ContextMenuItem>
+                    <ContextMenuItem variant="destructive" onSelect={() => setProjectToDelete(project)}>
+                      <Trash2 />
+                      {t('common:action.delete')}
+                    </ContextMenuItem>
+                  </ContextMenuContent>
+                </ContextMenu>
               </div>
             )
           })}
@@ -382,6 +412,44 @@ export function ProjectRail({
           </DropdownMenu>
         </div>
       </aside>
+
+      <Dialog open={Boolean(projectToRename)} onOpenChange={(open) => !open && setProjectToRename(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('project:rename.title')}</DialogTitle>
+            <DialogDescription>{t('project:rename.description')}</DialogDescription>
+          </DialogHeader>
+          <Input
+            autoFocus
+            aria-label={t('project:rename.nameAria')}
+            value={renameValue}
+            onChange={(event) => setRenameValue(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter' || !projectToRename || !normalizedRenameValue) return
+              event.preventDefault()
+              void onRenameProject(projectToRename, normalizedRenameValue)
+                .then(() => setProjectToRename(null))
+                .catch(() => {})
+            }}
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setProjectToRename(null)}>
+              {t('common:action.cancel')}
+            </Button>
+            <Button
+              disabled={!normalizedRenameValue}
+              onClick={() => {
+                if (!projectToRename || !normalizedRenameValue) return
+                void onRenameProject(projectToRename, normalizedRenameValue)
+                  .then(() => setProjectToRename(null))
+                  .catch(() => {})
+              }}
+            >
+              {t('project:rename.save')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog open={Boolean(projectToDelete)} onOpenChange={(open) => !open && setProjectToDelete(null)}>
         <AlertDialogContent>
