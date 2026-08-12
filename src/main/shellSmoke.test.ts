@@ -17,7 +17,6 @@ import {
   ASSISTANT_BRIDGE_TOKEN_ENV
 } from '../shared/assistant'
 import {
-  isWslExecutionTarget,
   type DetectedShell,
   type ShellFamily,
   type ShellNeutralCommand
@@ -461,7 +460,7 @@ describe('native shell smoke', () => {
     async () => {
       const { runner, shells, workingDirectory } = createNativeContext()
       const cmd = shells.getSnapshot().candidates.find((candidate): candidate is DetectedShell => (
-        !isWslExecutionTarget(candidate) && candidate.family === 'cmd'
+        candidate.family === 'cmd'
       ))
       expect(cmd, 'cmd.exe must be detected on Windows').toBeDefined()
       shells.select(cmd!.id)

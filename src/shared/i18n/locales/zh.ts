@@ -62,6 +62,7 @@ export default {
       commandContainsNul: '终端命令不能包含 NUL 字符',
       historyInvalid: '历史终端记录格式无效，请重新运行工作流',
       retryDataInvalid: '终端重试数据无效，请重新运行工作流',
+      executionTargetUnsupported: '该历史执行目标已不再受支持，无法重试',
       retryCommandInvalid: '终端重试命令无效，请重新运行工作流',
       retryReadFailed: '无法读取历史终端重试数据，请重新运行工作流',
       retryBindingMissing: '历史终端变量绑定缺失，无法安全重试，请重新运行工作流',
@@ -126,43 +127,6 @@ export default {
       cmdCommandTooLarge: 'cmd 命令展开后超过 {{limit}} 字符限制',
       cmdEnvBlockTooLarge: 'cmd 环境块超过 {{limit}} 字符限制'
     },
-    wsl: {
-      platformUnsupported: 'WSL 仅在 Windows 上可用',
-      launcherMissing: '找不到可信的 Windows 系统 wsl.exe 启动器',
-      noDistributions: 'WSL 可用，但尚未注册任何 Linux 发行版',
-      commandFailed: 'WSL 命令执行失败',
-      commandTimeout: 'WSL 命令执行超时',
-      distributionMissing: '所选 WSL 发行版不可用：{{distribution}}',
-      distributionMismatch: 'WSL 实际启动的发行版与请求不一致',
-      capabilityUnavailable: 'WSL 发行版 {{distribution}} 不具备所需的执行与会话能力：{{detail}}',
-      rootDefaultUser: '所选 WSL 发行版的默认用户是 root，请先配置普通默认用户',
-      environmentTransport: '所选 WSL 发行版无法通过 WSLENV 接收环境变量',
-      unsupportedLoginShell: 'WSL 默认登录 Shell 不受支持：{{shell}}。请将默认登录 Shell 配置为 bash、zsh 或 sh。',
-      loginPathUnavailable: '无法从 WSL 登录 Shell {{shell}} 读取 PATH：{{detail}}',
-      targetRequiresAsyncResolution: '所选 WSL 目标必须先完成验证',
-      pathDistributionMismatch: '该路径属于 WSL 发行版 {{actual}}，而不是 {{expected}}',
-      relativePath: 'WSL 工作目录必须使用绝对路径',
-      networkUncUnsupported: '普通 Windows 网络 UNC 路径无法自动映射到 WSL',
-      linuxPathAbsolute: 'WSL 路径必须是 Linux 绝对路径',
-      pathConversionFailed: 'WSL 路径转换返回了无效路径',
-      projectMustBeWslUnc: 'WSL 项目必须通过 \\\\wsl$ 或 \\\\wsl.localhost 路径选择',
-      projectUseWslPicker: '请使用“选择 WSL 文件夹”入口添加 \\\\wsl$ 或 \\\\wsl.localhost 路径',
-      wslProjectRequiresWslTarget: '该 WSL 项目要求先把匹配的 WSL 发行版选为全局终端环境',
-      pathRoundTripFailed: 'WSL 项目路径未通过受控 round-trip 校验',
-      invalidProbeInput: 'WSL 探针输入无效',
-      sessionTerminationFailed: '无法证明 WSL 会话已经终止',
-      probeOutputInvalid: 'WSL 能力探针返回了无效输出',
-      pathInvalid: 'WSL 路径无效',
-      environmentNameCollision: 'WSL 环境变量名在 Windows 大小写不敏感规则下冲突',
-      environmentReserved: 'WSLENV 和 CLILoom 内部环境变量名属于保留名称',
-      environmentValueInvalid: 'WSL 环境变量值包含无效的 NUL 字符',
-      environmentNameInvalid: 'WSL 环境变量名不符合可移植格式：{{name}}',
-      wslenvTooLong: 'WSLENV 超过支持的长度限制',
-      environmentBlockTooLong: '用于 WSL 的 Windows 环境块超过支持的长度限制',
-      assistantNotInstalled: '在 WSL 发行版 {{distribution}} 中找不到 Linux 原生的 {{command}} 命令，请在该发行版内安装。',
-      assistantCommandProbeUnavailable: '无法通过 WSL 发行版 {{distribution}} 的登录 Shell 检查 {{command}}：{{detail}}',
-      assistantInteropUnavailable: 'WSL 发行版 {{distribution}} 的 interop 不可用，助手无法调用 CLILoom bridge'
-    },
     assistantCommand: {
       absolutePath: '带路径的初始化命令必须使用绝对路径',
       unavailable: '初始化命令不可用：{{executable}}',
@@ -221,7 +185,7 @@ export default {
       projectNotFound: '项目不存在或已被删除',
       projectPathInvalid: '项目路径无效或不是绝对路径',
       projectPathNotDirectory: '所选项目路径不是可访问的文件夹',
-      projectSelectionInvalid: '项目必须通过应用内的文件夹选择器添加',
+      projectPathUnsupported: '不支持该项目路径',
       invalidWorkspace: '最近打开的项目和任务无效',
       taskNotFound: '任务不存在或不属于该项目',
       taskTitleInvalid: '任务名称必须是字符串',
@@ -271,6 +235,7 @@ export default {
     },
     runtime: {
       workflowVersionMismatch: '流程版本与运行状态不匹配: {{actual}} !== {{expected}}',
+      executionTargetUnsupported: '该工作流使用了已不再受支持的历史执行目标',
       branchNotFound: '分支不存在: {{id}}',
       nodeNotFound: '节点不存在: {{id}}',
       executionLimit: '工作流执行次数超限 ({{limit}})，可能存在无限循环',
@@ -457,13 +422,7 @@ export default {
     action: {
       openProject: '打开项目 {{name}}',
       deleteProject: '删除项目 {{name}}',
-      addFolder: '添加项目文件夹',
-      addWindowsFolder: '选择 Windows 文件夹',
-      addNativeFolder: '选择项目文件夹',
-      addWslFolder: '选择 WSL 文件夹'
-    },
-    hint: {
-      selectWslFirst: '请先选择一个 WSL 终端环境'
+      addFolder: '添加项目文件夹'
     },
     tooltip: {
       deleteProject: '删除项目'
@@ -786,9 +745,7 @@ export default {
       redetect: '重新检测终端环境',
       unavailableShort: '不可用',
       nativeGroup: '当前系统',
-      windowsGroup: 'Windows',
-      wslGroup: 'WSL',
-      systemDefault: '（系统默认）'
+      windowsGroup: 'Windows'
     },
     language: {
       label: '语言',

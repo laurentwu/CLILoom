@@ -361,14 +361,38 @@ describe('database schema v1', () => {
 })
 
 describe('project path identity', () => {
-  it('deduplicates WSL UNC aliases and rejects non-absolute paths', () => {
+  it('rejects WSL namespace paths without affecting ordinary UNC paths', () => {
     const { db } = createTrackedDatabase()
-    const first = addProject(db, '\\\\wsl$\\Ubuntu\\home\\me\\repo', assumeProjectDirectory)
-    const duplicate = addProject(db, '\\\\wsl.localhost\\ubuntu\\home\\me\\repo', assumeProjectDirectory)
 
-    expect(duplicate.id).toBe(first.id)
-    expect(listProjects(db)).toHaveLength(1)
+    expect(() => addProject(db, '\\\\wsl$\\Ubuntu\\home\\me\\repo', assumeProjectDirectory)).toThrow()
+    expect(() => addProject(db, '\\\\wsl.localhost\\ubuntu\\home\\me\\repo', assumeProjectDirectory)).toThrow()
+    expect(() => addProject(db, '//wsl$/Ubuntu/home/me/repo', assumeProjectDirectory)).toThrow()
+    expect(() => addProject(db, '\\\\?\\UNC\\wsl.localhost\\Ubuntu\\home\\me\\repo', assumeProjectDirectory)).toThrow()
     expect(() => addProject(db, 'relative/path')).toThrow()
+    expect(addProject(db, '\\\\server\\share\\repo', assumeProjectDirectory).path)
+      .toBe('\\\\server\\share\\repo')
+    expect(listProjects(db)).toHaveLength(1)
+  })
+
+  it('keeps legacy WSL namespace project records readable', () => {
+    const { db } = createTrackedDatabase()
+    db.prepare(
+      'insert into projects (id, name, path, sort_order, default_workflow_id, created_at) values (?, ?, ?, ?, ?, ?)'
+    ).run(
+      'legacy-wsl-project',
+      'Legacy project',
+      '\\\\wsl$\\Ubuntu\\home\\me\\repo',
+      0,
+      null,
+      '2026-08-04T00:00:00.000Z'
+    )
+
+    expect(listProjects(db)).toEqual([
+      expect.objectContaining({
+        id: 'legacy-wsl-project',
+        path: '\\\\wsl$\\Ubuntu\\home\\me\\repo'
+      })
+    ])
   })
 
   it('checks directory existence at the database write boundary', () => {
@@ -691,7 +715,7 @@ describe('terminal session queries', () => {
     ])
   })
 
-  it('returns non-sensitive version-3 execution target metadata for retry diagnostics', () => {
+  it('keeps legacy WSL terminal records readable without exposing unsupported target metadata', () => {
     const { db } = createTrackedDatabase()
     db.prepare(
       'insert into terminal_sessions (id, task_id, node_id, kind, command, cwd, status, transcript, created_at, updated_at, request_json) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
@@ -732,16 +756,10 @@ describe('terminal session queries', () => {
       })
     )
 
-    expect(listTerminalSessionMetadataByTask(db, 'wsl-diagnostic-task')[0])
-      .toMatchObject({
-        execution_target: {
-          kind: 'wsl',
-          displayName: 'Ubuntu',
-          distributionName: 'Ubuntu',
-          wslVersion: 2,
-          loginShellPath: '/bin/bash'
-        }
-      })
+    const session = listTerminalSessionMetadataByTask(db, 'wsl-diagnostic-task')[0]
+    expect(session).toMatchObject({ id: 'wsl-diagnostic', command: 'pwd', cwd: '/home/me/repo' })
+    expect(session).not.toHaveProperty('execution_target')
+    expect(getTerminalSessionTranscript(db, 'wsl-diagnostic-task', 'wsl-diagnostic')).toBe('')
   })
 
   it('returns a bounded transcript tail', () => {

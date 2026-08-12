@@ -15,7 +15,7 @@ import {
 } from './workflowConfigService'
 import type { WorkflowDeleteImpact } from './database'
 import type { ShellService } from './shellService'
-import { isWslExecutionTarget, type ResolvedExecutionTarget } from '../shared/shell'
+import type { ResolvedExecutionTarget } from '../shared/shell'
 
 const HELP_TEXT = `CLILoom assistant command
 
@@ -164,9 +164,7 @@ export class AssistantCommandHandler {
     let command: Record<string, unknown>
     try {
       if (!target) throw new Error(t('errors:shell.noneDetectedPlatformShort', { platform: process.platform }))
-      const resolved = isWslExecutionTarget(target)
-        ? await this.options.shellService.resolveAssistantCommand(target, config.initializationCommand)
-        : resolveAssistantCommand(config.initializationCommand, this.options.environment)
+      const resolved = resolveAssistantCommand(config.initializationCommand, this.options.environment)
       command = {
         configured: true,
         available: true,
@@ -193,19 +191,12 @@ export class AssistantCommandHandler {
         configuredKind: configuredShell?.kind ?? null,
         configuredDisplayName: configuredShell?.displayName ?? null,
         configuredFamily: configuredShell?.family ?? null,
-        configuredExecutablePath: configuredShell && !isWslExecutionTarget(configuredShell)
-          ? configuredShell.executablePath
-          : null,
-        configuredDistributionName: configuredShell && isWslExecutionTarget(configuredShell)
-          ? configuredShell.distributionName
-          : null,
+        configuredExecutablePath: configuredShell?.executablePath ?? null,
         available: Boolean(shell),
-        kind: shell ? (isWslExecutionTarget(shell) ? 'wsl' : 'native') : null,
+        kind: shell ? 'native' : null,
         displayName: shell?.displayName ?? null,
         family: shell?.family ?? null,
-        executablePath: shell && !isWslExecutionTarget(shell) ? shell.executablePath : null,
-        distributionName: shell && isWslExecutionTarget(shell) ? shell.distributionName : null,
-        loginShellPath: shell && isWslExecutionTarget(shell) ? shell.loginShellPath ?? null : null,
+        executablePath: shell?.executablePath ?? null,
         error: shellSnapshot.error ?? null
       },
       pathConfigured: Boolean(this.options.environment.PATH || this.options.environment.Path),
@@ -219,9 +210,7 @@ export class AssistantCommandHandler {
       command
     }
     const shellDetail = shell
-      ? isWslExecutionTarget(shell)
-        ? `${shell.displayName} (${shell.distributionName}, ${shell.loginShellPath ?? 'unvalidated'})`
-        : `${shell.displayName} (${shell.executablePath})`
+      ? `${shell.displayName} (${shell.executablePath})`
       : `ERROR (${shellSnapshot.error})`
     const text = [
       `Platform: ${data.platform}`,
@@ -359,10 +348,8 @@ export class AssistantCommandHandler {
       this.requireArgs(args.slice(1), 2)
       let value: string
       if (args[1] === 'assistant.initializationCommand') {
-        const target = await this.resolveEffectiveTarget()
-        const resolved = isWslExecutionTarget(target)
-          ? await this.options.shellService.resolveAssistantCommand(target, args[2])
-          : resolveAssistantCommand(args[2], this.options.environment)
+        await this.resolveEffectiveTarget()
+        const resolved = resolveAssistantCommand(args[2], this.options.environment)
         value = this.options.settingsService
           .setAssistantInitializationCommand(args[2], resolved)
           .config.initializationCommand

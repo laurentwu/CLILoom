@@ -38,7 +38,7 @@ Launch an installed AI CLI or another command-line tool through a configurable i
 
 ### Work across operating systems
 
-Run CLILoom on macOS, Windows, or Linux with common shells including PowerShell, cmd, sh, bash, zsh, and Git Bash. On Windows, a registered WSL distribution can also be selected as the global terminal environment, so workflows use Linux commands without manually prefixing them with `wsl`.
+Run CLILoom on macOS, Windows, or Linux with native shells including PowerShell, cmd, sh, bash, zsh, and Git Bash.
 
 ### Keep workspace data local
 
@@ -78,7 +78,7 @@ Configure your preferred AI CLI and run it in a dedicated interactive terminal w
   - Interactive PTY sessions with keyboard input and responsive resizing.
   - Per-node working directories, environment variables, timeouts, and accepted exit codes.
   - Persisted terminal output and safe retries for historical commands.
-  - First-class Windows WSL targets for terminals, hooks, retries, and the AI CLI assistant.
+  - Native-shell target snapshots shared by terminals, hooks, retries, and the AI CLI assistant.
 
 - **Variables and hooks**
   - Text and number variables with labels, defaults, ordering, and required rules.
@@ -124,7 +124,7 @@ Use the installer for a standard installation, or download the portable EXE to r
 
 Windows release builds are currently unsigned, so Microsoft Defender SmartScreen may display an unknown-publisher warning. Confirm that the file came from the CLILoom GitHub Releases page before continuing.
 
-To run Linux commands through WSL, install WSL and at least one distribution using Windows first. In CLILoom, open **Settings → Default terminal environment** and explicitly select that distribution; **Automatic** continues to choose a native Windows shell. You can then add either a Windows folder or a folder under the selected distribution's `\\wsl$` / `\\wsl.localhost` share. The distribution must use a regular default user and bash, zsh, or sh as its default login shell. For Linux-heavy workloads, keeping the repository in the WSL filesystem generally avoids cross-filesystem overhead. See [terminal environments and WSL troubleshooting](SHELLS.md).
+CLILoom does not provide WSL integration. It neither discovers nor launches WSL distributions, and project folders under `\\wsl$` or `\\wsl.localhost` are unsupported. Commands entered by a user are still arbitrary shell input; if `wsl.exe` must be prohibited, enforce that with Windows, AppLocker, or organization policy. See [terminal environment troubleshooting](SHELLS.md).
 
 ### Linux
 
@@ -142,7 +142,7 @@ sudo apt install ./CLILoom-*.deb
 sudo dnf install ./CLILoom-*.rpm
 ```
 
-Linux packages require glibc; Ubuntu 24.04 or an equivalent environment is recommended. Alpine Linux and other musl-based distributions are not supported. The AppImage is portable and requires the host to permit Chromium's user-namespace sandbox. Ubuntu 23.10 and newer block that capability for downloaded applications by default; use the DEB package there unless you have explicitly configured an AppArmor policy for the AppImage. DEB and RPM install Electron's root-owned SUID sandbox helper. CLILoom never falls back to `--no-sandbox`.
+Linux packages require glibc; Ubuntu 24.04 or an equivalent environment is recommended. Alpine Linux and other musl-based distributions are not supported. Running the Linux package inside WSL is unsupported and untested. The AppImage is portable and requires the host to permit Chromium's user-namespace sandbox. Ubuntu 23.10 and newer block that capability for downloaded applications by default; use the DEB package there unless you have explicitly configured an AppArmor policy for the AppImage. DEB and RPM install Electron's root-owned SUID sandbox helper. CLILoom never falls back to `--no-sandbox`.
 
 ## 6. Security and local data
 

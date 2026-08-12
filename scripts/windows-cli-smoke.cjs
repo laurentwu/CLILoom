@@ -22,13 +22,11 @@ const FORWARDING_PROBE = 'argument with spaces "quoted" and trailing\\'
 
 function parseArguments(argv) {
   let packaged = false
-  let includeWsl = false
   for (const argument of argv) {
     if (argument === '--packaged') packaged = true
-    else if (argument === '--wsl') includeWsl = true
-    else throw new Error('Usage: node scripts/windows-cli-smoke.cjs [--packaged] [--wsl]')
+    else throw new Error('Usage: node scripts/windows-cli-smoke.cjs [--packaged]')
   }
-  return { packaged, includeWsl }
+  return { packaged }
 }
 
 function findPackagedApplicationDirectory() {
@@ -68,15 +66,6 @@ function resolveRuntime(packaged) {
 
 function quotePowerShell(value) {
   return `'${value.replaceAll("'", "''")}'`
-}
-
-function mergeWslEnv(current, names) {
-  const requested = new Set(names.map((name) => name.toLowerCase()))
-  const existing = (current ?? '').split(':').filter(Boolean).filter((entry) => {
-    const name = entry.split('/')[0]
-    return !requested.has(name.toLowerCase())
-  })
-  return [...existing, ...names].join(':')
 }
 
 function runBoundedProcess(executable, args, environment) {
@@ -142,24 +131,6 @@ async function withTimeout(promise, message) {
   } finally {
     if (timer) clearTimeout(timer)
   }
-}
-
-function resolveWslPath(value, distributionName) {
-  const distributionArguments = distributionName
-    ? ['--distribution', distributionName]
-    : []
-  const result = spawnSync('wsl.exe', [
-    ...distributionArguments,
-    '--exec', 'wslpath', '-a', '-u', value
-  ], {
-    encoding: 'utf8',
-    windowsHide: true
-  })
-  if (result.error) throw result.error
-  if (result.status !== 0 || !result.stdout.trim()) {
-    throw new Error(`Unable to map a Windows CLI smoke path into WSL: ${result.stderr.trim()}`)
-  }
-  return result.stdout.trim()
 }
 
 async function startFakeBridge(expectedToken) {
@@ -244,63 +215,30 @@ async function runPipeSmoke(mode, runtime, inputPath, expectedWorkflow) {
       '--stdin',
       FORWARDING_PROBE
     ]
-    if (mode === 'powershell') {
-      const systemRoot = process.env.SystemRoot ?? process.env.WINDIR
-      if (!systemRoot) throw new Error('SystemRoot is unavailable')
-      const powershell = path.join(
-        systemRoot,
-        'System32',
-        'WindowsPowerShell',
-        'v1.0',
-        'powershell.exe'
-      )
-      const invocation = commandArguments.map(quotePowerShell).join(' ')
-      const script = [
-        '$utf8 = [System.Text.UTF8Encoding]::new($false)',
-        '$OutputEncoding = $utf8',
-        '[Console]::OutputEncoding = $utf8',
-        `Get-Content -LiteralPath ${quotePowerShell(inputPath)} -Raw -Encoding UTF8 | & ${invocation}`,
-        'exit $LASTEXITCODE'
-      ].join('; ')
-      processResult = await runBoundedProcess(powershell, [
-        '-NoLogo',
-        '-NoProfile',
-        '-NonInteractive',
-        '-ExecutionPolicy', 'Bypass',
-        '-Command', script
-      ], environment)
-    } else {
-      const distributionName = process.env.CLILOOM_WSL_DISTRO
-      const distributionArguments = distributionName
-        ? ['--distribution', distributionName]
-        : []
-      const linuxInputPath = resolveWslPath(inputPath, distributionName)
-      const linuxConsoleExecutable = resolveWslPath(runtime.consoleExecutable, distributionName)
-      const wslCommandArguments = [
-        linuxConsoleExecutable,
-        runtime.electronExecutable,
-        ...runtime.electronArguments,
-        'workflow',
-        'validate',
-        '--stdin',
-        FORWARDING_PROBE
-      ]
-      const positionalInvocation = wslCommandArguments
-        .map((_argument, index) => `"$${index + 2}"`)
-        .join(' ')
-      environment.WSLENV = mergeWslEnv(environment.WSLENV, [
-        BRIDGE_PORT_ENV,
-        BRIDGE_TOKEN_ENV
-      ])
-      processResult = await runBoundedProcess('wsl.exe', [
-        ...distributionArguments,
-        '--exec', '/bin/sh', '-c',
-        `cat "$1" | ${positionalInvocation}`,
-        'cliloom-cli-smoke',
-        linuxInputPath,
-        ...wslCommandArguments
-      ], environment)
-    }
+    const systemRoot = process.env.SystemRoot ?? process.env.WINDIR
+    if (!systemRoot) throw new Error('SystemRoot is unavailable')
+    const powershell = path.join(
+      systemRoot,
+      'System32',
+      'WindowsPowerShell',
+      'v1.0',
+      'powershell.exe'
+    )
+    const invocation = commandArguments.map(quotePowerShell).join(' ')
+    const script = [
+      '$utf8 = [System.Text.UTF8Encoding]::new($false)',
+      '$OutputEncoding = $utf8',
+      '[Console]::OutputEncoding = $utf8',
+      `Get-Content -LiteralPath ${quotePowerShell(inputPath)} -Raw -Encoding UTF8 | & ${invocation}`,
+      'exit $LASTEXITCODE'
+    ].join('; ')
+    processResult = await runBoundedProcess(powershell, [
+      '-NoLogo',
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy', 'Bypass',
+      '-Command', script
+    ], environment)
 
     const received = await withTimeout(
       bridge.request,
@@ -364,7 +302,7 @@ async function main() {
   const inputPath = path.join(temporaryDirectory, 'workflow-管道.json')
   const workflow = {
     id: 'console-stdin-smoke',
-    name: 'PowerShell 与 WSL 😀',
+    name: 'PowerShell 管道 😀',
     description: 'multiline\nUnicode stdin',
     nodes: [
       { id: 'start', type: 'start', name: '开始', config: { variables: [] } },
@@ -375,7 +313,6 @@ async function main() {
   fs.writeFileSync(inputPath, JSON.stringify(workflow, null, 2), 'utf8')
   try {
     await runPipeSmoke('powershell', runtime, inputPath, workflow)
-    if (options.includeWsl) await runPipeSmoke('wsl', runtime, inputPath, workflow)
   } finally {
     fs.rmSync(temporaryDirectory, { recursive: true, force: true })
   }

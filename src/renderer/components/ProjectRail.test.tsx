@@ -127,7 +127,7 @@ describe('ProjectRail project actions', () => {
         ]}
         shellSnapshot={{
           platform: 'linux',
-          preferences: { version: 2, selection: { mode: 'automatic' } },
+          preferences: { version: 3, selection: { mode: 'automatic' } },
           candidates: [],
           effectiveShell: null,
           error: undefined
@@ -186,7 +186,7 @@ describe('ProjectRail Shell settings', () => {
       shellSnapshot={{
         platform: 'linux',
         preferences: {
-          version: 2,
+          version: 3,
           selection: {
             mode: 'explicit',
             shell: {
@@ -256,7 +256,7 @@ describe('ProjectRail language picker', () => {
         projects={[]}
         shellSnapshot={{
           platform: 'linux',
-          preferences: { version: 2, selection: { mode: 'automatic' } },
+          preferences: { version: 3, selection: { mode: 'automatic' } },
           candidates: [],
           effectiveShell: null,
           error: undefined
@@ -293,7 +293,7 @@ describe('ProjectRail skin picker', () => {
         projects={[]}
         shellSnapshot={{
           platform: 'linux',
-          preferences: { version: 2, selection: { mode: 'automatic' } },
+          preferences: { version: 3, selection: { mode: 'automatic' } },
           candidates: [],
           effectiveShell: null,
           error: undefined
@@ -344,7 +344,7 @@ describe('ProjectRail skin picker', () => {
         projects={[]}
         shellSnapshot={{
           platform: 'linux',
-          preferences: { version: 2, selection: { mode: 'automatic' } },
+          preferences: { version: 3, selection: { mode: 'automatic' } },
           candidates: [],
           effectiveShell: null,
           error: undefined

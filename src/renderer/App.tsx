@@ -1071,9 +1071,9 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
     return () => removeState?.()
   }, [])
 
-  async function chooseFolder(source: 'windows' | 'wsl') {
+  async function chooseFolder() {
     try {
-      const project = (await window.cliLoom?.chooseAndAddProject(source)) as ProjectRecord | null
+      const project = (await window.cliLoom?.chooseAndAddProject()) as ProjectRecord | null
       if (!project) return
       const nextProjects = (await window.cliLoom?.listProjects()) as ProjectRecord[]
       setProjects(nextProjects)

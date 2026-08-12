@@ -62,6 +62,7 @@ export default {
       commandContainsNul: 'Terminal command must not contain a NUL character',
       historyInvalid: 'Historical terminal record is invalid, rerun the workflow',
       retryDataInvalid: 'Terminal retry data is invalid, rerun the workflow',
+      executionTargetUnsupported: 'This historical execution target is no longer supported and cannot be retried',
       retryCommandInvalid: 'Terminal retry command is invalid, rerun the workflow',
       retryReadFailed: 'Could not read historical terminal retry data, rerun the workflow',
       retryBindingMissing: 'Historical terminal variable binding is missing, cannot retry safely, rerun the workflow',
@@ -126,43 +127,6 @@ export default {
       cmdCommandTooLarge: 'cmd command exceeds the {{limit}} character limit after expansion',
       cmdEnvBlockTooLarge: 'cmd environment block exceeds the {{limit}} character limit'
     },
-    wsl: {
-      platformUnsupported: 'WSL is only available on Windows',
-      launcherMissing: 'Could not find the trusted Windows wsl.exe system launcher',
-      noDistributions: 'WSL is available, but no Linux distributions are registered',
-      commandFailed: 'The WSL command failed',
-      commandTimeout: 'The WSL command timed out',
-      distributionMissing: 'The selected WSL distribution is unavailable: {{distribution}}',
-      distributionMismatch: 'WSL started a different distribution than requested',
-      capabilityUnavailable: 'WSL distribution {{distribution}} does not provide the required execution and session capabilities: {{detail}}',
-      rootDefaultUser: 'The selected WSL distribution uses root as its default user; configure a regular default user first',
-      environmentTransport: 'The selected WSL distribution cannot receive environment values through WSLENV',
-      unsupportedLoginShell: 'The WSL default login shell is unsupported: {{shell}}. Configure bash, zsh, or sh as the default login shell.',
-      loginPathUnavailable: 'Could not read PATH from WSL login shell {{shell}}: {{detail}}',
-      targetRequiresAsyncResolution: 'The selected WSL target must be validated before use',
-      pathDistributionMismatch: 'The path belongs to WSL distribution {{actual}}, not {{expected}}',
-      relativePath: 'WSL working directories must be absolute paths',
-      networkUncUnsupported: 'Ordinary Windows network UNC paths cannot be mapped to WSL automatically',
-      linuxPathAbsolute: 'The WSL path must be an absolute Linux path',
-      pathConversionFailed: 'WSL path conversion returned an invalid path',
-      projectMustBeWslUnc: 'A WSL project must be selected through a \\\\wsl$ or \\\\wsl.localhost path',
-      projectUseWslPicker: 'Use Choose WSL folder for \\\\wsl$ or \\\\wsl.localhost paths',
-      wslProjectRequiresWslTarget: 'This WSL project requires selecting its matching WSL distribution as the global terminal environment',
-      pathRoundTripFailed: 'The WSL project path did not pass the controlled round-trip check',
-      invalidProbeInput: 'The WSL probe input is invalid',
-      sessionTerminationFailed: 'Could not prove that the WSL session was terminated',
-      probeOutputInvalid: 'The WSL capability probe returned invalid output',
-      pathInvalid: 'The WSL path is invalid',
-      environmentNameCollision: 'WSL environment variable names collide under Windows case-insensitive rules',
-      environmentReserved: 'WSLENV and CLILoom internal environment names are reserved',
-      environmentValueInvalid: 'A WSL environment value contains an invalid NUL character',
-      environmentNameInvalid: 'Invalid portable WSL environment variable name: {{name}}',
-      wslenvTooLong: 'WSLENV exceeds the supported length limit',
-      environmentBlockTooLong: 'The Windows environment block for WSL exceeds the supported length limit',
-      assistantNotInstalled: 'Could not find a Linux-native {{command}} command in WSL distribution {{distribution}}. Install it inside that distribution.',
-      assistantCommandProbeUnavailable: 'Could not inspect {{command}} through the login shell in WSL distribution {{distribution}}: {{detail}}',
-      assistantInteropUnavailable: 'WSL interop is unavailable in distribution {{distribution}}; the assistant cannot call the CLILoom bridge'
-    },
     assistantCommand: {
       absolutePath: 'Initialization commands with a path must use an absolute path',
       unavailable: 'Initialization command is unavailable: {{executable}}',
@@ -221,7 +185,7 @@ export default {
       projectNotFound: 'Project not found or has been deleted',
       projectPathInvalid: 'The project path is invalid or is not absolute',
       projectPathNotDirectory: 'The selected project path is not an accessible directory',
-      projectSelectionInvalid: 'The project must come from the application folder picker',
+      projectPathUnsupported: 'This project path is not supported',
       invalidWorkspace: 'The recently opened project and task are invalid',
       taskNotFound: 'Task not found or does not belong to this project',
       taskTitleInvalid: 'Task name must be a string',
@@ -271,6 +235,7 @@ export default {
     },
     runtime: {
       workflowVersionMismatch: 'Workflow version does not match the run state: {{actual}} !== {{expected}}',
+      executionTargetUnsupported: 'This workflow uses a historical execution target that is no longer supported',
       branchNotFound: 'Branch not found: {{id}}',
       nodeNotFound: 'Node not found: {{id}}',
       executionLimit: 'Workflow execution count exceeded the limit ({{limit}}); there may be an infinite loop',
@@ -457,13 +422,7 @@ export default {
     action: {
       openProject: 'Open project {{name}}',
       deleteProject: 'Delete project {{name}}',
-      addFolder: 'Add project folder',
-      addWindowsFolder: 'Choose Windows folder',
-      addNativeFolder: 'Choose project folder',
-      addWslFolder: 'Choose WSL folder'
-    },
-    hint: {
-      selectWslFirst: 'Select a WSL terminal environment first'
+      addFolder: 'Add project folder'
     },
     tooltip: {
       deleteProject: 'Delete project'
@@ -786,9 +745,7 @@ export default {
       redetect: 'Redetect environments',
       unavailableShort: 'Unavailable',
       nativeGroup: 'This system',
-      windowsGroup: 'Windows',
-      wslGroup: 'WSL',
-      systemDefault: '(system default)'
+      windowsGroup: 'Windows'
     },
     language: {
       label: 'Language',

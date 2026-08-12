@@ -10,6 +10,8 @@ CLILoom targets Electron 43.3.0, which embeds Chromium 150, Node 24.18.1, and No
 - Windows x64 and ARM64.
 - Linux glibc x64 and ARM64 (Ubuntu 24.04 or equivalent). musl/Alpine is not supported.
 
+Packages expose only native host Shell targets. CLILoom has no built-in WSL integration, and running the Linux package inside WSL is unsupported and untested.
+
 Linux Wayland sessions use Electron's native Wayland default behavior. No `--ozone-platform=x11` override is applied, so X11 sessions continue to use X11. Frameless assistant windows follow the system's default corner rounding on Linux.
 
 ## Prerequisites
@@ -20,7 +22,6 @@ Linux Wayland sessions use Electron's native Wayland default behavior. No `--ozo
   - macOS: current Xcode command line tools.
   - Linux: GCC or Clang supporting C++20. Ubuntu 24.04 runners satisfy this.
 - A host OS matching the package platform.
-- For Windows WSL acceptance: Windows WSL with at least one registered distribution using a regular default user and bash, zsh, or sh. Both inbox and Microsoft Store-serviced WSL are launched through the trusted system `wsl.exe` entry.
 
 Run `npm install` after cloning. The postinstall hook (`electron-builder install-app-deps`) rebuilds `node-pty` for the installed Electron version and architecture. `better-sqlite3` 13 ships N-API prebuilt binaries (`prebuilds/<platform>-<arch>.node`) and usually does not require an Electron-ABI-specific recompile, but it is still validated through the packaging tests.
 
@@ -93,7 +94,6 @@ node scripts/clean.cjs all
 npm test
 npm run test:shell-smoke
 npm run test:windows-cli-smoke # real Windows only; PowerShell stdin pipeline
-npm run test:wsl-smoke       # real Windows only; explicit SKIP elsewhere
 npm run typecheck
 npm run build
 npm run package:dir
@@ -104,19 +104,6 @@ npm run package:linux
 ```
 
 `npm test` intentionally excludes `src/main/shellSmoke.test.ts`, including when that path is passed as a filter. Use `npm run test:shell-smoke` to run it. The smoke suite uses the host's real Shell, `node-pty`, and child-process implementation, so run it on the same operating system as the package being validated. On Windows, `npm run build:main` also builds `dist/native/cliloom-cli.exe`; `npm run test:windows-cli-smoke` verifies that it remains a Console application and that a multiline Unicode PowerShell pipeline reaches the assistant bridge intact. User-facing Shell selection and troubleshooting are documented in [SHELLS.md](SHELLS.md).
-
-### Windows WSL smoke
-
-Run the dedicated smoke on every Windows architecture being released and record its final metadata line:
-
-```powershell
-$env:CLILOOM_WSL_DISTRO = 'Ubuntu'
-$env:CLILOOM_WSL_PROJECT = 'C:\work\cliloom' # optional; defaults to this checkout
-$env:CLILOOM_WSL_ASSISTANT_COMMAND = 'codex'  # optional WSL-native CLI check
-npm run test:wsl-smoke
-```
-
-The command builds the main process and Console CLI, first pipes multiline Unicode JSON from WSL through `cliloom-cli.exe` into a real assistant bridge, then re-enters Electron's Node runtime for native-module compatibility. It uses the current trusted-launcher implementation and actual `node-pty`/`ProcessRunner`, and validates catalog discovery, default user/login Shell, Windows and WSL path round-trips, `WSLENV`, helper isolation from user `PATH`/`HOME`/`XDG_RUNTIME_DIR`, `--cd`, Windows interop, Hook execution, historical retry, timeout, immediate stop, `killAll`, cgroup cleanup of a background process that clears its environment and creates a new Linux session, and next-validation recovery after a session leader is killed. Reliable containment requires a working systemd user scope on cgroup v2; a distribution without that capability must fail validation rather than use PID/session heuristics. On non-Windows the command prints `SKIP` and explicitly states that no WSL behavior was validated; that result must never be recorded as a WSL pass. Run the matrix on WSL 1 and WSL 2 when available, on default and non-default distributions, with both drive and WSL-native project paths, and on x64/ARM64 for every published architecture. Store-serviced WSL must continue to work through `%SystemRoot%\System32\wsl.exe` (or `Sysnative` for a future 32-bit host), not a user WindowsApps alias.
 
 `package:dir` creates an unpacked application for the current platform and architecture. Platform commands also default to the current host architecture. `package:appimage` creates only the portable Linux AppImage, while `package:linux` creates AppImage, DEB, and RPM outputs. A Linux unpacked directory is a build intermediate, not an installable release: before launching it, configure `release/linux-unpacked/chrome-sandbox` as root-owned mode `4755` (run `chown` before `chmod`, because changing ownership clears the SUID bit), or use a host with permitted unprivileged user namespaces. DEB/RPM installation configures the packaged helper ownership and mode automatically; AppImage cannot install a privileged helper and therefore requires usable user namespaces. To select an architecture explicitly on matching hardware, append the electron-builder flag:
 
@@ -194,8 +181,6 @@ npm run typecheck
 npm run build
 npm run test:e2e
 npm run test:shell-smoke
-# On a real Windows WSL host:
-npm run test:wsl-smoke
 npm run package:dir
 ```
 
@@ -217,7 +202,7 @@ After satisfying the Linux sandbox prerequisite above, launch the `package:dir` 
 
 - An existing project database opens correctly (projects, tasks, workflows, skins, terminal history).
 - Creating a new project/task and launching an interactive terminal works (PTY input, resize, exit, close).
-- On Windows, both a drive-backed project and a matching `\\wsl$` / `\\wsl.localhost` project run in the explicitly selected distribution without a manual `wsl` prefix; stopping the task leaves unrelated distribution processes alive.
+- On Windows, drive-backed and ordinary network UNC projects run with a selected native Shell; `\\wsl$` and `\\wsl.localhost` project paths are rejected before process launch.
 - The frameless assistant window opens, drags, and closes normally.
 - Replacing a Windows portable build with another build of the same semantic version offers a safe handoff, then updates `.cliloom-workspace.json` and the managed assistant launchers while preserving a user-created file in `assistant-workspace`.
 - Directory selection and skin import accept the Electron 43 default of starting from Downloads (or home if Downloads is absent) when no `defaultPath` is supplied.
@@ -228,7 +213,7 @@ After satisfying the Linux sandbox prerequisite above, launch the `package:dir` 
 
 - `app.asar.unpacked/node_modules/better-sqlite3/prebuilds/` contains the `.node` file matching the target platform/architecture (for example `linux-x64.node`).
 - `app.asar.unpacked/node_modules/node-pty/` contains the target platform's native binding and runtime helper files.
-- Windows unpacked applications contain `cliloom-cli.exe` with PE subsystem `IMAGE_SUBSYSTEM_WINDOWS_CUI`, while `CLILoom.exe` remains `IMAGE_SUBSYSTEM_WINDOWS_GUI`. A PowerShell pipe and a WSL pipe must both deliver non-empty Unicode workflow JSON to the bridge.
+- Windows unpacked applications contain `cliloom-cli.exe` with PE subsystem `IMAGE_SUBSYSTEM_WINDOWS_CUI`, while `CLILoom.exe` remains `IMAGE_SUBSYSTEM_WINDOWS_GUI`. A native PowerShell pipe must deliver non-empty Unicode workflow JSON to the bridge.
 - The ASAR file list does not contain project declaration files (`dist/**/*.d.ts`, `dist/**/*.d.ts.map`, `dist/**/*.tsbuildinfo`).
 - The ASAR file list contains `dist/build-identity.json` with the package version and a 64-character lowercase SHA-256 source hash.
 - The ASAR file list contains `LICENSE` and `THIRD_PARTY_NOTICES.md`, and the Electron runtime still contains its upstream `LICENSE` and `LICENSES.chromium.html` files.

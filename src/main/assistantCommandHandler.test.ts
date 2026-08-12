@@ -23,7 +23,7 @@ function createHandler(snapshot: ShellSnapshot, resolvedTarget?: ResolvedExecuti
     executablePath: '/usr/local/bin/codex'
   }))
   const workspaceStatus = {
-    workspaceVersion: 1,
+    workspaceVersion: 2,
     appVersion: '0.1.0',
     buildId: `sha256:${'a'.repeat(64)}`,
     synchronized: true,
@@ -55,7 +55,7 @@ function createHandler(snapshot: ShellSnapshot, resolvedTarget?: ResolvedExecuti
       binPath: '/private/assistant/bin',
       launcherPath: '/private/assistant/bin/cliloom',
       windowsLauncherPath: '/private/assistant/bin/cliloom.cmd',
-      workspaceVersion: 1,
+      workspaceVersion: 2,
       appVersion: '0.1.0',
       buildId: workspaceStatus.buildId,
       synchronize: () => workspaceStatus,
@@ -114,7 +114,7 @@ describe('assistant doctor shell diagnostics', () => {
       executablePath: '/bin/bash'
     })
     expect(data.workspace).toMatchObject({
-      workspaceVersion: 1,
+      workspaceVersion: 2,
       appVersion: '0.1.0',
       buildId: `sha256:${'a'.repeat(64)}`,
       synchronized: true,
@@ -135,7 +135,7 @@ describe('assistant doctor shell diagnostics', () => {
     const { handler } = createHandler({
       platform: 'win32',
       preferences: {
-        version: 2,
+        version: 3,
         selection: { mode: 'explicit', shell: selected }
       },
       candidates: [],
@@ -178,36 +178,29 @@ describe('assistant context public settings', () => {
     expect(skinSetting?.allowedValues).toContain('builtin.dark.neutral')
   })
 
-  it('validates an initialization command inside the selected WSL target before saving', async () => {
+  it('validates an initialization command for the selected native target before saving', async () => {
     const target = {
-      kind: 'wsl' as const,
-      id: 'wsl:v1:Ubuntu',
-      displayName: 'Ubuntu',
+      id: 'posix:%2Fbin%2Fbash',
+      displayName: 'bash',
       family: 'posix' as const,
-      distributionName: 'Ubuntu',
-      validationState: 'ready' as const,
-      wslExecutablePath: 'C:\\Windows\\System32\\wsl.exe',
-      loginShellPath: '/bin/bash',
-      homeDirectory: '/home/me',
-      defaultUid: 1000,
-      userShellPath: '/home/me/.local/bin:/usr/local/bin:/usr/bin:/bin'
+      executablePath: '/bin/bash',
+      source: 'system' as const
     }
     const {
       handler,
-      resolveAssistantCommand,
       setAssistantInitializationCommand
     } = createHandler({
-      platform: 'win32',
+      platform: 'linux',
       preferences: {
-        version: 2,
+        version: 3,
         selection: {
           mode: 'explicit',
           shell: {
-            kind: 'wsl',
+            kind: 'native',
             id: target.id,
             displayName: target.displayName,
             family: 'posix',
-            distributionName: target.distributionName
+            executablePath: target.executablePath
           }
         }
       },
@@ -218,17 +211,16 @@ describe('assistant context public settings', () => {
     const result = await handler.handle({
       version: 1,
       command: 'settings',
-      args: ['set', 'assistant.initializationCommand', 'codex']
+      args: ['set', 'assistant.initializationCommand', process.execPath]
     })
 
-    expect(resolveAssistantCommand).toHaveBeenCalledWith(target, 'codex')
     expect(setAssistantInitializationCommand).toHaveBeenCalledWith(
-      'codex',
-      expect.objectContaining({ executablePath: '/usr/local/bin/codex' })
+      process.execPath,
+      expect.objectContaining({ executablePath: process.execPath })
     )
     expect(result.data).toMatchObject({
       key: 'assistant.initializationCommand',
-      value: 'codex',
+      value: process.execPath,
       appliesNextSession: true
     })
   })

@@ -33,8 +33,7 @@ const api = {
   openAssistant: () => ipcRenderer.invoke('assistant:open'),
   setLastOpenedWorkspace: (value: { projectId: string; taskId: string | null } | null) =>
     ipcRenderer.invoke('workspace:setLastOpened', value),
-  chooseAndAddProject: (source: 'windows' | 'wsl') =>
-    ipcRenderer.invoke('projects:choose-add', source),
+  chooseAndAddProject: () => ipcRenderer.invoke('projects:choose-add'),
   listProjects: () => ipcRenderer.invoke('projects:list'),
   deleteProject: (projectId: string) => ipcRenderer.invoke('projects:delete', projectId),
   reorderProjects: (projectIds: string[]) => ipcRenderer.invoke('projects:reorder', projectIds),

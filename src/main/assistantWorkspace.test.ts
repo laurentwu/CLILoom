@@ -1,5 +1,6 @@
 import {
   chmodSync,
+  existsSync,
   lstatSync,
   mkdtempSync,
   mkdirSync,
@@ -12,9 +13,9 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  ASSISTANT_WORKSPACE_DIRECTORY,
   ASSISTANT_WORKSPACE_MANIFEST,
   ensureAssistantWorkspace,
-  ensureWslAssistantLauncher,
   readAssistantWorkspaceFile
 } from './assistantWorkspace'
 
@@ -94,20 +95,9 @@ describe('assistant workspace file boundary', () => {
       "'/opt/Electron/electron' '--no-sandbox' '/opt/CLILoom/app' '--cliloom-cli'"
     )
 
-    const wslLauncher = ensureWslAssistantLauncher(workspace, [
-      '/mnt/c/opt/Electron/electron.exe',
-      '--no-sandbox',
-      '/mnt/c/opt/CLILoom/app',
-      '--cliloom-cli'
-    ])
-    expect(path.basename(wslLauncher)).toBe('cliloom')
-    expect(path.dirname(wslLauncher)).toBe(workspace.wslBinPath)
-    expect(readAssistantWorkspaceFile(workspace.rootPath, 'wsl-bin/cliloom')).toContain(
-      "'/mnt/c/opt/Electron/electron.exe' '--no-sandbox' '/mnt/c/opt/CLILoom/app' '--cliloom-cli'"
-    )
   })
 
-  it('routes Windows and WSL commands through the Console-subsystem launcher', () => {
+  it('routes Windows commands through the Console-subsystem launcher', () => {
     const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'cliloom-assistant-workspace-'))
     temporaryDirectories.push(temporaryRoot)
     const workspace = ensureAssistantWorkspace({
@@ -117,23 +107,107 @@ describe('assistant workspace file boundary', () => {
       ...buildIdentity
     })
 
-    expect(workspace.hostLauncherArguments).toEqual([
-      'C:\\Program Files\\CLILoom\\cliloom-cli.exe',
-      'C:\\Program Files\\CLILoom\\CLILoom.exe',
-      '--cliloom-cli'
-    ])
     expect(readAssistantWorkspaceFile(workspace.rootPath, 'bin/cliloom.cmd')).toContain(
       '"C:\\Program Files\\CLILoom\\cliloom-cli.exe" "C:\\Program Files\\CLILoom\\CLILoom.exe" "--cliloom-cli"'
     )
+  })
 
-    ensureWslAssistantLauncher(workspace, [
-      '/mnt/c/Program Files/CLILoom/cliloom-cli.exe',
-      'C:\\Program Files\\CLILoom\\CLILoom.exe',
-      '--cliloom-cli'
-    ])
-    expect(readAssistantWorkspaceFile(workspace.rootPath, 'wsl-bin/cliloom')).toContain(
-      "'/mnt/c/Program Files/CLILoom/cliloom-cli.exe' 'C:\\Program Files\\CLILoom\\CLILoom.exe' '--cliloom-cli'"
+  it('removes a verified legacy assistant shim and its empty directory', () => {
+    const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'cliloom-assistant-workspace-'))
+    temporaryDirectories.push(temporaryRoot)
+    const legacyDirectory = path.join(
+      temporaryRoot,
+      ASSISTANT_WORKSPACE_DIRECTORY,
+      'wsl-bin'
     )
+    mkdirSync(legacyDirectory, { recursive: true })
+    writeFileSync(
+      path.join(legacyDirectory, 'cliloom'),
+      '#!/bin/sh\nexec \'/mnt/c/cliloom-cli.exe\' \'--cliloom-cli\' "$@"\n'
+    )
+
+    ensureAssistantWorkspace({
+      userDataPath: temporaryRoot,
+      executablePath: process.execPath,
+      ...buildIdentity
+    })
+
+    expect(existsSync(legacyDirectory)).toBe(false)
+  })
+
+  it('preserves an unverified legacy assistant shim', () => {
+    const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'cliloom-assistant-workspace-'))
+    temporaryDirectories.push(temporaryRoot)
+    const legacyDirectory = path.join(
+      temporaryRoot,
+      ASSISTANT_WORKSPACE_DIRECTORY,
+      'wsl-bin'
+    )
+    const legacyLauncher = path.join(legacyDirectory, 'cliloom')
+    mkdirSync(legacyDirectory, { recursive: true })
+    writeFileSync(legacyLauncher, '#!/bin/sh\necho user-managed\n')
+
+    ensureAssistantWorkspace({
+      userDataPath: temporaryRoot,
+      executablePath: process.execPath,
+      ...buildIdentity
+    })
+
+    expect(readFileSync(legacyLauncher, 'utf8')).toBe('#!/bin/sh\necho user-managed\n')
+  })
+
+  it('removes only a verified legacy shim from a non-empty directory', () => {
+    const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'cliloom-assistant-workspace-'))
+    temporaryDirectories.push(temporaryRoot)
+    const legacyDirectory = path.join(
+      temporaryRoot,
+      ASSISTANT_WORKSPACE_DIRECTORY,
+      'wsl-bin'
+    )
+    const legacyLauncher = path.join(legacyDirectory, 'cliloom')
+    const userFile = path.join(legacyDirectory, 'keep.txt')
+    mkdirSync(legacyDirectory, { recursive: true })
+    writeFileSync(
+      legacyLauncher,
+      '#!/bin/sh\nexec \'/mnt/c/cliloom-cli.exe\' \'--cliloom-cli\' "$@"\n'
+    )
+    writeFileSync(userFile, 'preserved')
+
+    ensureAssistantWorkspace({
+      userDataPath: temporaryRoot,
+      executablePath: process.execPath,
+      ...buildIdentity
+    })
+
+    expect(existsSync(legacyLauncher)).toBe(false)
+    expect(readFileSync(userFile, 'utf8')).toBe('preserved')
+  })
+
+  it('preserves a symbolic-link legacy shim even when its target has a managed shape', () => {
+    const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'cliloom-assistant-workspace-'))
+    temporaryDirectories.push(temporaryRoot)
+    const legacyDirectory = path.join(
+      temporaryRoot,
+      ASSISTANT_WORKSPACE_DIRECTORY,
+      'wsl-bin'
+    )
+    const outside = path.join(temporaryRoot, 'outside-launcher')
+    mkdirSync(legacyDirectory, { recursive: true })
+    writeFileSync(
+      outside,
+      '#!/bin/sh\nexec \'/mnt/c/cliloom-cli.exe\' \'--cliloom-cli\' "$@"\n'
+    )
+    const legacyLauncher = path.join(legacyDirectory, 'cliloom')
+    symlinkSync(outside, legacyLauncher)
+
+    ensureAssistantWorkspace({
+      userDataPath: temporaryRoot,
+      executablePath: process.execPath,
+      ...buildIdentity
+    })
+
+    expect(lstatSync(legacyLauncher).isSymbolicLink()).toBe(true)
+    expect(readFileSync(outside, 'utf8')).toContain("'--cliloom-cli'")
   })
 
   it('repairs managed files for a new build without removing user files', () => {
@@ -159,7 +233,7 @@ describe('assistant workspace file boundary', () => {
     ]))
     expect(readFileSync(userFile, 'utf8')).toBe('{"preserved":true}')
     expect(first.inspect()).toMatchObject({
-      workspaceVersion: 1,
+      workspaceVersion: 2,
       appVersion: '0.1.0',
       buildId: buildIdentity.buildId,
       synchronized: true,
@@ -180,7 +254,7 @@ describe('assistant workspace file boundary', () => {
       'utf8'
     )) as { version: number; buildId: string }
 
-    expect(manifest).toMatchObject({ version: 1, buildId: nextBuildId })
+    expect(manifest).toMatchObject({ version: 2, buildId: nextBuildId })
     expect(readFileSync(second.windowsLauncherPath, 'utf8')).toContain('C:\\new\\CLILoom.exe')
     expect(readFileSync(userFile, 'utf8')).toBe('{"preserved":true}')
   })

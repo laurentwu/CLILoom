@@ -269,11 +269,8 @@ export type TerminalSession = {
   transcript: string | null
   transcript_cursor?: number | null
   execution_target?: {
-    kind: 'native' | 'wsl'
+    kind: 'native'
     displayName: string
-    distributionName?: string
-    wslVersion?: 1 | 2
-    loginShellPath?: string
   }
 }
 
