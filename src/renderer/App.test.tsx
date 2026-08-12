@@ -292,15 +292,19 @@ vi.mock('./components/TaskSidebar', async () => {
       displayedTasks,
       onLoadTask,
       onRenameTask,
+      onShowMoreTasks,
       onStartNewTask,
-      showDraftTask
+      showDraftTask,
+      totalTaskCount
     }: {
       activeProject: ProjectRecord | null
       displayedTasks: TaskRecord[]
       onLoadTask: (task: TaskRecord) => void
       onRenameTask: (task: TaskRecord, title: string) => Promise<void>
+      onShowMoreTasks: () => void
       onStartNewTask: () => void
       showDraftTask?: boolean
+      totalTaskCount: number
     }) => React.createElement(
       'aside',
       null,
@@ -324,7 +328,13 @@ vi.mock('./components/TaskSidebar', async () => {
           onClick: () => void onRenameTask(task, '手动名称'),
           type: 'button'
         }, `重命名 ${task.title}`)
-      ))
+      )),
+      displayedTasks.length < totalTaskCount
+        ? React.createElement('button', {
+            onClick: onShowMoreTasks,
+            type: 'button'
+          }, '查看更多')
+        : null
     )
   }
 })
@@ -544,6 +554,21 @@ function bootstrap(tasks: TaskRecord[] = []): Bootstrap & { tasks: TaskRecord[] 
   }
 }
 
+function taskRecords(
+  projectRecord: ProjectRecord,
+  count: number,
+  titlePrefix = '任务'
+): TaskRecord[] {
+  return Array.from({ length: count }, (_, index) => ({
+    id: `${projectRecord.id}-task-${index + 1}`,
+    project_id: projectRecord.id,
+    title: `${titlePrefix} ${index + 1}`,
+    status: 'completed',
+    created_at: '2026-08-10T19:30:00.000Z',
+    updated_at: '2026-08-10T19:30:00.000Z'
+  }))
+}
+
 function runtimeState(
   taskId: string,
   definition: WorkflowDefinition,
@@ -715,6 +740,68 @@ describe('App language synchronization', () => {
       appearance: { version: 2, activeSkinId: DEFAULT_APPEARANCE_PREFERENCES.activeSkinId, language: 'en' }
     }))
     expect(document.documentElement.lang).toBe('en')
+  })
+})
+
+describe('App task pagination', () => {
+  it('shows tasks in batches of ten', async () => {
+    const tasks = taskRecords(project, 25)
+    setupApi({ data: bootstrap(tasks) })
+
+    await renderBootstrappedApp()
+
+    expect(await screen.findByRole('button', { name: '加载 任务 10' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '加载 任务 11' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: '查看更多' }))
+
+    expect(await screen.findByRole('button', { name: '加载 任务 20' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '加载 任务 21' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: '查看更多' }))
+
+    expect(await screen.findByRole('button', { name: '加载 任务 25' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '查看更多' })).toBeNull()
+  })
+
+  it('expands through the restored task batch on startup', async () => {
+    const tasks = taskRecords(project, 25)
+    const data = bootstrap(tasks)
+    data.lastOpenedWorkspace = {
+      projectId: project.id,
+      taskId: tasks[10].id
+    }
+    setupApi({ data })
+
+    await renderBootstrappedApp()
+
+    expect(await screen.findByRole('button', { name: '加载 任务 11' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '加载 任务 20' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '加载 任务 21' })).toBeNull()
+    expect(screen.getByRole('button', { name: '查看更多' })).toBeTruthy()
+  })
+
+  it('resets the visible task count when switching projects', async () => {
+    const projectTasks = taskRecords(project, 25, '项目一任务')
+    const otherProjectTasks = taskRecords(otherProject, 25, '项目二任务')
+    const data = bootstrap(projectTasks)
+    data.projects = [project, otherProject]
+    const { api } = setupApi({ data })
+    api.listTasks.mockImplementation((projectId: string) => Promise.resolve(
+      projectId === otherProject.id ? otherProjectTasks : projectTasks
+    ))
+
+    await renderBootstrappedApp()
+    expect(await screen.findByRole('button', { name: '加载 项目一任务 10' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '查看更多' }))
+    expect(await screen.findByRole('button', { name: '加载 项目一任务 20' })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: '切换项目 Other Project' }))
+
+    expect(await screen.findByRole('button', { name: '加载 项目二任务 10' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '加载 项目二任务 11' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '加载 项目一任务 20' })).toBeNull()
+    expect(screen.getByRole('button', { name: '查看更多' })).toBeTruthy()
   })
 })
 

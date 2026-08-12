@@ -790,7 +790,7 @@ export default {
     selectOrCreate: '选择或新建任务',
     defaultWorkflow: '默认流程',
     noWorkflows: '暂无可用流程',
-    viewAll: '查看全部 {{count}} 个任务',
+    viewMore: '查看更多',
     actionsAria: '任务操作 {{name}}',
     action: {
       rename: '重命名'

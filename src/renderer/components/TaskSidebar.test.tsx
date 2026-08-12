@@ -108,13 +108,12 @@ describe('TaskSidebar', () => {
             created_at: createdAt,
             updated_at: createdAt
           }]}
-          showAllTasks={false}
           totalTaskCount={1}
           onDeleteTask={vi.fn()}
           onLoadTask={vi.fn()}
           onRenameTask={vi.fn()}
           onSetDefaultWorkflow={vi.fn()}
-          onShowAllTasks={vi.fn()}
+          onShowMoreTasks={vi.fn()}
           onStartNewTask={vi.fn()}
         />
       </I18nextProvider>
@@ -132,6 +131,39 @@ describe('TaskSidebar', () => {
     expect(startedAt?.className).toContain('text-right')
     expect(startedAt?.parentElement?.className).toContain('min-w-0')
     expect(status.parentElement).toBe(startedAt?.parentElement)
+  })
+
+  it('shows a localized more button while undisplayed tasks remain', () => {
+    i18n.changeLanguage('zh')
+    const onShowMoreTasks = vi.fn()
+
+    render(
+      <I18nextProvider i18n={i18n}>
+        <TaskSidebar
+          activeProject={null}
+          activeTaskId="task-1"
+          availableWorkflows={[]}
+          displayedTasks={[{
+            id: 'task-1',
+            project_id: 'project-1',
+            title: '任务 1',
+            status: 'completed',
+            created_at: '2026-08-10T19:30:00.000Z',
+            updated_at: '2026-08-10T19:30:00.000Z'
+          }]}
+          totalTaskCount={2}
+          onDeleteTask={vi.fn()}
+          onLoadTask={vi.fn()}
+          onRenameTask={vi.fn()}
+          onSetDefaultWorkflow={vi.fn()}
+          onShowMoreTasks={onShowMoreTasks}
+          onStartNewTask={vi.fn()}
+        />
+      </I18nextProvider>
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '查看更多' }))
+    expect(onShowMoreTasks).toHaveBeenCalledOnce()
   })
 
   it('trims before applying the twenty-character rename limit', async () => {
@@ -154,13 +186,12 @@ describe('TaskSidebar', () => {
           activeTaskId={task.id}
           availableWorkflows={[]}
           displayedTasks={[task]}
-          showAllTasks={false}
           totalTaskCount={1}
           onDeleteTask={vi.fn()}
           onLoadTask={vi.fn()}
           onRenameTask={onRenameTask}
           onSetDefaultWorkflow={vi.fn()}
-          onShowAllTasks={vi.fn()}
+          onShowMoreTasks={vi.fn()}
           onStartNewTask={vi.fn()}
         />
       </I18nextProvider>

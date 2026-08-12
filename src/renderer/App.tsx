@@ -244,12 +244,14 @@ const DESIGNER_NODE_GROUPS: Array<{ labelKey: TranslationKey; types: WorkflowNod
   }
 ]
 
+const TASK_BATCH_SIZE = 10
+
 export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
   const { t } = useTranslation()
   const [bootstrap, setBootstrap] = useState<Bootstrap>(fallbackBootstrap)
   const [projects, setProjects] = useState<ProjectRecord[]>([])
   const [tasks, setTasks] = useState<TaskRecord[]>([])
-  const [showAllTasks, setShowAllTasks] = useState(false)
+  const [visibleTaskCount, setVisibleTaskCount] = useState(TASK_BATCH_SIZE)
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
   const [workflow, setWorkflow] = useState<WorkflowDefinition>(emptyWorkflow)
   const [selectedNodeId, setSelectedNodeId] = useState('')
@@ -408,7 +410,7 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
   const taskGraphFitViewOptions = taskGraphFocusNodeId && taskFlowNodes.some((node) => node.id === taskGraphFocusNodeId)
     ? { nodes: [{ id: taskGraphFocusNodeId }], padding: 0.2, maxZoom: 1 }
     : { padding: 0.2, maxZoom: 1 }
-  const displayedTasks = showAllTasks ? tasks : tasks.slice(0, 5)
+  const displayedTasks = tasks.slice(0, visibleTaskCount)
   const persistedActiveTask = tasks.find((task) => task.id === activeTaskId)
   const persistedTaskIds = tasks.map((task) => task.id)
   const canSwitchWorkflow = Boolean(
@@ -917,6 +919,7 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
   }, [designerDirty, designerOpen, editingWorkflow?.id])
 
   useEffect(() => {
+    setVisibleTaskCount(TASK_BATCH_SIZE)
     if (!activeProjectId) {
       setTasks([])
       return
@@ -934,7 +937,10 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
         rememberWorkspace(activeProjectId, null)
         return
       }
-      if (records.indexOf(task) >= 5) setShowAllTasks(true)
+      const taskIndex = records.indexOf(task)
+      if (taskIndex >= TASK_BATCH_SIZE) {
+        setVisibleTaskCount(Math.ceil((taskIndex + 1) / TASK_BATCH_SIZE) * TASK_BATCH_SIZE)
+      }
       loadTask(task)
     }).catch((error: unknown) => handleError(error, 'listTasks'))
     return () => {
@@ -1643,13 +1649,14 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
         displayedTasks={displayedTasks}
         totalTaskCount={tasks.length}
         activeTaskId={activeTaskId}
-        showAllTasks={showAllTasks}
         onSetDefaultWorkflow={setDefaultWorkflow}
         onStartNewTask={startNewTask}
         onLoadTask={loadTask}
         onRenameTask={renameTask}
         onDeleteTask={deleteTaskRecord}
-        onShowAllTasks={() => setShowAllTasks(true)}
+        onShowMoreTasks={() => setVisibleTaskCount((current) => (
+          Math.min(current + TASK_BATCH_SIZE, tasks.length)
+        ))}
       />
 
       <div
