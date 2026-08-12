@@ -111,19 +111,19 @@ export function TaskSidebar({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuLabel>{activeProject.name}</DropdownMenuLabel>
+                <DropdownMenuLabel title={activeProject.name}>{activeProject.name}</DropdownMenuLabel>
                 <DropdownMenuSeparator />
                 <DropdownMenuSub>
                   <DropdownMenuSubTrigger>
                     <Workflow />
-                    {t('task:defaultWorkflow')}
+                    <span className="min-w-0 flex-1 truncate">{t('task:defaultWorkflow')}</span>
                   </DropdownMenuSubTrigger>
                   <DropdownMenuSubContent>
                     {availableWorkflows.length > 0 ? (
                       <DropdownMenuRadioGroup value={defaultWorkflowId} onValueChange={onSetDefaultWorkflow}>
                         {availableWorkflows.map((workflow) => (
                           <DropdownMenuRadioItem key={workflow.id} value={workflow.id}>
-                            {workflow.name}
+                            <span className="min-w-0 flex-1 truncate" title={workflow.name}>{workflow.name}</span>
                           </DropdownMenuRadioItem>
                         ))}
                       </DropdownMenuRadioGroup>

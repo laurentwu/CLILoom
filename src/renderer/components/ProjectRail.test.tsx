@@ -224,6 +224,12 @@ describe('ProjectRail Shell settings', () => {
     expect(screen.getByText('zsh（不可用）')).toBeTruthy()
     expect(screen.getByText('/missing/zsh')).toBeTruthy()
     expect(screen.getByText('所选 Shell 不可用：zsh (/missing/zsh)')).toBeTruthy()
+    const unavailableOption = screen.getByTitle('zsh（不可用） · /missing/zsh')
+    expect(unavailableOption.classList).toContain('truncate')
+    expect(unavailableOption.classList).not.toContain('flex-col')
+    const detectedOption = screen.getByTitle('bash · posix · /bin/bash')
+    expect(detectedOption.classList).toContain('truncate')
+    expect(detectedOption.classList).not.toContain('flex-col')
 
     fireEvent.click(screen.getByRole('button', { name: /bash posix/ }))
 

@@ -115,6 +115,12 @@ export function ProjectRail({
   const wslCandidates = visibleCandidates.filter(isWslExecutionTarget)
   const canChooseWslProject = shellSnapshot.platform === 'win32' &&
     explicitSelection !== null && isWslExecutionTarget(explicitSelection)
+  const automaticShellDetail = shellSnapshot.preferences.selection.mode === 'automatic'
+    ? shellSnapshot.effectiveShell
+      ? getTargetDetail(shellSnapshot.effectiveShell)
+      : t('settings:shell.noneDetected')
+    : t('settings:shell.automaticHint')
+  const shellError = shellActionError ?? shellSnapshot.error ?? shellSnapshot.catalogError
 
   const performShellAction = async (action: () => Promise<void>) => {
     setShellBusy(true)
@@ -128,26 +134,32 @@ export function ProjectRail({
     }
   }
 
-  const renderTargetOption = (target: DetectedExecutionTarget, busy: boolean) => (
-    <DropdownMenuRadioItem
-      disabled={busy || (isWslExecutionTarget(target) && target.validationState === 'unavailable')}
-      key={target.id}
-      value={target.id}
-    >
-      <span className="flex min-w-0 flex-col">
-        <span>
+  const renderTargetOption = (target: DetectedExecutionTarget, busy: boolean) => {
+    const detail = isWslExecutionTarget(target) && target.error ? target.error : getTargetDetail(target)
+    const systemDefaultLabel = isWslExecutionTarget(target) && target.isSystemDefault
+      ? t('settings:shell.systemDefault')
+      : ''
+
+    return (
+      <DropdownMenuRadioItem
+        disabled={busy || (isWslExecutionTarget(target) && target.validationState === 'unavailable')}
+        key={target.id}
+        value={target.id}
+      >
+        <span
+          className="min-w-0 flex-1 truncate"
+          title={[target.displayName, target.family, systemDefaultLabel, detail].filter(Boolean).join(' · ')}
+        >
           {target.displayName}
           {' '}<span className="text-xs text-muted-foreground">{target.family}</span>
-          {isWslExecutionTarget(target) && target.isSystemDefault && (
+          {systemDefaultLabel && (
             <span className="ml-1 text-xs text-muted-foreground">{t('settings:shell.systemDefault')}</span>
           )}
+          <span className="ml-2 text-xs text-muted-foreground">{detail}</span>
         </span>
-        <span className="truncate text-xs text-muted-foreground" title={getTargetDetail(target)}>
-          {isWslExecutionTarget(target) && target.error ? target.error : getTargetDetail(target)}
-        </span>
-      </span>
-    </DropdownMenuRadioItem>
-  )
+      </DropdownMenuRadioItem>
+    )
+  }
 
   return (
     <>
@@ -251,7 +263,7 @@ export function ProjectRail({
               </TooltipTrigger>
               <TooltipContent side="right">{t('settings:menu.label')}</TooltipContent>
             </Tooltip>
-            <DropdownMenuContent align="start" className="w-48" side="right">
+            <DropdownMenuContent align="start" className="min-w-64" side="right">
               <DropdownMenuGroup>
                 <DropdownMenuItem onSelect={onOpenDesigner}>
                   <Workflow />
@@ -260,10 +272,10 @@ export function ProjectRail({
                 <DropdownMenuSub>
                   <DropdownMenuSubTrigger>
                     <Palette />
-                    <span className="flex-1">{t('settings:menu.skin')}</span>
+                    <span className="min-w-0 flex-1 truncate">{t('settings:menu.skin')}</span>
                     <span
                       aria-hidden
-                      className="size-3 rounded-full border border-foreground/10"
+                      className="size-3 shrink-0 rounded-full border border-foreground/10"
                       style={{ background: activeBackground }}
                     />
                   </DropdownMenuSubTrigger>
@@ -277,10 +289,10 @@ export function ProjectRail({
                         <DropdownMenuRadioItem key={skin.id} value={skin.id}>
                           <span
                             aria-hidden
-                            className="size-3.5 rounded-full border border-foreground/10"
+                            className="size-3.5 shrink-0 rounded-full border border-foreground/10"
                             style={{ background: skin.background }}
                           />
-                          <span>{t(skin.nameKey)}</span>
+                          <span className="min-w-0 flex-1 truncate">{t(skin.nameKey)}</span>
                         </DropdownMenuRadioItem>
                       ))}
                       <DropdownMenuSeparator />
@@ -290,10 +302,10 @@ export function ProjectRail({
                           <DropdownMenuRadioItem key={skin.id} value={skin.id}>
                             <span
                               aria-hidden
-                              className="size-3.5 rounded-full border border-foreground/10"
+                              className="size-3.5 shrink-0 rounded-full border border-foreground/10"
                               style={{ background: backgroundToCss(skin.background) }}
                             />
-                            <span className="truncate">{skin.name}</span>
+                            <span className="min-w-0 flex-1 truncate" title={skin.name}>{skin.name}</span>
                           </DropdownMenuRadioItem>
                         ))
                       ) : (
@@ -312,8 +324,8 @@ export function ProjectRail({
                 <DropdownMenuSub>
                   <DropdownMenuSubTrigger>
                     <Languages />
-                    <span className="flex-1">{t('settings:language.label')}</span>
-                    <span className="max-w-20 truncate text-xs text-muted-foreground">
+                    <span className="min-w-0 flex-1 truncate">{t('settings:language.label')}</span>
+                    <span className="max-w-20 shrink-0 truncate text-xs text-muted-foreground">
                       {t(`settings:language.${language}`)}
                     </span>
                   </DropdownMenuSubTrigger>
@@ -327,7 +339,7 @@ export function ProjectRail({
                     >
                       {SUPPORTED_LANGUAGES.map((lng) => (
                         <DropdownMenuRadioItem key={lng} value={lng}>
-                          <span>{t(`settings:language.${lng}`)}</span>
+                          <span className="min-w-0 flex-1 truncate">{t(`settings:language.${lng}`)}</span>
                         </DropdownMenuRadioItem>
                       ))}
                     </DropdownMenuRadioGroup>
@@ -336,12 +348,15 @@ export function ProjectRail({
                 <DropdownMenuSub>
                   <DropdownMenuSubTrigger>
                     <TerminalSquare />
-                    <span className="flex-1">{t('settings:menu.defaultShell')}</span>
-                    <span className="max-w-20 truncate text-xs text-muted-foreground">
+                    <span className="min-w-0 flex-1 truncate">{t('settings:menu.defaultShell')}</span>
+                    <span
+                      className="max-w-20 shrink-0 truncate text-xs text-muted-foreground"
+                      title={shellSnapshot.effectiveShell?.displayName}
+                    >
                       {shellSnapshot.effectiveShell?.displayName ?? t('settings:shell.unavailableShort')}
                     </span>
                   </DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent className="max-h-[min(520px,calc(100vh-2rem))] min-w-80 overflow-y-auto">
+                  <DropdownMenuSubContent className="max-h-[min(520px,calc(100vh-2rem))] min-w-80 max-w-[min(32rem,var(--radix-dropdown-menu-content-available-width))] overflow-y-auto">
                     <DropdownMenuLabel>{t('settings:menu.globalShell')}</DropdownMenuLabel>
                     <DropdownMenuRadioGroup
                       value={selectedShellId}
@@ -351,24 +366,22 @@ export function ProjectRail({
                       }}
                     >
                       <DropdownMenuRadioItem disabled={shellBusy} value="automatic">
-                        <span className="flex min-w-0 flex-col">
-                          <span>{t('settings:shell.automatic')}</span>
-                          <span className="truncate text-xs text-muted-foreground">
-                            {shellSnapshot.preferences.selection.mode === 'automatic'
-                              ? shellSnapshot.effectiveShell
-                                ? getTargetDetail(shellSnapshot.effectiveShell)
-                                : t('settings:shell.noneDetected')
-                              : t('settings:shell.automaticHint')}
-                          </span>
+                        <span
+                          className="min-w-0 flex-1 truncate"
+                          title={`${t('settings:shell.automatic')} · ${automaticShellDetail}`}
+                        >
+                          {t('settings:shell.automatic')}
+                          <span className="ml-2 text-xs text-muted-foreground">{automaticShellDetail}</span>
                         </span>
                       </DropdownMenuRadioItem>
                       {unavailableSelection && explicitSelection && (
                         <DropdownMenuRadioItem disabled value={explicitSelection.id}>
-                          <span className="flex min-w-0 flex-col text-destructive">
-                            <span>{t('terminal:shell.unavailable', { name: explicitSelection.displayName })}</span>
-                            <span className="truncate text-xs" title={getTargetDetail(explicitSelection)}>
-                              {getTargetDetail(explicitSelection)}
-                            </span>
+                          <span
+                            className="min-w-0 flex-1 truncate text-destructive"
+                            title={`${t('terminal:shell.unavailable', { name: explicitSelection.displayName })} · ${getTargetDetail(explicitSelection)}`}
+                          >
+                            {t('terminal:shell.unavailable', { name: explicitSelection.displayName })}
+                            <span className="ml-2 text-xs">{getTargetDetail(explicitSelection)}</span>
                           </span>
                         </DropdownMenuRadioItem>
                       )}
@@ -383,9 +396,9 @@ export function ProjectRail({
                       )}
                       {wslCandidates.map((target) => renderTargetOption(target, shellBusy))}
                     </DropdownMenuRadioGroup>
-                    {(shellSnapshot.error || shellSnapshot.catalogError || shellActionError) && (
-                      <DropdownMenuLabel className="whitespace-normal text-destructive">
-                        {shellActionError ?? shellSnapshot.error ?? shellSnapshot.catalogError}
+                    {shellError && (
+                      <DropdownMenuLabel className="text-destructive" title={shellError}>
+                        {shellError}
                       </DropdownMenuLabel>
                     )}
                     <DropdownMenuSeparator />
