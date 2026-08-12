@@ -15,7 +15,7 @@ vi.mock('@/components/ui/tooltip', async () => {
   )
   return {
     Tooltip: Passthrough,
-    TooltipContent: () => null,
+    TooltipContent: Passthrough,
     TooltipTrigger: Passthrough
   }
 })
@@ -149,6 +149,8 @@ describe('ProjectRail project actions', () => {
 
     const projectButton = screen.getByRole('button', { name: '打开项目 Demo' })
     const projectButtonClasses = projectButton.className.split(/\s+/)
+    expect(projectButton.getAttribute('title')).toBeNull()
+    expect(screen.getByText('/repo/demo')).toBeTruthy()
     expect(projectButtonClasses).not.toContain('ring-2')
     expect(projectButtonClasses).not.toContain('ring-primary/20')
     expect(projectButton.getAttribute('data-variant')).toBe('default')
