@@ -183,6 +183,8 @@ export default {
       missingVersionTasks: '该流程有 {{count}} 个历史任务缺少流程版本，请先删除关联任务',
       activeTasksInUse: '该流程仍被 {{count}} 个进行中的任务使用，请先停止或删除关联任务',
       projectNotFound: '项目不存在或已被删除',
+      projectNameInvalid: '项目名称必须是字符串',
+      projectNameEmpty: '项目名称不能为空',
       projectPathInvalid: '项目路径无效或不是绝对路径',
       projectPathNotDirectory: '所选项目路径不是可访问的文件夹',
       projectPathUnsupported: '不支持该项目路径',
@@ -426,6 +428,12 @@ export default {
     },
     tooltip: {
       deleteProject: '删除项目'
+    },
+    rename: {
+      title: '重命名项目',
+      description: '仅更改项目的显示名称，项目文件夹路径不会改变。',
+      nameAria: '项目名称',
+      save: '保存名称'
     },
     delete: {
       title: '删除项目“{{name}}”？',

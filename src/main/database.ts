@@ -30,6 +30,7 @@ import {
 } from '../shared/terminalBuffer'
 import { parseShellNeutralCommand } from '../shared/shell'
 import { isUnsupportedProjectPath } from '../shared/projectPath'
+import { normalizeProjectName } from '../shared/projectName'
 import { normalizeTaskTitle } from '../shared/taskTitle'
 import { NotFoundError } from './errors'
 import { t } from './i18n'
@@ -635,6 +636,16 @@ export function deleteProject(db: AppDatabase, projectId: string): void {
     db.prepare('delete from projects where id = ?').run(projectId)
   })
   deleteByTask()
+}
+
+export function updateProjectName(db: AppDatabase, projectId: string, name: unknown): ProjectRecord {
+  if (typeof name !== 'string') throw new Error(t('errors:database.projectNameInvalid'))
+  const normalizedName = normalizeProjectName(name)
+  if (!normalizedName) throw new Error(t('errors:database.projectNameEmpty'))
+
+  const result = db.prepare('update projects set name = ? where id = ?').run(normalizedName, projectId)
+  if (result.changes !== 1) throw new NotFoundError(t('errors:database.projectNotFound'))
+  return db.prepare('select * from projects where id = ?').get(projectId) as ProjectRecord
 }
 
 export function reorderProjects(db: AppDatabase, projectIds: string[]): void {
