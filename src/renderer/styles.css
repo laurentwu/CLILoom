@@ -252,9 +252,9 @@ body,
   grid-template-areas: 'project-rail project-resizer task-sidebar task-resizer workspace';
   grid-template-columns:
     var(--project-rail-width, 64px)
-    6px
+    2px
     var(--task-sidebar-width, 168px)
-    6px
+    2px
     minmax(0, 1fr);
 }
 
@@ -274,6 +274,13 @@ body,
 
 .app-shell__task-resizer {
   grid-area: task-resizer;
+}
+
+.app-shell__resize-handle::before {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  inset-inline: -2px;
 }
 
 .workspace-shell {
