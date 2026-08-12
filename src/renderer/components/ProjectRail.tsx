@@ -163,7 +163,6 @@ export function ProjectRail({
                       aria-label={t('project:action.openProject', { name: project.name })}
                       className="size-10 shrink-0 rounded-xl font-heading text-sm"
                       draggable
-                      title={project.path}
                       variant={isActive ? 'default' : 'ghost'}
                       onClick={() => onSelectProject(project)}
                       onDragStart={(event) => event.dataTransfer.setData('text/project-id', project.id)}
