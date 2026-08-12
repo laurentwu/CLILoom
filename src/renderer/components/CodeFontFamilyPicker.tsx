@@ -138,16 +138,17 @@ export function CodeFontFamilyPicker({
                       <CommandItem
                         data-checked={fontFamilyKey(fontFamily) === fontFamilyKey(value)}
                         key={fontFamily}
+                        title={fontFamily}
                         value={fontFamily}
                         onSelect={() => selectFontFamily(fontFamily)}
                       >
-                        <span className="truncate">{fontFamily}</span>
+                        <span className="min-w-0 flex-1 truncate">{fontFamily}</span>
                         {bundled ? (
-                          <span className="text-xs text-muted-foreground">
+                          <span className="shrink-0 text-xs text-muted-foreground">
                             {t('skin:font.bundled')}
                           </span>
                         ) : unavailable ? (
-                          <span className="text-xs text-muted-foreground">
+                          <span className="shrink-0 text-xs text-muted-foreground">
                             {t('skin:font.unavailable')}
                           </span>
                         ) : null}

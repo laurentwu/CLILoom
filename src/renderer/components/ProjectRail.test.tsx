@@ -15,7 +15,7 @@ vi.mock('@/components/ui/tooltip', async () => {
   )
   return {
     Tooltip: Passthrough,
-    TooltipContent: () => null,
+    TooltipContent: Passthrough,
     TooltipTrigger: Passthrough
   }
 })
@@ -149,6 +149,8 @@ describe('ProjectRail project actions', () => {
 
     const projectButton = screen.getByRole('button', { name: '打开项目 Demo' })
     const projectButtonClasses = projectButton.className.split(/\s+/)
+    expect(projectButton.getAttribute('title')).toBeNull()
+    expect(screen.getByText('/repo/demo')).toBeTruthy()
     expect(projectButtonClasses).not.toContain('ring-2')
     expect(projectButtonClasses).not.toContain('ring-primary/20')
     expect(projectButton.getAttribute('data-variant')).toBe('default')
@@ -224,6 +226,12 @@ describe('ProjectRail Shell settings', () => {
     expect(screen.getByText('zsh（不可用）')).toBeTruthy()
     expect(screen.getByText('/missing/zsh')).toBeTruthy()
     expect(screen.getByText('所选 Shell 不可用：zsh (/missing/zsh)')).toBeTruthy()
+    const unavailableOption = screen.getByTitle('zsh（不可用） · /missing/zsh')
+    expect(unavailableOption.classList).toContain('truncate')
+    expect(unavailableOption.classList).not.toContain('flex-col')
+    const detectedOption = screen.getByTitle('bash · posix · /bin/bash')
+    expect(detectedOption.classList).toContain('truncate')
+    expect(detectedOption.classList).not.toContain('flex-col')
 
     fireEvent.click(screen.getByRole('button', { name: /bash posix/ }))
 
