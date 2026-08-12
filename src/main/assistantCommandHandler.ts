@@ -182,6 +182,7 @@ export class AssistantCommandHandler {
     }
     const shellSnapshot = this.options.shellService.getSnapshot()
     const shell = target ?? shellSnapshot.effectiveShell
+    const workspaceStatus = this.options.workspace.inspect()
     const configuredShell = shellSnapshot.preferences.selection.mode === 'explicit'
       ? shellSnapshot.preferences.selection.shell
       : null
@@ -211,7 +212,8 @@ export class AssistantCommandHandler {
       workspace: {
         path: this.options.workspace.rootPath,
         launcher: this.options.workspace.launcherPath,
-        available: true
+        available: true,
+        ...workspaceStatus
       },
       bridge: { connected: true },
       command
@@ -224,7 +226,8 @@ export class AssistantCommandHandler {
     const text = [
       `Platform: ${data.platform}`,
       `Terminal environment: ${shellDetail}`,
-      `Workspace: OK (${data.workspace.path})`,
+      `Build: ${workspaceStatus.buildId}`,
+      `Workspace: ${workspaceStatus.synchronized ? 'OK' : 'ERROR'} (${data.workspace.path}, v${workspaceStatus.workspaceVersion})`,
       'Bridge: OK',
       `Initialization command: ${command.available ? 'OK' : `ERROR (${command.error})`}`
     ].join('\n')

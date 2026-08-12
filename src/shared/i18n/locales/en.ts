@@ -17,7 +17,18 @@ export default {
       rename: 'Rename',
       ok: 'OK',
       run: 'Run',
-      continue: 'Continue'
+      continue: 'Continue',
+      switchAndRestart: 'Switch and restart'
+    },
+    instanceHandoff: {
+      title: 'Switch to another CLILoom build?',
+      message: 'Another CLILoom portable build was just started.',
+      detail: 'Current build: {{current}}\nRequested build: {{incoming}}\n\nCLILoom will safely stop the current workflows and assistant before starting the portable application you just opened. The assistant workspace and user data will be preserved and synchronized.',
+      unavailableTitle: 'Another CLILoom build was detected',
+      unavailableMessage: 'CLILoom cannot switch to the application that was just started automatically.',
+      unavailableDetail: 'Requested build: {{incoming}}\n\nExit the current CLILoom instance, then open the requested application again.',
+      launchFailedTitle: 'Could not start the new CLILoom build',
+      launchFailedMessage: 'The current application stopped safely, but the requested portable application could not be started. Open it again manually.\n\n{{detail}}'
     },
     status: {
       failed: 'Failed',
@@ -244,10 +255,12 @@ export default {
       fileTooLarge: 'File exceeds the {{limit}} byte limit',
       notADirectory: 'The managed assistant directory is not a regular directory: {{path}}',
       managedNotAFile: 'The managed assistant file is not a regular file: {{path}}',
+      buildIdentityInvalid: 'The assistant workspace build identity is invalid',
       unsafeLauncherPath: 'The application path cannot be written safely to the Windows launcher'
     },
     assistantTerminal: {
       stageParse: 'parse',
+      stageSync: 'synchronize workspace',
       stageDetect: 'detect',
       stageStart: 'start',
       startCancelled: 'Assistant terminal start was cancelled',

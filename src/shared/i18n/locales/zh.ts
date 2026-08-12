@@ -17,7 +17,18 @@ export default {
       rename: '重命名',
       ok: '确定',
       run: '运行',
-      continue: '继续'
+      continue: '继续',
+      switchAndRestart: '切换并重启'
+    },
+    instanceHandoff: {
+      title: '切换到另一个 CLILoom 构建？',
+      message: '检测到你启动了另一个 CLILoom 便携版构建。',
+      detail: '当前构建：{{current}}\n待切换构建：{{incoming}}\n\n确认后会先安全停止当前工作流和助手，再启动刚刚打开的便携版。助手目录和用户数据会保留并自动同步。',
+      unavailableTitle: '检测到另一个 CLILoom 构建',
+      unavailableMessage: '无法自动切换到刚刚启动的应用。',
+      unavailableDetail: '目标构建：{{incoming}}\n\n请先退出当前 CLILoom，再重新打开目标应用。',
+      launchFailedTitle: '无法启动新的 CLILoom 构建',
+      launchFailedMessage: '当前应用已安全停止，但目标便携版未能启动。请手动重新打开它。\n\n{{detail}}'
     },
     status: {
       failed: '失败',
@@ -244,10 +255,12 @@ export default {
       fileTooLarge: '文件超过 {{limit}} 字节限制',
       notADirectory: '受管助手目录不是普通目录：{{path}}',
       managedNotAFile: '受管助手文件不是普通文件：{{path}}',
+      buildIdentityInvalid: '助手工作区的应用构建身份无效',
       unsafeLauncherPath: '应用路径不能安全写入 Windows 启动器'
     },
     assistantTerminal: {
       stageParse: '解析',
+      stageSync: '同步工作区',
       stageDetect: '检测',
       stageStart: '启动',
       startCancelled: '助手终端启动已取消',

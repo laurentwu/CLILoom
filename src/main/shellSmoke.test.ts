@@ -327,7 +327,9 @@ describe('native shell smoke', () => {
     const { workingDirectory } = createNativeContext()
     const workspace = ensureAssistantWorkspace({
       userDataPath: workingDirectory,
-      executablePath: process.execPath
+      executablePath: process.execPath,
+      appVersion: '0.1.0',
+      buildId: `sha256:${'a'.repeat(64)}`
     })
     const launcher = process.platform === 'win32'
       ? workspace.windowsLauncherPath
@@ -408,7 +410,9 @@ describe('native shell smoke', () => {
     const workspace = ensureAssistantWorkspace({
       userDataPath: directory,
       executablePath: process.execPath,
-      appEntryPath
+      appEntryPath,
+      appVersion: '0.1.0',
+      buildId: `sha256:${'a'.repeat(64)}`
     })
     const fakeAssistant = path.join(
       workingDirectory,

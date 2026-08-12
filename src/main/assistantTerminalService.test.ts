@@ -62,16 +62,45 @@ function createTerminal(pid: number) {
   }
 }
 
+function createWorkspaceStatus() {
+  return {
+    workspaceVersion: 1,
+    appVersion: '0.1.0',
+    buildId: `sha256:${'a'.repeat(64)}`,
+    synchronized: true,
+    managedFileCount: 4,
+    repairedFiles: [],
+    issues: []
+  }
+}
+
+function createWorkspaceMetadata(
+  synchronize = vi.fn(() => createWorkspaceStatus())
+) {
+  const status = createWorkspaceStatus()
+  return {
+    workspaceVersion: status.workspaceVersion,
+    appVersion: status.appVersion,
+    buildId: status.buildId,
+    synchronize,
+    inspect: vi.fn(() => status)
+  }
+}
+
 function createService(
   resolveEffectiveShell: () => DetectedShell,
-  configuredShell?: DetectedShell
+  configuredShell?: DetectedShell,
+  synchronizeWorkspace?: () => ReturnType<typeof createWorkspaceStatus>
 ) {
   return new AssistantTerminalService({
     workspace: {
       rootPath: '/private/assistant',
       binPath: '/private/assistant/bin',
       launcherPath: '/private/assistant/bin/cliloom',
-      windowsLauncherPath: '/private/assistant/bin/cliloom.cmd'
+      windowsLauncherPath: '/private/assistant/bin/cliloom.cmd',
+      ...createWorkspaceMetadata(synchronizeWorkspace
+        ? vi.fn(synchronizeWorkspace)
+        : undefined)
     },
     environment: { PATH: '/usr/bin' },
     commandHandler: {} as never,
@@ -150,6 +179,48 @@ describe('AssistantTerminalService global shell integration', () => {
       ['-NoLogo', '-Command', expect.stringContaining("& '/usr/bin/codex' '--model' 'gpt 5'")],
       expect.any(Object)
     )
+  })
+
+  it('synchronizes the managed workspace before resolving or starting the assistant', async () => {
+    mocks.ptySpawn.mockReturnValue(createTerminal(1003))
+    const synchronizeWorkspace = vi.fn(() => createWorkspaceStatus())
+    const resolveEffectiveShell = vi.fn(() => shells.posix)
+    const service = createService(
+      resolveEffectiveShell,
+      undefined,
+      synchronizeWorkspace
+    )
+
+    await service.start('codex')
+
+    expect(synchronizeWorkspace).toHaveBeenCalledOnce()
+    expect(synchronizeWorkspace.mock.invocationCallOrder[0])
+      .toBeLessThan(resolveEffectiveShell.mock.invocationCallOrder[0])
+    await service.close()
+  })
+
+  it('reports workspace synchronization failures at the synchronization stage', async () => {
+    const resolveEffectiveShell = vi.fn(() => shells.posix)
+    const service = createService(
+      resolveEffectiveShell,
+      undefined,
+      () => {
+        throw new Error('managed workspace is blocked')
+      }
+    )
+
+    await expect(service.start('codex'))
+      .rejects.toThrow('failed during synchronize workspace: managed workspace is blocked')
+
+    expect(resolveEffectiveShell).not.toHaveBeenCalled()
+    expect(mocks.startBridge).not.toHaveBeenCalled()
+    expect(mocks.ptySpawn).not.toHaveBeenCalled()
+    expect(service.getStatus()).toEqual({
+      state: 'failed',
+      message: expect.stringContaining(
+        'failed during synchronize workspace: managed workspace is blocked'
+      )
+    })
   })
 
   it('uses a rebuilt login environment for the next assistant start', async () => {
@@ -237,7 +308,8 @@ describe('AssistantTerminalService global shell integration', () => {
           '--no-sandbox',
           'C:\\source\\cliloom',
           '--cliloom-cli'
-        ]
+        ],
+        ...createWorkspaceMetadata()
       },
       environment: { SystemRoot: 'C:\\Windows', PATH: 'C:\\Windows\\System32' },
       commandHandler: {} as never,
@@ -339,7 +411,8 @@ describe('AssistantTerminalService global shell integration', () => {
         launcherPath: 'C:\\private\\assistant\\bin\\cliloom',
         windowsLauncherPath: 'C:\\private\\assistant\\bin\\cliloom.cmd',
         wslLauncherPath: 'C:\\private\\assistant\\wsl-bin\\cliloom',
-        hostLauncherArguments: ['C:\\cliloom-cli.exe', 'C:\\CLILoom.exe', '--cliloom-cli']
+        hostLauncherArguments: ['C:\\cliloom-cli.exe', 'C:\\CLILoom.exe', '--cliloom-cli'],
+        ...createWorkspaceMetadata()
       },
       environment: { SystemRoot: 'C:\\Windows', PATH: 'C:\\Windows\\System32' },
       commandHandler: {} as never,
