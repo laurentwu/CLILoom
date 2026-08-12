@@ -10,13 +10,25 @@ import {
   writeFileSync
 } from 'node:fs'
 import path from 'node:path'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { NotFoundError } from './errors'
 import { t } from './i18n'
 
 export const ASSISTANT_WORKSPACE_DIRECTORY = 'assistant-workspace'
+export const ASSISTANT_WORKSPACE_MANIFEST = '.cliloom-workspace.json'
+export const ASSISTANT_WORKSPACE_VERSION = 1
 export const MAX_ASSISTANT_INPUT_FILE_BYTES = 2 * 1024 * 1024
 export const WINDOWS_ASSISTANT_CLI_EXECUTABLE = 'cliloom-cli.exe'
+
+export type AssistantWorkspaceSyncStatus = {
+  workspaceVersion: number
+  appVersion: string
+  buildId: string
+  synchronized: boolean
+  managedFileCount: number
+  repairedFiles: string[]
+  issues: string[]
+}
 
 export type AssistantWorkspace = {
   rootPath: string
@@ -26,6 +38,17 @@ export type AssistantWorkspace = {
   windowsLauncherPath: string
   wslLauncherPath?: string
   hostLauncherArguments?: string[]
+  workspaceVersion: number
+  appVersion: string
+  buildId: string
+  synchronize: () => AssistantWorkspaceSyncStatus
+  inspect: () => AssistantWorkspaceSyncStatus
+}
+
+type ManagedFile = {
+  relativePath: string
+  content: string
+  mode: number
 }
 
 export function ensureAssistantWorkspace(options: {
@@ -34,7 +57,13 @@ export function ensureAssistantWorkspace(options: {
   windowsConsoleLauncherPath?: string
   appEntryPath?: string
   noSandbox?: boolean
+  appVersion: string
+  buildId: string
 }): AssistantWorkspace {
+  if (!options.appVersion || options.appVersion.includes('\0') ||
+    !/^sha256:[0-9a-f]{64}$/.test(options.buildId)) {
+    throw new Error(t('errors:assistantWorkspace.buildIdentityInvalid'))
+  }
   const rootPath = path.join(options.userDataPath, ASSISTANT_WORKSPACE_DIRECTORY)
   const binPath = path.join(rootPath, 'bin')
   const wslBinPath = path.join(rootPath, 'wsl-bin')
@@ -51,9 +80,6 @@ You are running inside CLILoom's private assistant workspace.
 - Validate a workflow before saving it, and preserve the revision returned by \`workflow get --json\`.
 - Do not edit files under this managed workspace unless the user explicitly asks you to create a workflow JSON input file.
 `
-  atomicManagedWrite(path.join(rootPath, 'AGENTS.md'), instructions, 0o600)
-  atomicManagedWrite(path.join(rootPath, 'CLAUDE.md'), instructions, 0o600)
-
   const launcherArguments = [
     ...(options.windowsConsoleLauncherPath ? [options.windowsConsoleLauncherPath] : []),
     options.executablePath
@@ -68,18 +94,36 @@ You are running inside CLILoom's private assistant workspace.
   // Keep the WSL shim in its own PATH directory under the canonical command
   // name. The native launcher cannot safely double as a WSL interop shim.
   const wslLauncherPath = path.join(wslBinPath, 'cliloom')
-  atomicManagedWrite(launcherPath, posixLauncher, 0o700)
-  atomicManagedWrite(windowsLauncherPath, windowsLauncher, 0o600)
-
-  return {
+  const managedFiles: ManagedFile[] = [
+    { relativePath: 'AGENTS.md', content: instructions, mode: 0o600 },
+    { relativePath: 'CLAUDE.md', content: instructions, mode: 0o600 },
+    { relativePath: 'bin/cliloom', content: posixLauncher, mode: 0o700 },
+    { relativePath: 'bin/cliloom.cmd', content: windowsLauncher, mode: 0o600 }
+  ]
+  let lastRepairedFiles: string[] = []
+  const workspace: AssistantWorkspace = {
     rootPath,
     binPath,
     wslBinPath,
     launcherPath,
     windowsLauncherPath,
     wslLauncherPath,
-    hostLauncherArguments: launcherArguments
+    hostLauncherArguments: launcherArguments,
+    workspaceVersion: ASSISTANT_WORKSPACE_VERSION,
+    appVersion: options.appVersion,
+    buildId: options.buildId,
+    synchronize: () => {
+      const result = synchronizeAssistantWorkspace(workspace, managedFiles)
+      lastRepairedFiles = result.repairedFiles
+      return result
+    },
+    inspect: () => ({
+      ...inspectAssistantWorkspace(workspace, managedFiles),
+      repairedFiles: [...lastRepairedFiles]
+    })
   }
+  workspace.synchronize()
+  return workspace
 }
 
 export function ensureWslAssistantLauncher(
@@ -141,6 +185,110 @@ function ensurePrivateDirectory(directoryPath: string): void {
   }
 }
 
+function synchronizeAssistantWorkspace(
+  workspace: AssistantWorkspace,
+  managedFiles: ManagedFile[]
+): AssistantWorkspaceSyncStatus {
+  ensurePrivateDirectory(workspace.rootPath)
+  ensurePrivateDirectory(workspace.binPath)
+  if (workspace.wslBinPath) ensurePrivateDirectory(workspace.wslBinPath)
+
+  const repairedFiles: string[] = []
+  for (const managedFile of managedFiles) {
+    const filePath = path.join(workspace.rootPath, ...managedFile.relativePath.split('/'))
+    if (!managedFileMatches(filePath, managedFile.content)) {
+      atomicManagedWrite(filePath, managedFile.content, managedFile.mode)
+      repairedFiles.push(managedFile.relativePath)
+    } else {
+      try {
+        chmodSync(filePath, managedFile.mode)
+      } catch {
+        // Windows does not implement POSIX modes.
+      }
+    }
+  }
+
+  const manifestPath = path.join(workspace.rootPath, ASSISTANT_WORKSPACE_MANIFEST)
+  const manifest = createWorkspaceManifest(workspace, managedFiles)
+  if (!managedFileMatches(manifestPath, manifest)) {
+    atomicManagedWrite(manifestPath, manifest, 0o600)
+    repairedFiles.push(ASSISTANT_WORKSPACE_MANIFEST)
+  } else {
+    try {
+      chmodSync(manifestPath, 0o600)
+    } catch {
+      // Windows does not implement POSIX modes.
+    }
+  }
+
+  return {
+    ...inspectAssistantWorkspace(workspace, managedFiles),
+    repairedFiles
+  }
+}
+
+function inspectAssistantWorkspace(
+  workspace: AssistantWorkspace,
+  managedFiles: ManagedFile[]
+): AssistantWorkspaceSyncStatus {
+  const issues: string[] = []
+  for (const managedFile of managedFiles) {
+    const filePath = path.join(workspace.rootPath, ...managedFile.relativePath.split('/'))
+    if (!managedFileMatches(filePath, managedFile.content, managedFile.mode)) {
+      issues.push(`managed-file:${managedFile.relativePath}`)
+    }
+  }
+  const manifestPath = path.join(workspace.rootPath, ASSISTANT_WORKSPACE_MANIFEST)
+  if (!managedFileMatches(manifestPath, createWorkspaceManifest(workspace, managedFiles), 0o600)) {
+    issues.push(`manifest:${ASSISTANT_WORKSPACE_MANIFEST}`)
+  }
+  return {
+    workspaceVersion: workspace.workspaceVersion,
+    appVersion: workspace.appVersion,
+    buildId: workspace.buildId,
+    synchronized: issues.length === 0,
+    managedFileCount: managedFiles.length,
+    repairedFiles: [],
+    issues
+  }
+}
+
+function createWorkspaceManifest(
+  workspace: AssistantWorkspace,
+  managedFiles: ManagedFile[]
+): string {
+  const files = Object.fromEntries(managedFiles.map((managedFile) => [
+    managedFile.relativePath,
+    {
+      sha256: createHash('sha256').update(managedFile.content).digest('hex'),
+      mode: managedFile.mode.toString(8).padStart(4, '0')
+    }
+  ]))
+  return `${JSON.stringify({
+    version: ASSISTANT_WORKSPACE_VERSION,
+    appVersion: workspace.appVersion,
+    buildId: workspace.buildId,
+    managedFiles: files
+  }, null, 2)}\n`
+}
+
+function managedFileMatches(
+  filePath: string,
+  expectedContent: string,
+  expectedMode?: number
+): boolean {
+  try {
+    const stat = lstatSync(filePath)
+    return !stat.isSymbolicLink() &&
+      stat.isFile() &&
+      readFileSync(filePath, 'utf8') === expectedContent &&
+      (expectedMode === undefined || process.platform === 'win32' ||
+        (stat.mode & 0o777) === expectedMode)
+  } catch {
+    return false
+  }
+}
+
 function atomicManagedWrite(filePath: string, content: string, mode: number): void {
   try {
     const stat = lstatSync(filePath)
@@ -175,7 +323,7 @@ function replaceManagedFile(temporaryPath: string, filePath: string): void {
     return
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code
-    if (code !== 'EEXIST' && code !== 'EPERM') throw error
+    if (code !== 'EACCES' && code !== 'EEXIST' && code !== 'EPERM') throw error
   }
 
   // Windows cannot rename over an existing file. Move the validated target

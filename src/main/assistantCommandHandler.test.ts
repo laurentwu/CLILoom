@@ -22,6 +22,15 @@ function createHandler(snapshot: ShellSnapshot, resolvedTarget?: ResolvedExecuti
     args: [],
     executablePath: '/usr/local/bin/codex'
   }))
+  const workspaceStatus = {
+    workspaceVersion: 1,
+    appVersion: '0.1.0',
+    buildId: `sha256:${'a'.repeat(64)}`,
+    synchronized: true,
+    managedFileCount: 4,
+    repairedFiles: [],
+    issues: []
+  }
   const handler = new AssistantCommandHandler({
     workflowService: { list: () => [] } as never,
     settingsService: {
@@ -45,7 +54,12 @@ function createHandler(snapshot: ShellSnapshot, resolvedTarget?: ResolvedExecuti
       rootPath: '/private/assistant',
       binPath: '/private/assistant/bin',
       launcherPath: '/private/assistant/bin/cliloom',
-      windowsLauncherPath: '/private/assistant/bin/cliloom.cmd'
+      windowsLauncherPath: '/private/assistant/bin/cliloom.cmd',
+      workspaceVersion: 1,
+      appVersion: '0.1.0',
+      buildId: workspaceStatus.buildId,
+      synchronize: () => workspaceStatus,
+      inspect: () => workspaceStatus
     },
     appVersion: '0.1.0',
     environment: {
@@ -86,7 +100,10 @@ describe('assistant doctor shell diagnostics', () => {
     })
 
     const result = await handler.handle({ version: 1, command: 'doctor', args: [] })
-    const data = result.data as { shell: Record<string, unknown> }
+    const data = result.data as {
+      shell: Record<string, unknown>
+      workspace: Record<string, unknown>
+    }
 
     expect(resolveEffectiveShell).toHaveBeenCalledOnce()
     expect(data.shell).toMatchObject({
@@ -96,6 +113,14 @@ describe('assistant doctor shell diagnostics', () => {
       family: 'posix',
       executablePath: '/bin/bash'
     })
+    expect(data.workspace).toMatchObject({
+      workspaceVersion: 1,
+      appVersion: '0.1.0',
+      buildId: `sha256:${'a'.repeat(64)}`,
+      synchronized: true,
+      managedFileCount: 4
+    })
+    expect(result.text).toContain(`Build: sha256:${'a'.repeat(64)}`)
     expect(JSON.stringify(result)).not.toContain('must-not-leak')
   })
 

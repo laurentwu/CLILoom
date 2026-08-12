@@ -86,6 +86,8 @@ export class AssistantTerminalService {
     let stage = t('errors:assistantTerminal.stageParse')
 
     try {
+      stage = t('errors:assistantTerminal.stageSync')
+      this.options.workspace.synchronize()
       stage = t('errors:assistantTerminal.stageDetect')
       shell = await this.resolveEffectiveTarget()
       const resolved = isWslExecutionTarget(shell)

@@ -163,6 +163,8 @@ The NSIS GUID is the UUID v5 that electron-builder 26.15.3 derives from the appl
 
 The user data directory is intentionally independent of the product name. Installed and portable builds both use the operating system's application-data root followed by `CLILoom`: `%APPDATA%\CLILoom` on Windows, `~/Library/Application Support/CLILoom` on macOS, and normally `~/.config/CLILoom` on Linux. Changing a display name must not relocate existing user data.
 
+Every build generates `dist/build-identity.json` from the packaged source inputs. At runtime CLILoom combines that source hash with the target platform and architecture, so two changed builds remain distinguishable even if a local test package reuses the same semantic version. The private assistant workspace remains at `assistant-workspace` under the stable user data directory. Its `.cliloom-workspace.json` manifest identifies the owning build and hashes only CLILoom-managed instructions and launchers; startup and every assistant restart repair those managed files without deleting user-created workflow input files. On Windows, starting a different portable build while CLILoom is running asks before safely stopping current processes and handing control to the outer executable exposed by electron-builder as `PORTABLE_EXECUTABLE_FILE`. A build released before this handoff protocol cannot understand the request, so that one-time upgrade still requires fully exiting the older process first; later replacements hand off automatically after confirmation.
+
 On POSIX systems the application repairs the user data directory to mode `0700` and the SQLite database to mode `0600` whenever it opens the database. Windows uses the ACL inherited from the per-user application-data directory. The database is plaintext rather than application-encrypted; the complete trust, retention, and deletion model is documented in [SECURITY_MODEL.md](SECURITY_MODEL.md).
 
 ## Versioning
@@ -217,6 +219,7 @@ After satisfying the Linux sandbox prerequisite above, launch the `package:dir` 
 - Creating a new project/task and launching an interactive terminal works (PTY input, resize, exit, close).
 - On Windows, both a drive-backed project and a matching `\\wsl$` / `\\wsl.localhost` project run in the explicitly selected distribution without a manual `wsl` prefix; stopping the task leaves unrelated distribution processes alive.
 - The frameless assistant window opens, drags, and closes normally.
+- Replacing a Windows portable build with another build of the same semantic version offers a safe handoff, then updates `.cliloom-workspace.json` and the managed assistant launchers while preserving a user-created file in `assistant-workspace`.
 - Directory selection and skin import accept the Electron 43 default of starting from Downloads (or home if Downloads is absent) when no `defaultPath` is supplied.
 - Skin export suggests the file name `cliloom-skin.json` and writes successfully to a user-chosen target.
 - On Linux, both X11 and Wayland sessions launch without crashing or black screens.
@@ -227,6 +230,7 @@ After satisfying the Linux sandbox prerequisite above, launch the `package:dir` 
 - `app.asar.unpacked/node_modules/node-pty/` contains the target platform's native binding and runtime helper files.
 - Windows unpacked applications contain `cliloom-cli.exe` with PE subsystem `IMAGE_SUBSYSTEM_WINDOWS_CUI`, while `CLILoom.exe` remains `IMAGE_SUBSYSTEM_WINDOWS_GUI`. A PowerShell pipe and a WSL pipe must both deliver non-empty Unicode workflow JSON to the bridge.
 - The ASAR file list does not contain project declaration files (`dist/**/*.d.ts`, `dist/**/*.d.ts.map`, `dist/**/*.tsbuildinfo`).
+- The ASAR file list contains `dist/build-identity.json` with the package version and a 64-character lowercase SHA-256 source hash.
 - The ASAR file list contains `LICENSE` and `THIRD_PARTY_NOTICES.md`, and the Electron runtime still contains its upstream `LICENSE` and `LICENSES.chromium.html` files.
 - Installed Linux DEB/RPM packages contain a root-owned `chrome-sandbox` with mode `4755`.
 - Linux AppImages launch without `--no-sandbox`, render both production entries, and report sandboxed renderer processes.

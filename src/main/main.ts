@@ -48,6 +48,18 @@ import {
   ensureAssistantWorkspace,
   WINDOWS_ASSISTANT_CLI_EXECUTABLE
 } from './assistantWorkspace'
+import {
+  BUILD_IDENTITY_FILE,
+  loadApplicationBuildIdentity,
+  type ApplicationBuildIdentity
+} from './buildIdentity'
+import {
+  createDesktopInstanceLaunchData,
+  launchReplacementExecutable,
+  resolvePortableExecutablePath,
+  type DesktopInstanceLaunchData
+} from './instanceHandoff'
+import { InstanceHandoffCoordinator } from './instanceHandoffCoordinator'
 import { SettingsService } from './settingsService'
 import { ShellService } from './shellService'
 import { isWslExecutionTarget } from '../shared/shell'
@@ -95,6 +107,8 @@ let allowApplicationQuit = false
 let databaseMaintenanceScheduler: IdleMaintenanceScheduler | null = null
 let developmentServerUrl: URL | null = null
 let mainRendererUrl: string | null = null
+let applicationBuildIdentity: ApplicationBuildIdentity | null = null
+let desktopInitialized = false
 const installedFontService = new InstalledFontService()
 
 const assistantCliArguments = getAssistantCliArguments(process.argv)
@@ -114,42 +128,61 @@ function startDesktopApplication(): void {
   app.setAppUserModelId(APP_ID)
   app.setName(APP_NAME)
   app.setPath('userData', path.join(app.getPath('appData'), APP_USER_DATA_DIRECTORY_NAME))
-  if (!app.requestSingleInstanceLock()) {
+  try {
+    applicationBuildIdentity = loadApplicationBuildIdentity({
+      filePath: path.join(app.getAppPath(), ...BUILD_IDENTITY_FILE.split('/')),
+      appVersion: app.getVersion(),
+      required: app.isPackaged
+    })
+  } catch (error) {
+    dialog.showErrorBox(
+      t('errors:startup.failedTitle'),
+      error instanceof Error ? error.message : String(error)
+    )
+    app.exit(10)
+    return
+  }
+  const buildIdentity = applicationBuildIdentity
+  const instanceLaunchData = createDesktopInstanceLaunchData({
+    identity: buildIdentity,
+    environment: process.env
+  })
+  if (!app.requestSingleInstanceLock(instanceLaunchData)) {
     app.quit()
     return
   }
 
-  app.on('second-instance', () => {
-    if (!mainWindow) return
-    if (mainWindow.isMinimized()) mainWindow.restore()
-    mainWindow.show()
-    mainWindow.focus()
+  const instanceHandoffCoordinator = new InstanceHandoffCoordinator({
+    getCurrentIdentity: () => applicationBuildIdentity,
+    focusCurrent: showMainApplicationWindow,
+    confirmSwitch: confirmInstanceSwitch,
+    showUnavailable: showHandoffUnavailableDialog,
+    resolveExecutablePath: (candidate) => resolvePortableExecutablePath({
+      PORTABLE_EXECUTABLE_FILE: candidate
+    }, process.platform),
+    cleanupCurrent: beginSafeApplicationCleanup,
+    onCleanupFailed: (error) => {
+      quitCleanup = null
+      showUnsafeExitError(error)
+    },
+    releaseSingleInstanceLock: () => app.releaseSingleInstanceLock(),
+    launchReplacement: (executablePath) => launchReplacementExecutable(executablePath),
+    onLaunchFailed: showReplacementLaunchFailed,
+    quitCurrent: quitAfterInstanceHandoff,
+    onUnexpectedError: (error) => {
+      console.error('Second application instance handling failed:', error)
+    }
+  })
+
+  app.on('second-instance', (_event, _argv, _workingDirectory, additionalData) => {
+    instanceHandoffCoordinator.enqueue(additionalData)
   })
 
   app.on('before-quit', (event) => {
     if (allowApplicationQuit) return
     event.preventDefault()
     if (quitCleanup) return
-    quitCleanup = (async () => {
-      await Promise.all([
-        workflowRuntime?.shutdown?.()
-          ?? runner?.killAll?.().then(() => undefined)
-          ?? Promise.resolve(),
-        assistantWindowManager?.close?.() ?? Promise.resolve()
-      ])
-      databaseMaintenanceScheduler?.stop()
-      allowMainWindowDestroy = true
-      allowApplicationQuit = true
-      app.quit()
-    })().catch((error) => {
-      console.error('App process cleanup failed:', error)
-      quitCleanup = null
-      dialog.showErrorBox(
-        t('errors:exit.unsafeTitle'),
-        t('errors:exit.unsafeMessage', { detail: error instanceof Error ? error.message : String(error) })
-      )
-      if (!mainWindow && app.isReady()) createWindow()
-    })
+    void completeNormalApplicationQuit()
   })
 
   void app.whenReady().then(async () => {
@@ -207,6 +240,8 @@ function startDesktopApplication(): void {
     const workspace = ensureAssistantWorkspace({
       userDataPath: app.getPath('userData'),
       executablePath: process.execPath,
+      appVersion: buildIdentity.appVersion,
+      buildId: buildIdentity.buildId,
       ...(process.platform === 'win32'
         ? {
             windowsConsoleLauncherPath: app.isPackaged
@@ -251,6 +286,8 @@ function startDesktopApplication(): void {
     registerIpc()
     registerServiceBroadcasts()
     createWindow()
+    desktopInitialized = true
+    instanceHandoffCoordinator.markInitialized()
     scheduleDatabaseMaintenance()
 
     app.on('activate', () => {
@@ -265,6 +302,143 @@ function startDesktopApplication(): void {
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit()
   })
+}
+
+async function confirmInstanceSwitch(
+  currentIdentity: ApplicationBuildIdentity,
+  incoming: DesktopInstanceLaunchData
+): Promise<boolean> {
+  const currentDescription = formatBuildDescription({
+    appVersion: currentIdentity.appVersion,
+    buildId: currentIdentity.buildId,
+    architecture: currentIdentity.architecture
+  })
+  const incomingDescription = formatBuildDescription(incoming)
+  const options: Electron.MessageBoxOptions = {
+    type: 'question',
+    title: t('common:instanceHandoff.title'),
+    message: t('common:instanceHandoff.message'),
+    detail: t('common:instanceHandoff.detail', {
+      current: currentDescription,
+      incoming: incomingDescription
+    }),
+    buttons: [t('common:action.cancel'), t('common:action.switchAndRestart')],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true
+  }
+  const parent = getVisibleDialogParent()
+  const result = parent
+    ? await dialog.showMessageBox(parent, options)
+    : await dialog.showMessageBox(options)
+  return result.response === 1
+}
+
+function showReplacementLaunchFailed(error: unknown): void {
+  console.error('Replacement portable application failed to launch:', error)
+  dialog.showErrorBox(
+    t('common:instanceHandoff.launchFailedTitle'),
+    t('common:instanceHandoff.launchFailedMessage', {
+      detail: error instanceof Error ? error.message : String(error)
+    })
+  )
+}
+
+function quitAfterInstanceHandoff(): void {
+  allowMainWindowDestroy = true
+  allowApplicationQuit = true
+  app.quit()
+}
+
+async function showHandoffUnavailableDialog(incoming: DesktopInstanceLaunchData): Promise<void> {
+  const options: Electron.MessageBoxOptions = {
+    type: 'info',
+    title: t('common:instanceHandoff.unavailableTitle'),
+    message: t('common:instanceHandoff.unavailableMessage'),
+    detail: t('common:instanceHandoff.unavailableDetail', {
+      incoming: formatBuildDescription(incoming)
+    }),
+    buttons: [t('common:action.ok')],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true
+  }
+  const parent = getVisibleDialogParent()
+  if (parent) {
+    await dialog.showMessageBox(parent, options)
+  } else {
+    await dialog.showMessageBox(options)
+  }
+}
+
+function getVisibleDialogParent(): BrowserWindow | null {
+  if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) return mainWindow
+  const assistantWindow = assistantWindowManager?.getWindow?.() ?? null
+  return assistantWindow && !assistantWindow.isDestroyed() && assistantWindow.isVisible()
+    ? assistantWindow
+    : null
+}
+
+function formatBuildDescription(build: {
+  appVersion: string
+  buildId: string
+  architecture: string
+}): string {
+  return `${build.appVersion} / ${build.architecture} / ${build.buildId}`
+}
+
+function showMainApplicationWindow(): void {
+  if (!desktopInitialized) return
+  if (mainWindowClosing) {
+    void mainWindowClosing.then(() => showMainApplicationWindow())
+    return
+  }
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow()
+    return
+  }
+  if (!mainThemeReady) return
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+  mainWindow.focus()
+}
+
+function beginSafeApplicationCleanup(): Promise<void> {
+  if (!quitCleanup) {
+    quitCleanup = (async () => {
+      await Promise.all([
+        workflowRuntime?.shutdown?.()
+          ?? runner?.killAll?.().then(() => undefined)
+          ?? Promise.resolve(),
+        assistantWindowManager?.close?.() ?? Promise.resolve()
+      ])
+      databaseMaintenanceScheduler?.stop()
+    })()
+  }
+  return quitCleanup
+}
+
+async function completeNormalApplicationQuit(): Promise<void> {
+  try {
+    await beginSafeApplicationCleanup()
+    allowMainWindowDestroy = true
+    allowApplicationQuit = true
+    app.quit()
+  } catch (error) {
+    console.error('App process cleanup failed:', error)
+    quitCleanup = null
+    showUnsafeExitError(error)
+    if (!mainWindow && app.isReady() && desktopInitialized) createWindow()
+  }
+}
+
+function showUnsafeExitError(error: unknown): void {
+  dialog.showErrorBox(
+    t('errors:exit.unsafeTitle'),
+    t('errors:exit.unsafeMessage', {
+      detail: error instanceof Error ? error.message : String(error)
+    })
+  )
 }
 
 function createWindow(): void {
