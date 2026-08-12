@@ -782,7 +782,7 @@ export default {
     selectOrCreate: 'Select or create a task',
     defaultWorkflow: 'Default workflow',
     noWorkflows: 'No workflows available',
-    viewAll: 'View all {{count}} tasks',
+    viewMore: 'Show more',
     actionsAria: 'Task actions {{name}}',
     action: {
       rename: 'Rename'
