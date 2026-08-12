@@ -96,6 +96,51 @@ test('loads both real production renderer entries without CSP violations', async
   expect(failures).toEqual([])
 })
 
+test('keeps the narrow column dividers draggable', async () => {
+  await mainPage.bringToFront()
+  const shell = mainPage.locator('.app-shell')
+  const resizers = [
+    {
+      selector: '.app-shell__project-resizer',
+      widthProperty: '--project-rail-width'
+    },
+    {
+      selector: '.app-shell__task-resizer',
+      widthProperty: '--task-sidebar-width'
+    }
+  ]
+
+  for (const { selector, widthProperty } of resizers) {
+    const resizer = mainPage.locator(selector)
+    await expect(resizer).toBeVisible()
+    const bounds = await resizer.boundingBox()
+    expect(bounds).not.toBeNull()
+    if (!bounds) throw new Error(`Missing bounds for ${selector}`)
+    expect(bounds.width).toBe(2)
+
+    const initialWidth = await shell.evaluate((element, property) => (
+      Number.parseFloat(getComputedStyle(element).getPropertyValue(property))
+    ), widthProperty)
+    const dragStart = {
+      x: bounds.x + bounds.width + 1,
+      y: bounds.y + bounds.height / 2
+    }
+    const hitTarget = await mainPage.evaluate(({ x, y, targetSelector }) => (
+      document.elementFromPoint(x, y)?.closest(targetSelector) !== null
+    ), { ...dragStart, targetSelector: selector })
+    expect(hitTarget).toBe(true)
+
+    await mainPage.mouse.move(dragStart.x, dragStart.y)
+    await mainPage.mouse.down()
+    await mainPage.mouse.move(dragStart.x + 8, dragStart.y)
+    await mainPage.mouse.up()
+
+    await expect.poll(() => shell.evaluate((element, property) => (
+      Number.parseFloat(getComputedStyle(element).getPropertyValue(property))
+    ), widthProperty)).toBe(initialWidth + 8)
+  }
+})
+
 test('keeps settings menu rows on one line within the window', async () => {
   await mainPage.bringToFront()
   const settingsTrigger = mainPage.locator('.project-rail button[aria-haspopup="menu"]').last()
