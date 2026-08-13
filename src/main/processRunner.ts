@@ -82,6 +82,61 @@ function createCommandDisplayMapper(
   }
 }
 
+function createInitialCommandEchoFilter(command: string): TerminalOutputMapper | null {
+  if (!command) return null
+
+  // Input written before an interactive shell initializes its prompt can be
+  // echoed once by the TTY and then drawn again by the shell with its prompt.
+  const echoedLines = [`${command}\r\n`, `${command}\n`]
+  let heldEcho = ''
+  let pending = ''
+  let state: 'matching-echo' | 'awaiting-redraw' | 'passthrough' = 'matching-echo'
+
+  const releasePending = (includeHeldEcho: boolean) => {
+    const mapped = `${includeHeldEcho ? heldEcho : ''}${pending}`
+    heldEcho = ''
+    pending = ''
+    state = 'passthrough'
+    return mapped
+  }
+
+  const resolveRedraw = () => {
+    const redrawIndex = pending.indexOf(command)
+    const nextLineEnd = pending.indexOf('\n')
+    if (redrawIndex >= 0 && (nextLineEnd < 0 || redrawIndex <= nextLineEnd)) {
+      return releasePending(false)
+    }
+    if (nextLineEnd >= 0) return releasePending(true)
+    return ''
+  }
+
+  return {
+    map(content) {
+      if (state === 'passthrough') return content
+      pending += content
+
+      if (state === 'matching-echo') {
+        const echoedLine = echoedLines.find((candidate) => pending.startsWith(candidate))
+        if (echoedLine) {
+          heldEcho = echoedLine
+          pending = pending.slice(echoedLine.length)
+          state = 'awaiting-redraw'
+        } else if (echoedLines.some((candidate) => candidate.startsWith(pending))) {
+          return ''
+        } else {
+          return releasePending(false)
+        }
+      }
+
+      return resolveRedraw()
+    },
+    flush() {
+      if (state === 'passthrough') return ''
+      return releasePending(state === 'awaiting-redraw')
+    }
+  }
+}
+
 export type RunProcessRequest = {
   taskId: string
   nodeId: string
@@ -642,6 +697,9 @@ export class ProcessRunner {
       return this.cancelUnstartedSession(request, sessionId, initialTranscript)
     }
     const displayCommand = getRequestDisplayCommand(request)
+    const initialCommandEchoFilter = isInteractive
+      ? createInitialCommandEchoFilter(invocation.command)
+      : null
     const displayMapper = isInteractive
       ? createCommandDisplayMapper(invocation.command, displayCommand)
       : null
@@ -705,13 +763,17 @@ export class ProcessRunner {
       } else {
         stderr = appendBoundedText(stderr, content, MAX_PROCESS_RESULT_CHARS)
       }
-      const terminalContent = stream === 'stdout' && displayMapper
-        ? displayMapper.map(content)
-        : content
+      let terminalContent = content
+      if (stream === 'stdout') {
+        if (initialCommandEchoFilter) terminalContent = initialCommandEchoFilter.map(terminalContent)
+        if (displayMapper) terminalContent = displayMapper.map(terminalContent)
+      }
       appendTerminalContent(stream, terminalContent)
     }
     session.flushDisplay = () => {
-      appendTerminalContent('stdout', displayMapper?.flush() ?? '')
+      let content = initialCommandEchoFilter?.flush() ?? ''
+      if (displayMapper) content = displayMapper.map(content) + displayMapper.flush()
+      appendTerminalContent('stdout', content)
     }
 
     term.onData((data: string) => append('stdout', data))
