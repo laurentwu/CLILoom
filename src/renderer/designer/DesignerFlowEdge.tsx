@@ -26,6 +26,9 @@ export function DesignerFlowEdge({
   data
 }: EdgeProps<FlowEdgeType>) {
   const { t } = useTranslation()
+  const displayLabel = data?.workflowEdge.isDefault
+    ? t('designer:edge.defaultLabel')
+    : label
   const isBackwardEdge = targetX < sourceX
   const [edgePath, labelX, labelY] = getSmoothStepPath({
     sourceX,
@@ -50,13 +53,13 @@ export function DesignerFlowEdge({
           ...style
         }}
       />
-      {label && (
+      {displayLabel && (
         <EdgeLabelRenderer>
           <div
             className="pointer-events-auto absolute flex items-center gap-1"
             style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}
           >
-            <Badge variant="outline">{label}</Badge>
+            <Badge variant="outline">{displayLabel}</Badge>
             {selected && data?.onDelete && (
               <Button
                 aria-label={t('designer:edge.delete.aria')}

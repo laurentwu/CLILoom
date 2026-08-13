@@ -319,7 +319,7 @@ describe('assistant workspace file boundary', () => {
       issues: ['managed-file:AGENTS.md']
     })
     expect(() => workspace.synchronize())
-      .toThrow('managed assistant file is not a regular file')
+      .toThrow('managed assistant path must be a regular file and must not be a symbolic link')
     expect(readFileSync(outsidePath, 'utf8')).toBe('untrusted')
   })
 
@@ -336,7 +336,7 @@ describe('assistant workspace file boundary', () => {
     mkdirSync(managedPath)
 
     expect(() => workspace.synchronize())
-      .toThrow('managed assistant file is not a regular file')
+      .toThrow('managed assistant path must be a regular file and must not be a symbolic link')
     expect(lstatSync(managedPath).isDirectory()).toBe(true)
   })
 })

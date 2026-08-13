@@ -175,6 +175,6 @@ describe('AssistantApp global shell state', () => {
     }))
 
     expect(restartButton.disabled).toBe(true)
-    expect(screen.getByText(/所选 Shell 不可用.*Return to the main window settings/)).toBeTruthy()
+    expect(screen.getByText(/所选 Shell 不可用[\s\S]*Return to the main window settings/)).toBeTruthy()
   })
 })

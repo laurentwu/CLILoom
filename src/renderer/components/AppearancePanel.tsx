@@ -399,7 +399,7 @@ export function AppearancePanel({
               <div className="flex flex-wrap gap-2">
                 {!creating && selectedSkin.id !== activeSkinId && (
                   <Button disabled={saving} onClick={makeActive} size="sm" variant="secondary">
-                    <Check /> {t('skin:action.confirm')}
+                    <Check /> {t('skin:action.apply')}
                   </Button>
                 )}
                 <Button disabled={creating || saving} onClick={() => void handleDuplicate()} size="sm" variant="ghost">

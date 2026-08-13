@@ -25,9 +25,10 @@ import type {
 } from './appTypes'
 import type { TerminalSession } from './utils'
 
-const { designerInspectorRender, reactFlowRender } = vi.hoisted(() => ({
+const { designerInspectorRender, reactFlowRender, terminalTranscriptLoadRequest } = vi.hoisted(() => ({
   designerInspectorRender: vi.fn(),
-  reactFlowRender: vi.fn()
+  reactFlowRender: vi.fn(),
+  terminalTranscriptLoadRequest: vi.fn()
 }))
 
 vi.mock('sonner', () => ({
@@ -251,7 +252,7 @@ vi.mock('./components/ProjectRail', async () => {
       React.createElement('button', {
         onClick: onOpenDesigner,
         type: 'button'
-      }, '打开流程设计器'),
+      }, '打开工作流设计器'),
       React.createElement('output', { 'data-testid': 'shell-selection' }, JSON.stringify({
         selection: shellSnapshot.preferences.selection.mode === 'automatic'
           ? 'automatic'
@@ -350,7 +351,7 @@ vi.mock('./components/NodeDetailPanel', async () => {
             null,
             React.createElement('output', { 'data-testid': 'terminal-transcript' }, sessions[0].transcript ?? 'unloaded'),
             React.createElement('button', {
-              onClick: () => void onLoadTerminalTranscript(sessions[0]),
+              onClick: () => terminalTranscriptLoadRequest(onLoadTerminalTranscript(sessions[0])),
               type: 'button'
             }, `加载终端 ${sessions[0].id}`)
           )
@@ -987,7 +988,7 @@ describe('App workflow designer', () => {
     setupApi()
     await renderBootstrappedApp()
 
-    fireEvent.click(screen.getByRole('button', { name: '打开流程设计器' }))
+    fireEvent.click(screen.getByRole('button', { name: '打开工作流设计器' }))
     const designer = await screen.findByRole('dialog')
     const canvas = designer.querySelector('.workflow-designer__canvas')
     expect(canvas).toBeTruthy()
@@ -1033,7 +1034,7 @@ describe('App workflow designer', () => {
     const { api } = setupApi()
     await renderBootstrappedApp()
 
-    fireEvent.click(screen.getByRole('button', { name: '打开流程设计器' }))
+    fireEvent.click(screen.getByRole('button', { name: '打开工作流设计器' }))
     const designer = await screen.findByRole('dialog')
     const canvas = designer.querySelector('.workflow-designer__canvas')
     expect(canvas).toBeTruthy()
@@ -1105,7 +1106,7 @@ describe('App workflow designer', () => {
     setupApi()
     await renderBootstrappedApp()
 
-    fireEvent.click(screen.getByRole('button', { name: '打开流程设计器' }))
+    fireEvent.click(screen.getByRole('button', { name: '打开工作流设计器' }))
     const designer = await screen.findByRole('dialog')
     fireEvent.click(within(designer).getByRole('button', { name: '流程 A' }))
 
@@ -1136,7 +1137,7 @@ describe('App workflow designer', () => {
     const { api, listeners, setWorkflowRecords } = setupApi()
     await renderBootstrappedApp()
 
-    fireEvent.click(screen.getByRole('button', { name: '打开流程设计器' }))
+    fireEvent.click(screen.getByRole('button', { name: '打开工作流设计器' }))
     const designer = await screen.findByRole('dialog')
     fireEvent.click(within(designer).getByRole('button', { name: '流程 A' }))
     const nameInput = within(designer).getByLabelText('Workflow name')
@@ -1177,7 +1178,7 @@ describe('App workflow designer', () => {
     api.saveWorkflow.mockReturnValueOnce(pendingSave.promise)
     await renderBootstrappedApp()
 
-    fireEvent.click(screen.getByRole('button', { name: '打开流程设计器' }))
+    fireEvent.click(screen.getByRole('button', { name: '打开工作流设计器' }))
     const designer = await screen.findByRole('dialog')
     fireEvent.click(within(designer).getByRole('button', { name: '流程 A' }))
     const nameInput = within(designer).getByLabelText('Workflow name')
@@ -1209,7 +1210,7 @@ describe('App workflow designer', () => {
     api.saveWorkflow.mockReturnValueOnce(pendingSave.promise)
     await renderBootstrappedApp()
 
-    fireEvent.click(screen.getByRole('button', { name: '打开流程设计器' }))
+    fireEvent.click(screen.getByRole('button', { name: '打开工作流设计器' }))
     const designer = await screen.findByRole('dialog')
     fireEvent.click(within(designer).getByRole('button', { name: '流程 A' }))
     fireEvent.change(within(designer).getByLabelText('Workflow name'), {
@@ -1241,7 +1242,7 @@ describe('App workflow designer', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
     await renderBootstrappedApp()
 
-    fireEvent.click(screen.getByRole('button', { name: '打开流程设计器' }))
+    fireEvent.click(screen.getByRole('button', { name: '打开工作流设计器' }))
     const designer = await screen.findByRole('dialog')
     fireEvent.click(within(designer).getByRole('button', { name: '流程 A' }))
     fireEvent.change(within(designer).getByLabelText('Workflow name'), {
@@ -1261,7 +1262,7 @@ describe('App workflow designer', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
     await renderBootstrappedApp()
 
-    fireEvent.click(screen.getByRole('button', { name: '打开流程设计器' }))
+    fireEvent.click(screen.getByRole('button', { name: '打开工作流设计器' }))
     const designer = await screen.findByRole('dialog')
     fireEvent.click(within(designer).getByRole('button', { name: '流程 A' }))
     fireEvent.change(within(designer).getByLabelText('Workflow name'), {
@@ -1282,7 +1283,7 @@ describe('App workflow designer', () => {
     const { api, listeners, setWorkflowRecords } = setupApi()
     await renderBootstrappedApp()
 
-    fireEvent.click(screen.getByRole('button', { name: '打开流程设计器' }))
+    fireEvent.click(screen.getByRole('button', { name: '打开工作流设计器' }))
     const designer = await screen.findByRole('dialog')
     fireEvent.click(within(designer).getByRole('button', { name: '流程 A' }))
 
@@ -1324,7 +1325,7 @@ describe('App workflow designer', () => {
     fireEvent.click(newTaskButton)
     fireEvent.click(screen.getByRole('button', { name: '修改变量' }))
 
-    fireEvent.click(screen.getByRole('button', { name: '打开流程设计器' }))
+    fireEvent.click(screen.getByRole('button', { name: '打开工作流设计器' }))
     const designer = await screen.findByRole('dialog')
     fireEvent.click(within(designer).getByRole('button', { name: '流程 B' }))
     fireEvent.click(within(designer).getByRole('button', { name: 'Save workflow' }))
@@ -1364,7 +1365,7 @@ describe('App restored workflow snapshots', () => {
     expect(screen.queryByRole('alertdialog')).toBeNull()
     expect(screen.queryByLabelText('Select workflow')).toBeNull()
 
-    fireEvent.click(screen.getByRole('button', { name: '打开流程设计器' }))
+    fireEvent.click(screen.getByRole('button', { name: '打开工作流设计器' }))
     const designer = await screen.findByRole('dialog')
     fireEvent.click(within(designer).getByRole('button', { name: '流程 B' }))
     fireEvent.click(within(designer).getByRole('button', { name: 'Save workflow' }))
@@ -1457,6 +1458,66 @@ describe('App terminal transcript restoration', () => {
     await waitFor(() => expect(screen.getByTestId('terminal-transcript').textContent).toBe('historical output'))
     fireEvent.click(screen.getByRole('button', { name: '加载终端 session-history' }))
     expect(api.getTaskSessionTranscript).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects with a localized error when the terminal transcript API is unavailable', async () => {
+    const task: TaskRecord = {
+      id: 'task-missing-transcript-api',
+      project_id: project.id,
+      title: 'Missing transcript API task',
+      status: 'completed',
+      created_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-01-01T00:00:00.000Z'
+    }
+    const terminalWorkflow: WorkflowDefinition = {
+      id: 'missing-transcript-api-workflow',
+      name: 'Missing transcript API workflow',
+      nodes: [
+        {
+          id: 'terminal',
+          type: 'non-interactive-terminal',
+          name: 'Terminal node',
+          config: { command: 'echo done', cwd: '/repo', successExitCodes: [0] }
+        },
+        { id: 'end', type: 'end', name: 'End', config: {} }
+      ],
+      edges: [{ id: 'terminal-end', from: 'terminal', to: 'end' }]
+    }
+    const data = bootstrap([task])
+    data.settings.appearance = { ...data.settings.appearance, language: 'zh' }
+    const { api } = setupApi({
+      data,
+      restore: {
+        state: {
+          ...runtimeState(task.id, terminalWorkflow, task),
+          currentNodeId: 'terminal',
+          nodeRuns: {
+            terminal: { nodeId: 'terminal', status: 'completed', sessionId: 'session-without-api' }
+          },
+          executionOrder: ['terminal']
+        },
+        workflow: terminalWorkflow,
+        terminalSessions: [{
+          id: 'session-without-api',
+          task_id: task.id,
+          node_id: 'terminal',
+          kind: 'non-interactive',
+          command: 'echo done',
+          cwd: '/repo',
+          status: 'closed',
+          transcript: null
+        }]
+      }
+    })
+    Reflect.deleteProperty(api, 'getTaskSessionTranscript')
+    await renderBootstrappedApp()
+
+    fireEvent.click(await screen.findByRole('button', { name: '加载 Missing transcript API task' }))
+    fireEvent.click(await screen.findByRole('button', { name: '加载终端 session-without-api' }))
+
+    const request = terminalTranscriptLoadRequest.mock.calls[0]?.[0] as Promise<void> | undefined
+    expect(request).toBeDefined()
+    await expect(request).rejects.toThrow('终端历史记录不可用')
   })
 
   it('ignores queued terminal data already covered by a restored live snapshot', async () => {

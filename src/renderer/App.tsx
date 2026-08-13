@@ -397,7 +397,7 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
         target: edge.to,
         type: 'designerEdge',
         animated: edge.isDefault,
-        label: edge.isDefault ? 'default' : edge.condition,
+        label: edge.condition,
         markerEnd: { type: MarkerType.ArrowClosed, color: 'var(--muted-foreground)', width: 16, height: 16 },
         style: edge.condition && !edge.isDefault ? { strokeDasharray: '5 3' } : {},
         data: { workflowEdge: edge }
@@ -743,7 +743,7 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
 
     const getTranscript = window.cliLoom?.getTaskSessionTranscript
     if (!getTranscript) {
-      return Promise.reject(new Error('Terminal transcript API is unavailable'))
+      return Promise.reject(new Error(i18n.t('errors:terminal.transcriptApiUnavailable')))
     }
 
     const request = getTranscript(session.task_id, session.id)
@@ -1326,7 +1326,7 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
         target: edge.to,
         type: 'designerEdge',
         animated: edge.isDefault,
-        label: edge.isDefault ? 'default' : edge.condition,
+        label: edge.condition,
         markerEnd: { type: MarkerType.ArrowClosed, color: 'var(--muted-foreground)', width: 16, height: 16 },
         style: edge.condition && !edge.isDefault ? { strokeDasharray: '5 3' } : {},
         data: { workflowEdge: edge, onDelete: deleteDesignerEdgeById }
@@ -2398,7 +2398,7 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
         return {
           ...edge,
           animated: nextEdge.isDefault,
-          label: nextEdge.isDefault ? 'default' : nextEdge.condition,
+          label: nextEdge.condition,
           style: nextEdge.condition && !nextEdge.isDefault ? { strokeDasharray: '5 3' } : {},
           data: { ...edge.data, workflowEdge: nextEdge }
         }

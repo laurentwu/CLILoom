@@ -63,11 +63,20 @@ describe('createI18n', () => {
   it('localizes the assistant initialization command placeholder', () => {
     const i18n = createI18n('en')
     expect(i18n.t('assistant:command.placeholder')).toBe(
-      'Enter the AI CLI launch command you usually use (such as codex or opencode) to help you use this app'
+      'Enter the AI CLI launch command you normally use, such as codex or opencode'
     )
     i18n.changeLanguage('zh')
     expect(i18n.t('assistant:command.placeholder')).toBe(
-      '请输入你常用的 AI CLI 启动命令（如 codex、opencode 等）来协助你使用本软件'
+      '输入常用的 AI CLI 启动命令，如 codex 或 opencode'
     )
+  })
+
+  it('uses precise labels for workflow completion, assistant exit and theme actions', () => {
+    const i18n = createI18n('zh')
+    expect(i18n.t('node:end.completedDescription')).toBe('工作流已到达结束节点。')
+    expect(i18n.t('assistant:status.ended', { code: 0 })).toBe('已结束（退出码：0）')
+    expect(i18n.t('node:parallel.routesCount', { count: 2 })).toBe('2 条并行路线')
+    expect(i18n.t('skin:action.apply')).toBe('应用主题')
+    expect(i18n.t('skin:action.confirm')).toBe('保存')
   })
 })
