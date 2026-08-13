@@ -1,4 +1,5 @@
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
 import {
   createSecureWebPreferences,
@@ -67,10 +68,11 @@ describe('window security', () => {
       devServerUrl,
       entryPath: 'assistant.html'
     })).toBe('http://127.0.0.1:5173/assistant.html')
+    const rendererPath = path.resolve('/application/renderer/index.html')
     expect(resolveRendererUrl({
-      rendererPath: path.resolve('/application/renderer/index.html'),
+      rendererPath,
       devServerUrl: null
-    })).toBe('file:///application/renderer/index.html')
+    })).toBe(pathToFileURL(rendererPath).toString())
   })
 
   it('matches only the fixed renderer document while allowing hash changes', () => {

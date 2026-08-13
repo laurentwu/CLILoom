@@ -25,9 +25,26 @@ const buildIdentity = {
   buildId: `sha256:${'a'.repeat(64)}`
 }
 
+function canCreateFileSymbolicLinks(): boolean {
+  const directory = mkdtempSync(path.join(tmpdir(), 'cliloom-symlink-probe-'))
+  const target = path.join(directory, 'target')
+  const link = path.join(directory, 'link')
+  try {
+    writeFileSync(target, 'probe')
+    symlinkSync(target, link)
+    return lstatSync(link).isSymbolicLink()
+  } catch {
+    return false
+  } finally {
+    rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
+  }
+}
+
+const supportsFileSymbolicLinks = canCreateFileSymbolicLinks()
+
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
-    rmSync(directory, { recursive: true, force: true })
+    rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
   }
 })
 
@@ -53,7 +70,11 @@ describe('assistant workspace file boundary', () => {
     const realUserData = path.join(temporaryRoot, 'real-user-data')
     const aliasUserData = path.join(temporaryRoot, 'alias-user-data')
     mkdirSync(realUserData)
-    symlinkSync(realUserData, aliasUserData, 'dir')
+    symlinkSync(
+      realUserData,
+      aliasUserData,
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
     const workspace = ensureAssistantWorkspace({
       userDataPath: aliasUserData,
       executablePath: process.execPath,
@@ -64,21 +85,24 @@ describe('assistant workspace file boundary', () => {
     expect(readAssistantWorkspaceFile(workspace.rootPath, 'workflow.json')).toBe('{"ok":true}')
   })
 
-  it('rejects a file symlink that escapes the real workspace root', () => {
-    const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'cliloom-assistant-workspace-'))
-    temporaryDirectories.push(temporaryRoot)
-    const workspace = ensureAssistantWorkspace({
-      userDataPath: temporaryRoot,
-      executablePath: process.execPath,
-      ...buildIdentity
-    })
-    const outside = path.join(temporaryRoot, 'outside.json')
-    writeFileSync(outside, '{}')
-    symlinkSync(outside, path.join(workspace.rootPath, 'outside-link.json'))
+  it.runIf(supportsFileSymbolicLinks)(
+    'rejects a file symlink that escapes the real workspace root',
+    () => {
+      const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'cliloom-assistant-workspace-'))
+      temporaryDirectories.push(temporaryRoot)
+      const workspace = ensureAssistantWorkspace({
+        userDataPath: temporaryRoot,
+        executablePath: process.execPath,
+        ...buildIdentity
+      })
+      const outside = path.join(temporaryRoot, 'outside.json')
+      writeFileSync(outside, '{}')
+      symlinkSync(outside, path.join(workspace.rootPath, 'outside-link.json'))
 
-    expect(() => readAssistantWorkspaceFile(workspace.rootPath, 'outside-link.json'))
-      .toThrow('cannot read files outside the assistant workspace')
-  })
+      expect(() => readAssistantWorkspaceFile(workspace.rootPath, 'outside-link.json'))
+        .toThrow('cannot read files outside the assistant workspace')
+    }
+  )
 
   it('forwards the parent Electron no-sandbox switch only when requested', () => {
     const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'cliloom-assistant-workspace-'))
@@ -183,32 +207,35 @@ describe('assistant workspace file boundary', () => {
     expect(readFileSync(userFile, 'utf8')).toBe('preserved')
   })
 
-  it('preserves a symbolic-link legacy shim even when its target has a managed shape', () => {
-    const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'cliloom-assistant-workspace-'))
-    temporaryDirectories.push(temporaryRoot)
-    const legacyDirectory = path.join(
-      temporaryRoot,
-      ASSISTANT_WORKSPACE_DIRECTORY,
-      'wsl-bin'
-    )
-    const outside = path.join(temporaryRoot, 'outside-launcher')
-    mkdirSync(legacyDirectory, { recursive: true })
-    writeFileSync(
-      outside,
-      '#!/bin/sh\nexec \'/mnt/c/cliloom-cli.exe\' \'--cliloom-cli\' "$@"\n'
-    )
-    const legacyLauncher = path.join(legacyDirectory, 'cliloom')
-    symlinkSync(outside, legacyLauncher)
+  it.runIf(supportsFileSymbolicLinks)(
+    'preserves a symbolic-link legacy shim even when its target has a managed shape',
+    () => {
+      const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'cliloom-assistant-workspace-'))
+      temporaryDirectories.push(temporaryRoot)
+      const legacyDirectory = path.join(
+        temporaryRoot,
+        ASSISTANT_WORKSPACE_DIRECTORY,
+        'wsl-bin'
+      )
+      const outside = path.join(temporaryRoot, 'outside-launcher')
+      mkdirSync(legacyDirectory, { recursive: true })
+      writeFileSync(
+        outside,
+        '#!/bin/sh\nexec \'/mnt/c/cliloom-cli.exe\' \'--cliloom-cli\' "$@"\n'
+      )
+      const legacyLauncher = path.join(legacyDirectory, 'cliloom')
+      symlinkSync(outside, legacyLauncher)
 
-    ensureAssistantWorkspace({
-      userDataPath: temporaryRoot,
-      executablePath: process.execPath,
-      ...buildIdentity
-    })
+      ensureAssistantWorkspace({
+        userDataPath: temporaryRoot,
+        executablePath: process.execPath,
+        ...buildIdentity
+      })
 
-    expect(lstatSync(legacyLauncher).isSymbolicLink()).toBe(true)
-    expect(readFileSync(outside, 'utf8')).toContain("'--cliloom-cli'")
-  })
+      expect(lstatSync(legacyLauncher).isSymbolicLink()).toBe(true)
+      expect(readFileSync(outside, 'utf8')).toContain("'--cliloom-cli'")
+    }
+  )
 
   it('repairs managed files for a new build without removing user files', () => {
     const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'cliloom-assistant-workspace-'))
@@ -300,28 +327,31 @@ describe('assistant workspace file boundary', () => {
     expect(lstatSync(managedPath).mode & 0o777).toBe(0o600)
   })
 
-  it('fails closed when a managed file is replaced by a symbolic link', () => {
-    const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'cliloom-assistant-workspace-'))
-    temporaryDirectories.push(temporaryRoot)
-    const workspace = ensureAssistantWorkspace({
-      userDataPath: temporaryRoot,
-      executablePath: process.execPath,
-      ...buildIdentity
-    })
-    const managedPath = path.join(workspace.rootPath, 'AGENTS.md')
-    const outsidePath = path.join(temporaryRoot, 'outside-instructions.md')
-    writeFileSync(outsidePath, 'untrusted')
-    rmSync(managedPath)
-    symlinkSync(outsidePath, managedPath)
+  it.runIf(supportsFileSymbolicLinks)(
+    'fails closed when a managed file is replaced by a symbolic link',
+    () => {
+      const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'cliloom-assistant-workspace-'))
+      temporaryDirectories.push(temporaryRoot)
+      const workspace = ensureAssistantWorkspace({
+        userDataPath: temporaryRoot,
+        executablePath: process.execPath,
+        ...buildIdentity
+      })
+      const managedPath = path.join(workspace.rootPath, 'AGENTS.md')
+      const outsidePath = path.join(temporaryRoot, 'outside-instructions.md')
+      writeFileSync(outsidePath, 'untrusted')
+      rmSync(managedPath)
+      symlinkSync(outsidePath, managedPath)
 
-    expect(workspace.inspect()).toMatchObject({
-      synchronized: false,
-      issues: ['managed-file:AGENTS.md']
-    })
-    expect(() => workspace.synchronize())
-      .toThrow('managed assistant path must be a regular file and must not be a symbolic link')
-    expect(readFileSync(outsidePath, 'utf8')).toBe('untrusted')
-  })
+      expect(workspace.inspect()).toMatchObject({
+        synchronized: false,
+        issues: ['managed-file:AGENTS.md']
+      })
+      expect(() => workspace.synchronize())
+        .toThrow('managed assistant path must be a regular file and must not be a symbolic link')
+      expect(readFileSync(outsidePath, 'utf8')).toBe('untrusted')
+    }
+  )
 
   it('fails closed when a managed file is replaced by a directory', () => {
     const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'cliloom-assistant-workspace-'))

@@ -54,7 +54,7 @@ describe('terminateProcessTree safety', () => {
     processKill.mockRestore()
   })
 
-  it('starts taskkill after node-pty and keeps the PTY exit wait bounded', async () => {
+  it('captures the process tree before waiting for node-pty exit', async () => {
     vi.useFakeTimers()
     const calls: string[] = []
     const { child } = createTaskkillProcess()
@@ -79,7 +79,7 @@ describe('terminateProcessTree safety', () => {
         }
       })
 
-      expect(calls).toEqual(['pty', 'taskkill'])
+      expect(calls).toEqual(['taskkill'])
       child.emit('exit', 0)
       await vi.advanceTimersByTimeAsync(24)
       let settled = false
@@ -91,13 +91,13 @@ describe('terminateProcessTree safety', () => {
       await vi.advanceTimersByTimeAsync(1)
 
       await expect(resultPromise).resolves.toEqual({ terminated: true })
-      expect(ptyKill).toHaveBeenCalledOnce()
+      expect(ptyKill).not.toHaveBeenCalled()
     } finally {
       vi.useRealTimers()
     }
   })
 
-  it('still sweeps the tree when node-pty confirms its own exit synchronously', async () => {
+  it('returns as soon as node-pty confirms the taskkill exit', async () => {
     let exit: (() => void) | undefined
     const { child } = createTaskkillProcess()
     const calls: string[] = []
@@ -125,9 +125,11 @@ describe('terminateProcessTree safety', () => {
       }
     })
 
-    expect(calls).toEqual(['pty', 'taskkill'])
+    expect(calls).toEqual(['taskkill'])
     child.emit('exit', 0)
+    exit?.()
     await expect(resultPromise).resolves.toEqual({ terminated: true })
+    expect(calls).toEqual(['taskkill'])
   })
 
   it('waits for an asynchronous PTY exit and disposes its listener', async () => {
@@ -138,9 +140,7 @@ describe('terminateProcessTree safety', () => {
     try {
       const resultPromise = terminateProcessTree({
         pid: 5323,
-        kill: () => {
-          setTimeout(() => exit?.(), 10)
-        },
+        kill: vi.fn(),
         onData: vi.fn(),
         onExit: (listener) => {
           exit = listener
@@ -157,6 +157,7 @@ describe('terminateProcessTree safety', () => {
       })
 
       child.emit('exit', 0)
+      setTimeout(() => exit?.(), 10)
       await vi.advanceTimersByTimeAsync(9)
       expect(dispose).not.toHaveBeenCalled()
       await vi.advanceTimersByTimeAsync(1)
@@ -222,13 +223,14 @@ describe('terminateProcessTree safety', () => {
     expect(calls).toEqual(['taskkill', 'child'])
   })
 
-  it('falls back to taskkill when node-pty teardown throws', async () => {
+  it('does not invoke node-pty teardown after taskkill succeeds', async () => {
     const { child } = createTaskkillProcess()
+    const ptyKill = vi.fn(() => {
+      throw new Error('pty kill failed')
+    })
     const resultPromise = terminateProcessTree({
       pid: 5454,
-      kill: () => {
-        throw new Error('pty kill failed')
-      },
+      kill: ptyKill,
       onData: vi.fn(),
       onExit: vi.fn()
     }, {
@@ -244,6 +246,38 @@ describe('terminateProcessTree safety', () => {
     await Promise.resolve()
     child.emit('exit', 0)
     await expect(resultPromise).resolves.toEqual({ terminated: true })
+    expect(ptyKill).not.toHaveBeenCalled()
+  })
+
+  it('accepts an observed node-pty exit when taskkill fails', async () => {
+    const { child, stderr } = createTaskkillProcess()
+    let exit: (() => void) | undefined
+    const dispose = vi.fn()
+    const ptyKill = vi.fn(() => exit?.())
+    const resultPromise = terminateProcessTree({
+      pid: 5505,
+      kill: ptyKill,
+      onData: vi.fn(),
+      onExit: (listener) => {
+        exit = listener
+        return { dispose }
+      }
+    }, {
+      platform: 'win32',
+      graceMs: 25,
+      taskkill: {
+        environment: { SystemRoot: 'C:\\Windows' },
+        spawnProcess: vi.fn(() => child) as unknown as typeof spawn,
+        isProcessAlive: () => true
+      }
+    })
+
+    stderr.write('Access is denied')
+    child.emit('exit', 5)
+
+    await expect(resultPromise).resolves.toEqual({ terminated: true })
+    expect(ptyKill).toHaveBeenCalledOnce()
+    expect(dispose).toHaveBeenCalledOnce()
   })
 
   it('reports both node-pty and taskkill failures', async () => {

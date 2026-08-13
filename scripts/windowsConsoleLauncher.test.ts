@@ -65,6 +65,8 @@ describe('Windows Console launcher packaging', () => {
     expect(project).toContain('<RuntimeLibrary>MultiThreaded</RuntimeLibrary>')
     expect(project).toContain('<Platform>ARM64</Platform>')
     expect(source).toContain('DuplicateHandle(')
+    expect(source).toContain('CreateNamedPipeW(')
+    expect(source).toContain('CreateThread(')
     expect(source).toContain('STARTF_USESTDHANDLES')
     expect(source).toContain('CreateProcessW(')
   })

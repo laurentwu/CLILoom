@@ -4,8 +4,9 @@ const { spawnSync } = require('node:child_process')
 
 const SETUID_SANDBOX_MODE = 0o4755
 
-function getSandboxHelperPath(executablePath) {
-  return path.join(path.dirname(executablePath), 'chrome-sandbox')
+function getSandboxHelperPath(executablePath, platform = process.platform) {
+  const pathApi = platform === 'win32' ? path.win32 : path.posix
+  return pathApi.join(pathApi.dirname(executablePath), 'chrome-sandbox')
 }
 
 function isConfiguredSetuidSandbox(stat) {
@@ -16,7 +17,7 @@ function inspectLinuxSandbox(executablePath, options = {}) {
   const platform = options.platform ?? process.platform
   if (platform !== 'linux') return { supported: true, method: 'platform' }
 
-  const helperPath = getSandboxHelperPath(executablePath)
+  const helperPath = getSandboxHelperPath(executablePath, platform)
   const readStat = options.statSync ?? statSync
   try {
     if (isConfiguredSetuidSandbox(readStat(helperPath))) {

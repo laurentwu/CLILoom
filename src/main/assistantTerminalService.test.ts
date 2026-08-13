@@ -98,6 +98,7 @@ function createService(
         : undefined)
     },
     environment: { PATH: '/usr/bin' },
+    platform: 'linux',
     commandHandler: {} as never,
     shellService: {
       resolveEffectiveShell,

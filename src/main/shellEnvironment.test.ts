@@ -35,7 +35,7 @@ describe('shell environment', () => {
     expect(source.PATH).toBe('/usr/bin')
   })
 
-  it('reads PATH from an interactive login shell', async () => {
+  it.skipIf(process.platform === 'win32')('reads PATH from an interactive login shell', async () => {
     const directory = mkdtempSync(path.join(tmpdir(), 'cliloom-shell-path-'))
     const shell = path.join(directory, 'test-shell')
     writeFileSync(shell, [

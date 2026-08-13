@@ -68,6 +68,27 @@ function quotePowerShell(value) {
   return `'${value.replaceAll("'", "''")}'`
 }
 
+function quoteWindowsArgument(value) {
+  if (value !== '' && !/[\s"]/u.test(value)) return value
+
+  let quoted = '"'
+  let backslashCount = 0
+  for (const character of value) {
+    if (character === '\\') {
+      backslashCount += 1
+      continue
+    }
+    if (character === '"') {
+      quoted += '\\'.repeat(backslashCount * 2 + 1) + '"'
+      backslashCount = 0
+      continue
+    }
+    quoted += '\\'.repeat(backslashCount) + character
+    backslashCount = 0
+  }
+  return quoted + '\\'.repeat(backslashCount * 2) + '"'
+}
+
 function runBoundedProcess(executable, args, environment) {
   return new Promise((resolve, reject) => {
     const child = spawn(executable, args, {
@@ -224,14 +245,18 @@ async function runPipeSmoke(mode, runtime, inputPath, expectedWorkflow) {
       'v1.0',
       'powershell.exe'
     )
-    const invocation = commandArguments.map(quotePowerShell).join(' ')
+    const invocation = [
+      quotePowerShell(commandArguments[0]),
+      '--%',
+      ...commandArguments.slice(1).map(quoteWindowsArgument)
+    ].join(' ')
     const script = [
       '$utf8 = [System.Text.UTF8Encoding]::new($false)',
       '$OutputEncoding = $utf8',
       '[Console]::OutputEncoding = $utf8',
       `Get-Content -LiteralPath ${quotePowerShell(inputPath)} -Raw -Encoding UTF8 | & ${invocation}`,
       'exit $LASTEXITCODE'
-    ].join('; ')
+    ].join('\n')
     processResult = await runBoundedProcess(powershell, [
       '-NoLogo',
       '-NoProfile',
@@ -240,10 +265,18 @@ async function runPipeSmoke(mode, runtime, inputPath, expectedWorkflow) {
       '-Command', script
     ], environment)
 
-    const received = await withTimeout(
-      bridge.request,
-      `${mode} CLI pipe did not reach the bridge`
-    )
+    let received
+    try {
+      received = await withTimeout(
+        bridge.request,
+        `${mode} CLI pipe did not reach the bridge`
+      )
+    } catch (error) {
+      throw new Error(
+        `${error instanceof Error ? error.message : String(error)}\n` +
+          `${processResult.stdout}${processResult.stderr}`
+      )
+    }
     if (processResult.exitCode !== 0 || processResult.signal) {
       throw new Error(
         `${mode} CLI pipe failed (code=${processResult.exitCode}, signal=${processResult.signal})\n` +

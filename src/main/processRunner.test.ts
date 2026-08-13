@@ -1,8 +1,13 @@
 import Database from 'better-sqlite3'
+import { stripVTControlCharacters } from 'node:util'
 import { describe, expect, it, vi } from 'vitest'
 import { bindShellCommand, interpolate } from '../shared/workflow'
 import { ProcessRunner } from './processRunner'
 import { renderShellCommand } from './shellExecution'
+import { discoverShells } from './shellService'
+
+const posixTestShell = discoverShells({ environment: process.env })
+  .find((shell) => shell.family === 'posix')
 
 function createRunner(withWindow = false) {
   const db = new Database(':memory:')
@@ -47,7 +52,10 @@ function createRunner(withWindow = false) {
   const runner = new ProcessRunner(
     db,
     () => withWindow ? { webContents: { send } } as never : null,
-    environment
+    environment,
+    posixTestShell
+      ? { resolveEffectiveShell: () => posixTestShell }
+      : undefined
   )
   return { db, runner, send }
 }
@@ -141,7 +149,7 @@ describe('ProcessRunner retry error handling', () => {
   })
 })
 
-describe('ProcessRunner PTY execution', () => {
+describe.runIf(Boolean(posixTestShell))('ProcessRunner PTY execution', () => {
   it('runs a non-interactive command in a real PTY and preserves its exit code', async () => {
     const { db, runner } = createRunner()
 
@@ -187,7 +195,10 @@ describe('ProcessRunner PTY execution', () => {
     })
 
     expect(result.exitCode).toBe(0)
-    expect(result.stdout.replace(/\r/g, '')).toBe(prompt)
+    const normalizedOutput = stripVTControlCharacters(
+      result.stdout.replace(/\u001B\]0;[^\u0007]*\u0007/g, '')
+    ).replace(/\r/g, '')
+    expect(normalizedOutput).toBe(prompt)
     expect(result.stdout).not.toContain('backtick-executed dollar-executed')
     expect(send).toHaveBeenCalledWith('terminal:created', expect.objectContaining({
       command: displayCommand,

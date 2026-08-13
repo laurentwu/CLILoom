@@ -73,26 +73,26 @@ async function terminateWindowsProcessTree(
 
     const exitWaiter = createPtyExitWaiter(handle, graceMs)
     const ptyErrors = exitWaiter.registrationError ? [exitWaiter.registrationError] : []
+    const taskkill = await runTaskkill(pid, options)
+    if (taskkill.terminated) {
+      // taskkill 已在根进程仍存活时捕获并终止整棵树。等待 node-pty
+      // 自然观察退出，避免再附加到一个已经关闭的 ConPTY 控制台。
+      await exitWaiter.promise
+      return taskkill
+    }
+
     try {
-      // node-pty snapshots the attached console processes before closing the
-      // pseudoconsole. Subscribe first so a fast exit cannot be missed.
       handle.kill()
     } catch (error) {
       ptyErrors.push(error instanceof Error ? error.message : String(error))
       exitWaiter.cancel()
     }
-
-    // Start taskkill immediately after node-pty has begun its own cleanup. A
-    // PTY exit confirms only the root shell; it does not prove that detached
-    // descendants are gone, so the bounded /T sweep remains authoritative.
-    const [taskkill] = await Promise.all([
-      runTaskkill(pid, options),
-      exitWaiter.promise
-    ])
-    if (taskkill.terminated) return taskkill
+    const exited = await exitWaiter.promise
     return {
-      terminated: false,
-      error: [...ptyErrors, taskkill.error].filter(Boolean).join('; ') || undefined
+      terminated: exited,
+      error: exited
+        ? undefined
+        : [...ptyErrors, taskkill.error].filter(Boolean).join('; ') || undefined
     }
   }
 

@@ -1,8 +1,10 @@
 import { request as httpRequest } from 'node:http'
+import { createConnection } from 'node:net'
 import {
   ASSISTANT_BRIDGE_API_VERSION,
   ASSISTANT_BRIDGE_PORT_ENV,
   ASSISTANT_BRIDGE_TOKEN_ENV,
+  ASSISTANT_CLI_STDIN_PIPE_ENV,
   MAX_BRIDGE_BODY_BYTES,
   type AssistantBridgeRequest,
   type AssistantBridgeResponse
@@ -34,7 +36,10 @@ export async function runAssistantCliMode(
   let stdin: string | undefined
   if (args.includes('--stdin')) {
     try {
-      stdin = await readBoundedStdin(io.stdin)
+      const stdinPipe = environment[ASSISTANT_CLI_STDIN_PIPE_ENV]
+      stdin = stdinPipe
+        ? await readBoundedPipeStdin(stdinPipe)
+        : await readBoundedStdin(io.stdin)
     } catch (error) {
       io.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
       return 2
@@ -70,6 +75,17 @@ export async function runAssistantCliMode(
     io.stderr.write(`Unable to contact the CLILoom assistant bridge: ${safeErrorMessage(error)}\n`)
     return 10
   }
+}
+
+async function readBoundedPipeStdin(pipePath: string): Promise<string> {
+  if (!/^\\\\\.\\pipe\\cliloom-cli-stdin-[a-f0-9]{32}$/.test(pipePath)) {
+    throw new Error('Windows CLI stdin pipe is invalid')
+  }
+  const stream = createConnection(pipePath)
+  stream.setTimeout(30_000, () => {
+    stream.destroy(new Error('Windows CLI stdin pipe timed out'))
+  })
+  return readBoundedStdin(stream)
 }
 
 async function readBoundedStdin(stream: NodeJS.ReadableStream): Promise<string> {

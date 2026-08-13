@@ -54,7 +54,7 @@ function createRunner(
       }
     }
   },
-  platform: NodeJS.Platform = process.platform
+  platform: NodeJS.Platform = 'linux'
 ) {
   const db = new Database(':memory:')
   db.exec(`
@@ -1294,7 +1294,7 @@ describe('ProcessRunner hooks', () => {
       ['-lc', 'printf hook-output'],
       expect.objectContaining({
         shell: false,
-        detached: process.platform !== 'win32'
+        detached: true
       })
     )
     stdoutHandlers.get('data')?.('hook-output')
