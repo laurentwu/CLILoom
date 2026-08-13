@@ -173,6 +173,14 @@ jobs:
           sudo apt-get install --yes ./release/*.deb
           xvfb-run -a npm run test:linux-package -- /opt/CLILoom/cliloom
 
+      - name: Create release job manifest
+        run: >-
+          node scripts/create-release-job-manifest.cjs
+          --platform ${{ matrix.platform }}
+          --arch ${{ matrix.arch }}
+          --release-dir release
+          --output release/job-manifest.json
+
       - name: Upload packages
         uses: actions/upload-artifact@v7
         with:
@@ -184,5 +192,78 @@ jobs:
             release/*.AppImage
             release/*.deb
             release/*.rpm
+            release/*.blockmap
+            release/latest*.yml
+            release/alpha*.yml
+            release/beta*.yml
+            release/rc*.yml
+            release/job-manifest.json
           if-no-files-found: error
           retention-days: 14
+
+  release:
+    name: Create draft release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [validate, shell-smoke, package]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install release tooling
+        run: npm ci
+
+      - name: Refuse an existing release or mismatched tag commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag_commit=$(git rev-list -n 1 "$GITHUB_REF_NAME")
+          workflow_commit=$(git rev-parse "$GITHUB_SHA^{commit}")
+          if [[ "$tag_commit" != "$workflow_commit" ]]; then
+            echo "Tag $GITHUB_REF_NAME does not point to workflow commit $workflow_commit" >&2
+            exit 1
+          fi
+          existing_release=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq ".[] | select(.tag_name == \"$GITHUB_REF_NAME\") | .id")
+          if [[ -n "$existing_release" ]]; then
+            echo "Release $GITHUB_REF_NAME already exists; assets will not be overwritten" >&2
+            exit 1
+          fi
+
+      - name: Download package artifacts
+        uses: actions/download-artifact@v7
+        with:
+          pattern: CLILoom-*
+          path: release-inputs
+          merge-multiple: false
+
+      - name: Validate and assemble release assets
+        run: >-
+          node scripts/assemble-release-assets.cjs
+          --input-root release-inputs
+          --output release-assets
+          --tag "$GITHUB_REF_NAME"
+
+      - name: Create draft GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease_args=()
+          if node -e "process.exit(require('./package.json').version.includes('-') ? 0 : 1)"; then
+            prerelease_args+=(--prerelease)
+          fi
+          gh release create "$GITHUB_REF_NAME" release-assets/* \
+            --draft \
+            --verify-tag \
+            --generate-notes \
+            --title "CLILoom $GITHUB_REF_NAME" \
+            --notes $'All macOS and Windows assets in this release are currently unsigned. Verify downloads against SHA256SUMS.txt.\n\nmacOS, Windows Portable, Linux DEB, and Linux RPM builds provide update notifications and manual downloads only. In-place updates are enabled only for Windows NSIS and Linux AppImage builds.' \
+            "${prerelease_args[@]}"

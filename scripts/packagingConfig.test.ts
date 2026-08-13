@@ -312,6 +312,66 @@ describe('packaging configuration', () => {
     expect(workflow).toContain('release/*.AppImage')
   })
 
+  it('configures manual application updates and fail-closed draft releases', () => {
+    const builderConfig = readProjectFile('electron-builder.yml')
+    const workflow = readProjectFile('.github/workflows/package.yml')
+    const packageJson = JSON.parse(readProjectFile('package.json')) as {
+      dependencies: Record<string, string>
+      devDependencies: Record<string, string>
+      scripts: Record<string, string>
+    }
+    const packageLock = JSON.parse(readProjectFile('package-lock.json')) as {
+      packages: Record<string, {
+        version?: string
+        dependencies?: Record<string, string>
+        devDependencies?: Record<string, string>
+      }>
+    }
+    const preload = readProjectFile('src/main/preload.ts')
+    const mainSource = readProjectFile('src/main/main.ts')
+    const updateService = readProjectFile('src/main/updateService.ts')
+
+    expect(packageJson.dependencies['electron-updater']).toBe('^6.8.9')
+    expect(packageLock.packages[''].dependencies?.['electron-updater']).toBe('^6.8.9')
+    expect(packageLock.packages['node_modules/electron-updater'].version).toBe('6.8.9')
+    expect(packageJson.devDependencies['js-yaml']).toBe('^4.3.1')
+    expect(getYamlScalar(builderConfig, 'electronUpdaterCompatibility')).toBe("'>=2.16'")
+    expect(builderConfig).toMatch(/^publish:\n  - provider: github$/m)
+    expect(getYamlScalar(builderConfig, 'owner')).toBe('laurentwu')
+    expect(getYamlScalar(builderConfig, 'repo')).toBe('CLILoom')
+    expect(getYamlScalar(builderConfig, 'releaseType')).toBe('draft')
+    for (const command of ['package:mac', 'package:win', 'package:appimage', 'package:linux']) {
+      expect(packageJson.scripts[command]).toContain('--publish never')
+    }
+
+    expect(preload).toContain("ipcRenderer.invoke('updates:check')")
+    expect(preload).toContain("ipcRenderer.invoke('updates:install')")
+    expect(preload).toContain("ipcRenderer.on('updates:state', listener)")
+    expect(preload).toContain("ipcRenderer.removeListener('updates:state', listener)")
+    for (const channel of ['get-state', 'check', 'open-release', 'install']) {
+      expect(mainSource).toMatch(new RegExp(
+        `ipcMain\\.handle\\('updates:${channel}', (?:async )?\\(event\\) => \\{\\s*assertMainSender\\(event\\)`
+      ))
+    }
+    expect(mainSource).toContain('if (!updateService.beginInstall())')
+    expect(updateService).toContain('if (!options.isPackaged)')
+    expect(updateService).toContain("this.runtime.capability === 'unsupported'")
+    expect(updateService).toContain('autoDownload: this.runtime.capability === \'installable\'')
+
+    expect(workflow).toMatch(/^permissions:\n  contents: read$/m)
+    expect(workflow.match(/contents: write/g)).toHaveLength(1)
+    expect(workflow).toContain("if: startsWith(github.ref, 'refs/tags/')")
+    expect(workflow).toContain('needs: [validate, shell-smoke, package]')
+    expect(workflow).toContain('scripts/create-release-job-manifest.cjs')
+    expect(workflow).toContain('scripts/assemble-release-assets.cjs')
+    expect(workflow).toContain('gh api --paginate')
+    expect(workflow).toContain('gh release create "$GITHUB_REF_NAME"')
+    expect(workflow).toContain('--draft')
+    expect(workflow).toContain('--verify-tag')
+    expect(workflow).toContain('--generate-notes')
+    expect(workflow).toContain('release-assets/*')
+  })
+
   it('documents installer and portable release output', () => {
     const packagingGuide = readProjectFile('PACKAGING.md')
 

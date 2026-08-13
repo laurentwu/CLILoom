@@ -1,5 +1,12 @@
 appId: io.github.laurentwu.cliloom
 productName: CLILoom
+electronUpdaterCompatibility: '>=2.16'
+
+publish:
+  - provider: github
+    owner: laurentwu
+    repo: CLILoom
+    releaseType: draft
 
 toolsets:
   appimage: 1.0.3

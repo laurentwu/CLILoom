@@ -67,6 +67,7 @@ import {
   MAX_TERMINAL_TRANSCRIPT_CHARS,
   type TerminalDataEvent
 } from '../shared/terminalBuffer'
+import type { UpdateErrorCode, UpdateState } from '../shared/update'
 import {
   getNodeTypeLabel,
   getCurrentInputVariables,
@@ -134,6 +135,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle
 } from '@/components/ui/dialog'
@@ -210,6 +212,23 @@ const fallbackBootstrap: Bootstrap = {
 }
 
 const TERMINAL_STATE_FLUSH_MS = 250
+
+const FALLBACK_UPDATE_STATE: UpdateState = {
+  status: 'idle',
+  capability: 'unsupported',
+  packageType: 'unknown',
+  currentVersion: '…'
+}
+
+const UPDATE_ERROR_KEYS: Record<UpdateErrorCode, TranslationKey> = {
+  'unsupported-build': 'settings:update.error.unsupportedBuild',
+  'check-failed': 'settings:update.error.checkFailed',
+  'download-failed': 'settings:update.error.downloadFailed',
+  'invalid-release': 'settings:update.error.invalidRelease',
+  'install-unavailable': 'settings:update.error.installUnavailable',
+  'install-failed': 'settings:update.error.installFailed',
+  'open-release-failed': 'settings:update.error.openReleaseFailed'
+}
 
 function resolveSkinFromId(id: string, userSkins: UserSkin[]): Skin | undefined {
   return getBuiltinSkin(id) ?? userSkins.find((skin) => skin.id === id)
@@ -297,6 +316,8 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
   const [taskSidebarWidth, setTaskSidebarWidth] = useState(168)
   const [activeSkin, setActiveSkin] = useState<Skin>(initialSkin)
   const [appearancePanelOpen, setAppearancePanelOpen] = useState(false)
+  const [updateState, setUpdateState] = useState<UpdateState>(FALLBACK_UPDATE_STATE)
+  const [updateDialogOpen, setUpdateDialogOpen] = useState(false)
   const [workflowRevisions, setWorkflowRevisions] = useState<Record<string, number>>({})
   const [runtimeState, setRuntimeState] = useState<WorkflowRuntimeState | null>(null)
   const [isRunning, setIsRunning] = useState(false)
@@ -327,6 +348,7 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
   const designerOpenRef = useRef(designerOpen)
   const editingWorkflowIdRef = useRef(editingWorkflow?.id ?? null)
   const designerEditVersionRef = useRef(0)
+  const updateStateRef = useRef<UpdateState>(FALLBACK_UPDATE_STATE)
   const workflowIdRef = useRef(workflow.id)
   designerDirtyRef.current = designerDirty
   designerOpenRef.current = designerOpen
@@ -738,6 +760,38 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
     }
   }
 
+  const receiveUpdateState = useCallback((nextState: UpdateState, notify = true) => {
+    const previousState = updateStateRef.current
+    updateStateRef.current = nextState
+    setUpdateState(nextState)
+
+    if (
+      (nextState.status === 'available' && previousState.status !== 'available') ||
+      (
+        nextState.status === 'downloading' &&
+        previousState.status !== 'available' &&
+        previousState.status !== 'downloading'
+      ) ||
+      (nextState.status === 'downloaded' && previousState.status !== 'downloaded')
+    ) {
+      setUpdateDialogOpen(true)
+    } else if (nextState.status === 'upToDate' || nextState.status === 'error') {
+      setUpdateDialogOpen(false)
+    }
+
+    if (!notify) return
+    if (nextState.status === 'upToDate' && previousState.status !== 'upToDate') {
+      toast.success(i18n.t('settings:update.upToDate', {
+        version: nextState.currentVersion
+      }))
+    } else if (
+      nextState.status === 'error' &&
+      (previousState.status !== 'error' || previousState.errorCode !== nextState.errorCode)
+    ) {
+      toast.error(i18n.t(UPDATE_ERROR_KEYS[nextState.errorCode ?? 'check-failed']))
+    }
+  }, [])
+
   const loadTerminalTranscript = useCallback((session: TerminalSession): Promise<void> => {
     if (session.transcript !== null) return Promise.resolve()
     const key = `${session.task_id}\u0000${session.id}`
@@ -815,6 +869,22 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
       cancelled = true
     }
   }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    window.cliLoom?.getUpdateState?.().then((state) => {
+      if (!cancelled) receiveUpdateState(state, false)
+    }).catch(() => {
+      if (!cancelled) toast.error(i18n.t('settings:update.error.checkFailed'))
+    })
+    const removeUpdateState = window.cliLoom?.onUpdateState?.((state) => {
+      if (!cancelled) receiveUpdateState(state)
+    })
+    return () => {
+      cancelled = true
+      removeUpdateState?.()
+    }
+  }, [receiveUpdateState])
 
   useEffect(() => {
     const removeSettings = window.cliLoom?.onSettingsChanged((event) => {
@@ -1533,6 +1603,43 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
     window.addEventListener('pointerup', stop)
   }
 
+  async function checkForUpdates() {
+    try {
+      const nextState = await window.cliLoom?.checkForUpdates?.()
+      if (!nextState) throw new Error('Update API unavailable')
+      receiveUpdateState(nextState)
+      if (
+        nextState.status === 'available' ||
+        nextState.status === 'downloading' ||
+        nextState.status === 'downloaded'
+      ) {
+        setUpdateDialogOpen(true)
+      }
+    } catch {
+      toast.error(t('settings:update.error.checkFailed'))
+    }
+  }
+
+  async function installUpdate() {
+    try {
+      const nextState = await window.cliLoom?.installUpdate?.()
+      if (!nextState) throw new Error('Update API unavailable')
+      receiveUpdateState(nextState)
+    } catch {
+      toast.error(t('settings:update.error.installFailed'))
+    }
+  }
+
+  async function openUpdateRelease() {
+    try {
+      const nextState = await window.cliLoom?.openUpdateRelease?.()
+      if (!nextState) throw new Error('Update API unavailable')
+      receiveUpdateState(nextState)
+    } catch {
+      toast.error(t('settings:update.error.openReleaseFailed'))
+    }
+  }
+
   return (
     <div
       className="app-shell grid h-full w-full overflow-hidden text-foreground"
@@ -1576,6 +1683,10 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
             throw error
           }
         }}
+        updateState={updateState}
+        onCheckForUpdates={() => void checkForUpdates()}
+        onInstallUpdate={() => void installUpdate()}
+        onOpenUpdateRelease={() => void openUpdateRelease()}
         onSkinChange={(id) => {
           const previous = activeSkin
           const next = resolveSkinFromId(id, bootstrap.settings.skins) ?? previous
@@ -1635,6 +1746,76 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
         activeSkinId={bootstrap.settings.appearance.activeSkinId}
         userSkins={bootstrap.settings.skins}
       />
+
+      <Dialog open={updateDialogOpen} onOpenChange={setUpdateDialogOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>
+              {t(
+                updateState.status === 'downloaded'
+                  ? 'settings:update.readyTitle'
+                  : 'settings:update.availableTitle',
+                { version: updateState.targetVersion ?? updateState.currentVersion }
+              )}
+            </DialogTitle>
+            <DialogDescription className="flex flex-col gap-2">
+              <span>
+                {t('settings:update.currentAndLatest', {
+                  current: updateState.currentVersion,
+                  latest: updateState.targetVersion ?? updateState.currentVersion
+                })}
+              </span>
+              {updateState.status === 'downloaded' ? (
+                <span>{t('settings:update.readyDescription')}</span>
+              ) : updateState.capability === 'installable' ? (
+                <span>{t('settings:update.automaticDownload')}</span>
+              ) : (
+                <span>
+                  {t(updateState.packageType === 'portable'
+                    ? 'settings:update.portableDescription'
+                    : updateState.packageType === 'mac'
+                      ? 'settings:update.macUnsignedDescription'
+                      : updateState.packageType === 'deb' || updateState.packageType === 'rpm'
+                        ? 'settings:update.linuxPackageDescription'
+                        : 'settings:update.manualDescription')}
+                </span>
+              )}
+              {updateState.packageType === 'nsis' && (
+                <span>{t('settings:update.unsignedWindowsWarning')}</span>
+              )}
+              {updateState.status === 'downloading' && updateState.progress?.percent !== null &&
+                updateState.progress?.percent !== undefined && (
+                  <span>
+                    {t('settings:update.downloadProgress', {
+                      percent: Math.round(updateState.progress.percent)
+                    })}
+                  </span>
+                )}
+            </DialogDescription>
+          </DialogHeader>
+          <section aria-label={t('settings:update.releaseNotes')} className="min-h-0">
+            <h3 className="mb-2 text-sm font-medium">{t('settings:update.releaseNotes')}</h3>
+            <p className="max-h-56 overflow-y-auto whitespace-pre-wrap rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground">
+              {updateState.releaseNotes ?? t('settings:update.noReleaseNotes')}
+            </p>
+          </section>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setUpdateDialogOpen(false)}>
+              {t('settings:update.later')}
+            </Button>
+            {updateState.capability === 'downloadOnly' && updateState.status === 'available' && (
+              <Button onClick={() => void openUpdateRelease()}>
+                {t('settings:update.viewRelease')}
+              </Button>
+            )}
+            {updateState.capability === 'installable' && updateState.status === 'downloaded' && (
+              <Button onClick={() => void installUpdate()}>
+                {t('settings:update.restart')}
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <div
         className="app-shell__project-resizer app-shell__resize-handle relative z-10 cursor-col-resize bg-border transition-colors hover:bg-primary"

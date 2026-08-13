@@ -16,6 +16,7 @@ import type { WorkflowDefinition, WorkflowNode } from '../shared/workflow'
 import type { WorkflowRuntimeStartOptions, WorkflowRuntimeState } from '../shared/workflowRuntime'
 import type { ShellSnapshot } from '../shared/shell'
 import type { TerminalDataEvent, TerminalTranscriptSnapshot } from '../shared/terminalBuffer'
+import type { UpdateState } from '../shared/update'
 import type {
   Bootstrap,
   ProjectRecord,
@@ -234,7 +235,11 @@ vi.mock('./components/ProjectRail', async () => {
       projects,
       shellSnapshot,
       onShellChange,
-      onRefreshShells
+      onRefreshShells,
+      updateState,
+      onCheckForUpdates,
+      onInstallUpdate,
+      onOpenUpdateRelease
     }: {
       onOpenDesigner: () => void
       onRenameProject: (project: ProjectRecord, name: string) => Promise<void>
@@ -243,6 +248,10 @@ vi.mock('./components/ProjectRail', async () => {
       shellSnapshot: ShellSnapshot
       onShellChange: (shellId: string | 'automatic') => Promise<void>
       onRefreshShells: () => Promise<void>
+      updateState: UpdateState
+      onCheckForUpdates: () => void
+      onInstallUpdate: () => void
+      onOpenUpdateRelease: () => void
     }) => React.createElement(
       'nav',
       null,
@@ -280,7 +289,23 @@ vi.mock('./components/ProjectRail', async () => {
       React.createElement('button', {
         onClick: () => void onRefreshShells().catch(() => undefined),
         type: 'button'
-      }, '重新检测 Shell')
+      }, '重新检测 Shell'),
+      React.createElement('output', { 'data-testid': 'update-state' }, updateState.status),
+      React.createElement('button', {
+        'data-testid': 'check-update',
+        onClick: onCheckForUpdates,
+        type: 'button'
+      }, '检查更新（测试）'),
+      React.createElement('button', {
+        'data-testid': 'install-update',
+        onClick: onInstallUpdate,
+        type: 'button'
+      }, '安装更新（测试）'),
+      React.createElement('button', {
+        'data-testid': 'open-update-release',
+        onClick: onOpenUpdateRelease,
+        type: 'button'
+      }, '打开更新页（测试）')
     )
   }
 })
@@ -599,6 +624,7 @@ type Listeners = {
   workflowState?: (state: WorkflowRuntimeState) => void
   workflowChanged?: (event: unknown) => void
   terminalData?: (event: TerminalDataEvent) => void
+  updateState?: (state: UpdateState) => void
 }
 
 function setupApi(options: {
@@ -608,11 +634,18 @@ function setupApi(options: {
     workflow: WorkflowDefinition
     terminalSessions?: TerminalSession[]
   } | null
+  updateState?: UpdateState
 } = {}) {
   const data = options.data ?? bootstrap()
   const listeners: Listeners = {}
   let workflowRecords = data.workflowRecords
   const unsubscribe = () => {}
+  const initialUpdateState: UpdateState = options.updateState ?? {
+    status: 'idle',
+    capability: 'unsupported',
+    packageType: 'unknown',
+    currentVersion: '0.1.0'
+  }
   const api = {
     bootstrap: vi.fn().mockResolvedValue(data),
     listTasks: vi.fn().mockResolvedValue(data.tasks),
@@ -639,6 +672,10 @@ function setupApi(options: {
     ),
     updateShell: vi.fn().mockResolvedValue(data.shell),
     refreshShells: vi.fn().mockResolvedValue(data.shell),
+    getUpdateState: vi.fn().mockResolvedValue(initialUpdateState),
+    checkForUpdates: vi.fn().mockResolvedValue(initialUpdateState),
+    installUpdate: vi.fn().mockResolvedValue(initialUpdateState),
+    openUpdateRelease: vi.fn().mockResolvedValue(initialUpdateState),
     updateLanguage: vi.fn().mockResolvedValue(undefined),
     onSettingsChanged: vi.fn((callback: (snapshot: Bootstrap['settings']) => void) => {
       listeners.settingsChanged = callback
@@ -653,6 +690,10 @@ function setupApi(options: {
       return unsubscribe
     }),
     onProjectChanged: vi.fn(() => unsubscribe),
+    onUpdateState: vi.fn((callback: (state: UpdateState) => void) => {
+      listeners.updateState = callback
+      return unsubscribe
+    }),
     onWorkflowState: vi.fn((callback: (state: WorkflowRuntimeState) => void) => {
       listeners.workflowState = callback
       return unsubscribe
@@ -741,6 +782,97 @@ describe('App language synchronization', () => {
       appearance: { version: 2, activeSkinId: DEFAULT_APPEARANCE_PREFERENCES.activeSkinId, language: 'en' }
     }))
     expect(document.documentElement.lang).toBe('en')
+  })
+})
+
+describe('App update flow', () => {
+  it('shows manual-download and restart actions from main-process update states', async () => {
+    await i18n.changeLanguage('en')
+    const { api, listeners } = setupApi()
+    await renderBootstrappedApp()
+
+    act(() => listeners.updateState?.({
+      status: 'available',
+      capability: 'downloadOnly',
+      packageType: 'portable',
+      currentVersion: '0.1.0',
+      targetVersion: '0.2.0',
+      releaseNotes: '<script>plain release note</script>'
+    }))
+
+    expect(screen.getByRole('heading', { name: 'CLILoom v0.2.0 is available' })).toBeTruthy()
+    expect(screen.getByText('<script>plain release note</script>')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'View update' }))
+    await waitFor(() => expect(api.openUpdateRelease).toHaveBeenCalledOnce())
+
+    act(() => listeners.updateState?.({
+      status: 'downloaded',
+      capability: 'installable',
+      packageType: 'nsis',
+      currentVersion: '0.1.0',
+      targetVersion: '0.2.0',
+      releaseNotes: 'Ready to install'
+    }))
+
+    expect(screen.getByText(/not code-signed/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Restart and update' }))
+    await waitFor(() => expect(api.installUpdate).toHaveBeenCalledOnce())
+  })
+
+  it('reports an explicit up-to-date result after a manual check', async () => {
+    await i18n.changeLanguage('en')
+    const { listeners } = setupApi()
+    await renderBootstrappedApp()
+
+    act(() => listeners.updateState?.({
+      status: 'checking',
+      capability: 'installable',
+      packageType: 'nsis',
+      currentVersion: '0.1.0'
+    }))
+    act(() => listeners.updateState?.({
+      status: 'upToDate',
+      capability: 'installable',
+      packageType: 'nsis',
+      currentVersion: '0.1.0'
+    }))
+
+    expect(toast.success).toHaveBeenCalledWith('CLILoom v0.1.0 is up to date.')
+  })
+
+  it('keeps a dismissed download dialog closed until the update is ready', async () => {
+    await i18n.changeLanguage('en')
+    const { listeners } = setupApi()
+    await renderBootstrappedApp()
+
+    act(() => listeners.updateState?.({
+      status: 'available',
+      capability: 'installable',
+      packageType: 'appimage',
+      currentVersion: '0.1.0',
+      targetVersion: '0.2.0'
+    }))
+    fireEvent.click(screen.getByRole('button', { name: 'Later' }))
+    expect(screen.queryByRole('heading', { name: 'CLILoom v0.2.0 is available' })).toBeNull()
+
+    act(() => listeners.updateState?.({
+      status: 'downloading',
+      capability: 'installable',
+      packageType: 'appimage',
+      currentVersion: '0.1.0',
+      targetVersion: '0.2.0',
+      progress: { percent: 25, bytesPerSecond: 1, transferred: 1, total: 4 }
+    }))
+    expect(screen.queryByRole('heading', { name: 'CLILoom v0.2.0 is available' })).toBeNull()
+
+    act(() => listeners.updateState?.({
+      status: 'downloaded',
+      capability: 'installable',
+      packageType: 'appimage',
+      currentVersion: '0.1.0',
+      targetVersion: '0.2.0'
+    }))
+    expect(screen.getByRole('heading', { name: 'CLILoom v0.2.0 is ready' })).toBeTruthy()
   })
 })
 
