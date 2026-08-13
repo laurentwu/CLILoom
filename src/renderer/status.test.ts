@@ -26,9 +26,7 @@ describe('status presentations', () => {
 
   it.each([
     ['running', 'status:task.running', 'running'],
-    ['running (attached)', 'status:task.running', 'running'],
     ['closed', 'status:terminal.closed', 'completed'],
-    ['closed (0)', 'status:terminal.closed', 'completed'],
     ['failed', 'status:task.failed', 'failed'],
     ['killed', 'status:task.stopped', 'stopped'],
     ['interrupted', 'status:task.interrupted', 'interrupted']

@@ -3,6 +3,7 @@ import type { LayoutPreferences, SupportedLanguage, Skin, SkinContent, UserSkin 
 import type { ShellSnapshot } from '../shared/shell'
 import type { TerminalDataEvent, TerminalTranscriptSnapshot } from '../shared/terminalBuffer'
 import type { UpdateState } from '../shared/update'
+import type { TerminalClosedEvent, TerminalRetryMode } from '../shared/terminalSession'
 
 const api = {
   rendererNoSandboxSwitch: process.argv.includes('--no-sandbox'),
@@ -57,13 +58,15 @@ const api = {
   deleteWorkflow: (workflowId: string, expectedRevision: number) =>
     ipcRenderer.invoke('workflows:delete', workflowId, expectedRevision),
   setDesignerState: (value: unknown) => ipcRenderer.invoke('designer:set-state', value),
-  retryProcess: (sessionId: string) =>
-    ipcRenderer.invoke('process:retry', sessionId) as Promise<{ sessionId: string }>,
+  retryProcess: (sessionId: string, mode: TerminalRetryMode) =>
+    ipcRenderer.invoke('process:retry', sessionId, mode) as Promise<{ sessionId: string }>,
   writeProcess: (sessionId: string, input: string) => ipcRenderer.send('process:write', sessionId, input),
   isInputReady: (sessionId: string) => ipcRenderer.invoke('process:isInputReady', sessionId) as Promise<boolean>,
   resizeProcess: (sessionId: string, cols: number, rows: number) => ipcRenderer.invoke('process:resize', sessionId, cols, rows),
   killProcess: (sessionId: string) => ipcRenderer.invoke('process:kill', sessionId),
   startWorkflow: (request: unknown) => ipcRenderer.invoke('workflow:start', request),
+  retryWorkflowNode: (taskId: string, nodeId: string, branchId?: string) =>
+    ipcRenderer.invoke('workflow:retryNode', taskId, nodeId, branchId),
   updateWorkflowVariables: (taskId: string, variables: unknown, branchId?: string) => ipcRenderer.invoke('workflow:updateVariables', taskId, variables, branchId),
   stopWorkflow: (taskId: string) => ipcRenderer.invoke('workflow:stop', taskId),
   restoreWorkflowState: (taskId: string) => ipcRenderer.invoke('workflow:restoreState', taskId),
@@ -95,8 +98,8 @@ const api = {
     ipcRenderer.on('terminal:data', listener)
     return () => ipcRenderer.removeListener('terminal:data', listener)
   },
-  onTerminalClosed: (callback: (event: { sessionId: string; taskId: string; nodeId: string; exitCode: number | null; status: 'closed' | 'killed' | 'failed' }) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, payload: { sessionId: string; taskId: string; nodeId: string; exitCode: number | null; status: 'closed' | 'killed' | 'failed' }) => callback(payload)
+  onTerminalClosed: (callback: (event: TerminalClosedEvent) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: TerminalClosedEvent) => callback(payload)
     ipcRenderer.on('terminal:closed', listener)
     return () => ipcRenderer.removeListener('terminal:closed', listener)
   },

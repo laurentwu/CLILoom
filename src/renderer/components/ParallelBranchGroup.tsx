@@ -2,6 +2,7 @@ import { Maximize2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { VariableValue, WorkflowNode } from '../../shared/workflow'
 import type { WorkflowRuntimeBranchRun, WorkflowRuntimeNodeRun } from '../../shared/workflowRuntime'
+import type { TerminalRetryMode } from '../../shared/terminalSession'
 import { getBranchRouteNodeIds, getCurrentInputVariables, type TerminalSession } from '../utils'
 import { NodeDetailPanel } from './NodeDetailPanel'
 import { Button } from '@/components/ui/button'
@@ -15,13 +16,14 @@ type ParallelBranchGroupProps = {
   sessions: TerminalSession[]
   onBranchVariableChange: (branchId: string, key: string, value: VariableValue) => void
   onBranchContinue: (branchId: string) => void
-  onStopNode: (node: WorkflowNode, sessions: TerminalSession[]) => void
+  onRetryNode: (branchId: string, nodeId: string) => void
+  onStopTerminal: (sessionId: string) => Promise<void>
   onShowGraph: () => void
   onToggleZoomNode: (nodeId: string) => void
   zoomedNodeId?: string | null
   onLoadTerminalTranscript: (session: TerminalSession) => Promise<void>
   onSendTerminalInput: (sessionId: string, input: string) => void
-  onRetryTerminal: (sessionId: string) => Promise<void>
+  onRetryTerminal: (sessionId: string, mode: TerminalRetryMode) => Promise<void>
 }
 
 export function ParallelBranchGroup({
@@ -32,7 +34,8 @@ export function ParallelBranchGroup({
   sessions,
   onBranchVariableChange,
   onBranchContinue,
-  onStopNode,
+  onRetryNode,
+  onStopTerminal,
   onShowGraph,
   onToggleZoomNode,
   zoomedNodeId = null,
@@ -88,9 +91,7 @@ export function ParallelBranchGroup({
         >
           {visibleNodes.map(({ branch, node }) => {
             const nodeSessions = sessions.filter((session) => session.node_id === node.id)
-            const isCurrentBranchNode =
-              branch.currentNodeId === node.id &&
-              (branch.status === 'running' || branch.status === 'waiting-input')
+            const isCurrentBranchNode = branch.currentNodeId === node.id
             const isZoomed = effectiveZoomedNodeId === node.id
             return (
               <NodeDetailPanel
@@ -100,13 +101,12 @@ export function ParallelBranchGroup({
                 sessions={nodeSessions}
                 variables={branch.variables}
                 editableVariables={getCurrentInputVariables(node)}
-                canOperate={isCurrentBranchNode}
-                isRunning={isCurrentBranchNode && branch.status === 'running'}
+                canOperate={isCurrentBranchNode && branch.status !== 'completed'}
                 isWaitingForInput={isCurrentBranchNode && branch.status === 'waiting-input'}
                 onVariableChange={(key, value) => onBranchVariableChange(branch.branchId, key, value)}
-                onRun={() => {}}
+                onRetryNode={() => onRetryNode(branch.branchId, node.id)}
                 onContinue={() => onBranchContinue(branch.branchId)}
-                onStop={() => onStopNode(node, nodeSessions)}
+                onStopTerminal={onStopTerminal}
                 onShowGraph={() => onToggleZoomNode(node.id)}
                 onLoadTerminalTranscript={onLoadTerminalTranscript}
                 onSendTerminalInput={onSendTerminalInput}

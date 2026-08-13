@@ -126,6 +126,7 @@ function Harness() {
               session={session}
               onRetry={async () => undefined}
               onSendInput={(_sessionId, input) => setSentInput((value) => value + input)}
+              onStop={async () => undefined}
             />
           )}
         </div>

@@ -173,7 +173,7 @@ describe('TaskSidebar', () => {
       id: 'task-1',
       project_id: 'project-1',
       title: 'Task title',
-      status: 'completed',
+      status: 'completed' as const,
       created_at: createdAt,
       updated_at: createdAt
     }

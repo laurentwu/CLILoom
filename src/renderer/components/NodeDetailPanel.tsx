@@ -1,12 +1,22 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Maximize2, Play, Plus, Square, SquareTerminal, X } from 'lucide-react'
+import { Maximize2, Play, Plus, RotateCcw, SquareTerminal, X } from 'lucide-react'
 import type { VariableDefinition, VariableValue, WorkflowNode } from '../../shared/workflow'
+import type { TerminalRetryMode } from '../../shared/terminalSession'
 import { NodeIcon } from './NodeIcon'
 import { StatusBadge } from './StatusBadge'
 import { TerminalOutputPane, TerminalPane } from './TerminalPane'
 import { VariableField } from './VariableField'
-import { canAcceptTerminalInput, type NodeRun, type TerminalSession } from '../utils'
+import {
+  canAcceptTerminalInput,
+  canRetryTerminalSession,
+  type NodeRun,
+  type TerminalSession
+} from '../utils'
+import {
+  getNodeAction,
+  getTerminalWorkflowRole
+} from '../executionActions'
 import { getStatusPresentation, type StatusSource } from '../status'
 import { Button } from '@/components/ui/button'
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -23,16 +33,16 @@ type NodeDetailPanelProps = {
   variables: Record<string, VariableValue>
   editableVariables: VariableDefinition[]
   canOperate: boolean
-  isRunning: boolean
   isWaitingForInput: boolean
   onVariableChange: (key: string, value: VariableValue) => void
-  onRun: () => void
+  onRun?: () => void
+  onRetryNode: () => void
   onContinue: () => void
-  onStop: () => void
+  onStopTerminal: (sessionId: string) => Promise<void>
   onShowGraph: () => void
   onLoadTerminalTranscript: (session: TerminalSession) => Promise<void>
   onSendTerminalInput: (sessionId: string, input: string) => void
-  onRetryTerminal: (sessionId: string) => Promise<void>
+  onRetryTerminal: (sessionId: string, mode: TerminalRetryMode) => Promise<void>
   zoomTitle?: string
   className?: string
 }
@@ -44,12 +54,12 @@ export function NodeDetailPanel({
   variables,
   editableVariables,
   canOperate,
-  isRunning,
   isWaitingForInput,
   onVariableChange,
   onRun,
+  onRetryNode,
   onContinue,
-  onStop,
+  onStopTerminal,
   onShowGraph,
   onLoadTerminalTranscript,
   onSendTerminalInput,
@@ -67,10 +77,26 @@ export function NodeDetailPanel({
   const resolvedStatusLabel = renderStatus(status, 'node')
   const isTerminalNode = node.type.includes('terminal')
   const canEditVariables = canOperate && (node.type === 'start' || (node.type === 'input' && isWaitingForInput))
-  const showStopAction = canOperate && isRunning
   const latestSessionId = sessions.at(-1)?.id ?? null
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(latestSessionId)
   const selectedSession = sessions.find((session) => session.id === selectedSessionId) ?? sessions.at(-1)
+  const getSessionWorkflowRole = (session: TerminalSession) => getTerminalWorkflowRole({
+    sessionId: session.id,
+    sessionIsLatest: session.id === latestSessionId,
+    nodeStatus: status,
+    nodeSessionId: run?.sessionId,
+    canOperate
+  })
+  const hasWorkflowRetrySession = sessions.some((session) => (
+    getSessionWorkflowRole(session) === 'retryable' && canRetryTerminalSession(session)
+  ))
+  const nodeAction = getNodeAction({
+    nodeType: node.type,
+    status,
+    canOperate,
+    canRun: Boolean(onRun),
+    hasWorkflowRetrySession
+  })
   const statusText =
     run?.exitCode === undefined || run.exitCode === null
       ? resolvedStatusLabel
@@ -97,22 +123,22 @@ export function NodeDetailPanel({
         </div>
         <CardAction className="node-detail-panel__actions flex items-center gap-2">
           <StatusBadge label={statusText} source="node" status={status} />
-          {showStopAction && (
-            <Button size="sm" variant="destructive" onClick={onStop}>
-              <Square data-icon="inline-start" />
-              {t('common:action.stop')}
-            </Button>
-          )}
-          {canOperate && !isRunning && isWaitingForInput && (
+          {nodeAction === 'continue' && (
             <Button size="sm" onClick={onContinue}>
               <Play data-icon="inline-start" />
               {t('common:action.continue')}
             </Button>
           )}
-          {canOperate && !isRunning && !isWaitingForInput && status !== 'completed' && (
+          {nodeAction === 'run' && onRun && (
             <Button size="sm" onClick={onRun}>
               <Play data-icon="inline-start" />
               {t('common:action.run')}
+            </Button>
+          )}
+          {nodeAction === 'retry-node' && (
+            <Button size="sm" onClick={onRetryNode}>
+              <RotateCcw data-icon="inline-start" />
+              {t('node:action.retry')}
             </Button>
           )}
           <Button aria-label={resolvedZoomTitle} size="icon-sm" title={resolvedZoomTitle} variant="outline" onClick={onShowGraph}>
@@ -149,6 +175,8 @@ export function NodeDetailPanel({
                 onLoadTranscript={onLoadTerminalTranscript}
                 onSendInput={onSendTerminalInput}
                 onRetry={onRetryTerminal}
+                onStop={onStopTerminal}
+                workflowRole={getSessionWorkflowRole(selectedSession)}
                 disabled={!canAcceptTerminalInput(selectedSession)}
               />
             ) : (

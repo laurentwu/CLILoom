@@ -10,7 +10,6 @@ import {
   getNodeDetailZoomTarget,
   getNodeOperationState,
   getNextActiveProjectIdAfterDelete,
-  getNodeStopTarget,
   getParallelGroupBranchesForNode,
   hasModifiedWorkflowVariables,
   mergeTaskRecord,
@@ -39,97 +38,6 @@ describe('renderer runtime helpers', () => {
       'second',
       'unset'
     ])
-  })
-
-  it('stops a running interactive terminal session instead of stopping the workflow', () => {
-    const node: WorkflowNode = {
-      id: 'terminal',
-      type: 'interactive-terminal',
-      name: 'Terminal',
-      config: { command: 'bash', cwd: '${sys_project_dir}', autoStart: true }
-    }
-    const sessions: TerminalSession[] = [
-      {
-        id: 'session-1',
-        task_id: 'task-1',
-        node_id: 'terminal',
-        kind: 'interactive',
-        command: 'bash',
-        cwd: '/repo',
-        status: 'running',
-        transcript: ''
-      }
-    ]
-
-    expect(getNodeStopTarget(node, sessions)).toEqual({ kind: 'terminal-session', sessionId: 'session-1' })
-  })
-
-  it('stops a running non-interactive terminal session instead of stopping the workflow', () => {
-    const node: WorkflowNode = {
-      id: 'cmd',
-      type: 'non-interactive-terminal',
-      name: 'Command',
-      config: { command: 'npm test', cwd: '${sys_project_dir}', successExitCodes: [0] }
-    }
-    const sessions: TerminalSession[] = [
-      {
-        id: 'session-1',
-        task_id: 'task-1',
-        node_id: 'cmd',
-        kind: 'non-interactive',
-        command: 'npm test',
-        cwd: '/repo',
-        status: 'running',
-        transcript: ''
-      }
-    ]
-
-    expect(getNodeStopTarget(node, sessions)).toEqual({ kind: 'terminal-session', sessionId: 'session-1' })
-  })
-
-  it('does not fall back to stopping the workflow when a non-interactive terminal session is not ready yet', () => {
-    const node: WorkflowNode = {
-      id: 'cmd',
-      type: 'non-interactive-terminal',
-      name: 'Command',
-      config: { command: 'npm test', cwd: '${sys_project_dir}', successExitCodes: [0] }
-    }
-
-    expect(getNodeStopTarget(node, [])).toEqual({ kind: 'unavailable' })
-  })
-
-  it('ignores running interactive terminal sessions from other nodes', () => {
-    const node: WorkflowNode = {
-      id: 'terminal-2',
-      type: 'interactive-terminal',
-      name: 'Terminal 2',
-      config: { command: 'bash', cwd: '${sys_project_dir}', autoStart: true }
-    }
-    const sessions: TerminalSession[] = [
-      {
-        id: 'session-1',
-        task_id: 'task-1',
-        node_id: 'terminal-1',
-        kind: 'interactive',
-        command: 'bash',
-        cwd: '/repo',
-        status: 'running',
-        transcript: ''
-      }
-    ]
-
-    expect(getNodeStopTarget(node, sessions)).toEqual({ kind: 'unavailable' })
-  })
-
-  it('does not fall back to stopping the workflow when an interactive terminal session is not ready yet', () => {
-    const node: WorkflowNode = {
-      id: 'terminal',
-      type: 'interactive-terminal',
-      name: 'Terminal',
-      config: { command: 'bash', cwd: '${sys_project_dir}', autoStart: true }
-    }
-
-    expect(getNodeStopTarget(node, [])).toEqual({ kind: 'unavailable' })
   })
 
   it('allows starting a new task when a project exists even if a draft already exists', () => {
@@ -244,6 +152,32 @@ describe('renderer runtime helpers', () => {
     })
   })
 
+  it('allows retrying an interrupted parallel branch node', () => {
+    const branch: WorkflowRuntimeBranchRun = {
+      branchId: 'split:edge-b',
+      splitNodeId: 'split',
+      entryEdgeId: 'edge-b',
+      entryNodeId: 'terminal-b',
+      currentNodeId: 'terminal-b',
+      status: 'interrupted',
+      nodeIds: ['terminal-b'],
+      variables: {}
+    }
+
+    expect(getNodeOperationState({
+      nodeId: 'terminal-b',
+      runtimeCurrentNodeId: 'split',
+      isRunning: false,
+      isWaitingForInput: false,
+      branchRuns: { [branch.branchId]: branch }
+    })).toEqual({
+      branchId: branch.branchId,
+      canOperate: true,
+      isRunning: false,
+      isWaitingForInput: false
+    })
+  })
+
   it('keeps the single node zoom target tied to the entry surface', () => {
     expect(getNodeDetailZoomTarget(null)).toEqual({ kind: 'graph' })
     expect(getNodeDetailZoomTarget({ kind: 'parallel', splitNodeId: 'split' })).toEqual({ kind: 'parallel', splitNodeId: 'split' })
@@ -274,7 +208,7 @@ describe('renderer runtime helpers', () => {
       transcript: ''
     }
 
-    for (const status of ['closed', 'closed (0)', 'failed', 'killed', 'interrupted']) {
+    for (const status of ['closed', 'failed', 'killed', 'interrupted'] as const) {
       expect(canRetryTerminalSession({ ...session, status })).toBe(true)
     }
     expect(canRetryTerminalSession({ ...session, status: 'running' })).toBe(false)

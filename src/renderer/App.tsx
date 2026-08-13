@@ -37,6 +37,7 @@ import {
   Network,
   Plus,
   Save,
+  Square,
   Trash2,
   TriangleAlert,
   Workflow,
@@ -51,7 +52,12 @@ import {
   duplicateWorkflowDefinition,
   validateWorkflow
 } from '../shared/workflow'
-import type { WorkflowRuntimeBranchRun, WorkflowRuntimeNodeRun, WorkflowRuntimeState } from '../shared/workflowRuntime'
+import type {
+  WorkflowRuntimeBranchRun,
+  WorkflowRuntimeNodeRun,
+  WorkflowRuntimeState
+} from '../shared/workflowRuntime'
+import type { TerminalRetryMode } from '../shared/terminalSession'
 import {
   DEFAULT_ASSISTANT_CONFIG,
   DEFAULT_APPEARANCE_PREFERENCES,
@@ -73,7 +79,6 @@ import {
   getCurrentInputVariables,
   getDefaultVariables,
   getDefaultNodeConfig,
-  getNodeStopTarget,
   canStartNewTask,
   canSwitchTaskWorkflow,
   hasModifiedWorkflowVariables,
@@ -88,6 +93,7 @@ import {
   shouldResetActiveTaskAfterDelete,
   mergeTaskRecord
 } from './utils'
+import { getWorkflowAction } from './executionActions'
 import type { NodeDetailZoomTarget, TerminalSession } from './utils'
 import { NodeIcon } from './components/NodeIcon'
 import { DesignerFlowNode } from './designer/DesignerFlowNode'
@@ -320,9 +326,7 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
   const [updateDialogOpen, setUpdateDialogOpen] = useState(false)
   const [workflowRevisions, setWorkflowRevisions] = useState<Record<string, number>>({})
   const [runtimeState, setRuntimeState] = useState<WorkflowRuntimeState | null>(null)
-  const [isRunning, setIsRunning] = useState(false)
   const [workflowCompleted, setWorkflowCompleted] = useState(false)
-  const [activeBranches, setActiveBranches] = useState<string[]>([])
   const [branchRuns, setBranchRuns] = useState<Record<string, WorkflowRuntimeBranchRun>>({})
   const [viewMode, setViewMode] = useState<'focus' | 'graph'>('focus')
   const [taskGraphFocusNodeId, setTaskGraphFocusNodeId] = useState<string | null>(null)
@@ -360,7 +364,10 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
   startingWorkflowTaskIdRef.current = startingWorkflowTaskId
   pendingWorkflowIdRef.current = pendingWorkflowId
   availableWorkflowsRef.current = bootstrap.workflows
-  const isWaitingForInput = runtimeState?.taskId === activeTaskId && runtimeState.status === 'waiting-input'
+  const activeRuntimeStatus = runtimeState?.taskId === activeTaskId ? runtimeState.status : null
+  const isRunning = activeRuntimeStatus === 'running'
+  const isWaitingForInput = activeRuntimeStatus === 'waiting-input'
+  const workflowAction = getWorkflowAction(activeRuntimeStatus)
 
   const activeProject = projects.find((project) => project.id === activeProjectId) ?? null
   const availableWorkflows = bootstrap.workflows
@@ -391,9 +398,9 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
     selectedNode &&
     validationErrors.length === 0 &&
     !workflowCompleted &&
+    startingWorkflowTaskId !== activeTaskId &&
     selectedNodeOperationState.canOperate
   )
-  const selectedNodeIsRunning = Boolean(selectedNodeCanOperate && selectedNodeOperationState.isRunning)
   const selectedNodeIsWaitingForInput = Boolean(selectedNodeCanOperate && selectedNodeOperationState.isWaitingForInput)
   const selectedNodeVariables = selectedNodeBranch?.variables ?? variables
   const designerValidationErrors = useMemo(() => {
@@ -582,10 +589,8 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
     setVariables(state.variables)
     setNodeRuns(state.nodeRuns)
     setExecutionOrder(state.executionOrder)
-    setActiveBranches(state.activeBranches)
     setBranchRuns(state.branchRuns)
     setWorkflowCompleted(state.workflowCompleted || state.status === 'completed')
-    setIsRunning(state.status === 'running')
     updateDraftStarted(true)
     setViewMode('focus')
   }
@@ -702,61 +707,42 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
       const state = (await window.cliLoom?.stopWorkflow(activeTaskId)) as WorkflowRuntimeState | null | undefined
       if (state) applyRuntimeState(state)
       else {
-        setIsRunning(false)
-        setActiveBranches([])
+        const currentState = runtimeStateRef.current
+        if (currentState?.taskId === activeTaskId) {
+          updateRuntimeState({ ...currentState, status: 'stopped', activeBranches: [] })
+        }
       }
     } catch (error) {
       handleError(error, 'stopWorkflow')
     }
   }
 
-  async function stopNode(node: WorkflowNode, nodeSessions: TerminalSession[]) {
-    const target = getNodeStopTarget(node, nodeSessions)
-    if (target.kind === 'terminal-session') {
-      try {
-        await window.cliLoom?.killProcess(target.sessionId)
-      } catch (error) {
-        handleError(error, 'killTerminalProcess')
-      }
-      return
+  async function stopTerminal(sessionId: string) {
+    try {
+      await window.cliLoom?.killProcess(sessionId)
+    } catch (error) {
+      handleError(error, 'killTerminalProcess')
     }
-    if (target.kind === 'unavailable') {
-      try {
-        const latestSessions = (await window.cliLoom?.listTaskSessions(activeTaskId)) as TerminalSession[] | undefined
-        const nextSessions = latestSessions ?? []
-        setSessions((current) => {
-          const mergedSessions = nextSessions.map((session) => {
-            if (session.transcript !== null) return session
-            const loaded = current.find((item) => item.id === session.id)?.transcript
-            return loaded === null || loaded === undefined ? session : { ...session, transcript: loaded }
-          })
-          return [
-            ...current.filter((session) => session.task_id !== activeTaskId),
-            ...mergedSessions
-          ]
-        })
-        const refreshedTarget = getNodeStopTarget(
-          node,
-          nextSessions.filter((session) => session.task_id === activeTaskId && session.node_id === node.id)
-        )
-        if (refreshedTarget.kind === 'terminal-session') {
-          await window.cliLoom?.killProcess(refreshedTarget.sessionId)
-          return
-        }
-        handleError(new Error(t('errors:session.notReady')), 'killTerminalProcess')
-      } catch (error) {
-        handleError(error, 'killTerminalProcess')
-      }
-      return
-    }
-    await stopWorkflow()
   }
 
-  async function retryTerminal(sessionId: string) {
+  async function retryTerminal(sessionId: string, mode: TerminalRetryMode) {
     try {
-      await window.cliLoom?.retryProcess(sessionId)
+      await window.cliLoom?.retryProcess(sessionId, mode)
     } catch (error) {
       handleError(error, 'retryTerminalProcess')
+    }
+  }
+
+  async function retryNode(nodeId: string, branchId?: string) {
+    try {
+      const state = (await window.cliLoom?.retryWorkflowNode(
+        activeTaskId,
+        nodeId,
+        branchId
+      )) as WorkflowRuntimeState | undefined
+      if (state) applyRuntimeState(state)
+    } catch (error) {
+      handleError(error, 'retryWorkflowNode')
     }
   }
 
@@ -1118,15 +1104,14 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
     })
     const removeClosed = window.cliLoom?.onTerminalClosed((event) => {
       flushTerminalData()
-      const label = event.status === 'killed' ? 'killed' : event.status === 'failed' ? 'failed' : `closed (${event.exitCode ?? 'null'})`
       setSessions((current) => {
         const exact = current.find((s) => s.id === event.sessionId)
         if (exact) {
-          return current.map((s) => (s.id === event.sessionId ? { ...s, status: label } : s))
+          return current.map((s) => (s.id === event.sessionId ? { ...s, status: event.status } : s))
         }
         return current.map((s) =>
           s.id.startsWith('pending-') && s.node_id === event.nodeId && s.task_id === event.taskId
-            ? { ...s, id: event.sessionId, status: label }
+            ? { ...s, id: event.sessionId, status: event.status }
             : s
         )
       })
@@ -1250,8 +1235,6 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
     setSessions([])
     setExecutionOrder([])
     updateRuntimeState(null)
-    setActiveBranches([])
-    setIsRunning(false)
     const nextTaskId = `draft-${Date.now()}`
     setActiveTaskId(nextTaskId)
     activeTaskIdRef.current = nextTaskId
@@ -1894,12 +1877,22 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
               {t('workflow:summary', { nodes: workflow.nodes.length, edges: workflow.edges.length })}
             </span>
           </div>
-          {isRunning && (
+          {activeRuntimeStatus && (
             <StatusBadge
               className="shrink-0"
-              label={activeBranches.length > 0 ? t('workflow:parallelRoutes', { count: activeBranches.length }) : undefined}
-              status="running"
+              status={activeRuntimeStatus}
             />
+          )}
+          {workflowAction === 'stop-workflow' && (
+            <Button
+              className="shrink-0"
+              onClick={() => void stopWorkflow()}
+              size="sm"
+              variant="destructive"
+            >
+              <Square data-icon="inline-start" />
+              {t('workflow:runtimeAction.stop')}
+            </Button>
           )}
           <ToggleGroup
             aria-label={t('workflow:view.aria')}
@@ -1979,7 +1972,8 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
                   sessions={sessions.filter((session) => session.task_id === activeTaskId)}
                   onBranchVariableChange={setBranchVariable}
                   onBranchContinue={continueBranchWithVariables}
-                  onStopNode={stopNode}
+                  onRetryNode={(branchId, nodeId) => void retryNode(nodeId, branchId)}
+                  onStopTerminal={stopTerminal}
                   onShowGraph={() => showGraphAtNode(selectedNodeId)}
                   onToggleZoomNode={(nodeId) => setParallelZoomNodeId((curr) => (curr === nodeId ? null : nodeId))}
                   zoomedNodeId={parallelZoomNodeId}
@@ -1995,16 +1989,16 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
                   variables={selectedNodeVariables}
                   editableVariables={getCurrentInputVariables(selectedNode)}
                   canOperate={selectedNodeCanOperate}
-                  isRunning={selectedNodeIsRunning}
                   isWaitingForInput={selectedNodeIsWaitingForInput}
                   onVariableChange={selectedNodeBranch
                     ? (key, value) => setBranchVariable(selectedNodeBranch.branchId, key, value)
                     : setVariable}
-                  onRun={selectedNodeBranch ? () => {} : runWorkflowFromCurrentNode}
+                  onRun={selectedNodeBranch ? undefined : runWorkflowFromCurrentNode}
+                  onRetryNode={() => void retryNode(selectedNode.id, selectedNodeBranch?.branchId)}
                   onContinue={selectedNodeBranch
                     ? () => continueBranchWithVariables(selectedNodeBranch.branchId)
                     : continueWorkflowWithVariables}
-                  onStop={() => stopNode(selectedNode, selectedNodeSessions)}
+                  onStopTerminal={stopTerminal}
                   onShowGraph={returnFromNodeDetailZoom}
                   onLoadTerminalTranscript={loadTerminalTranscript}
                   onSendTerminalInput={sendTerminalInput}
@@ -2356,8 +2350,6 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
     updateNewTaskDraft(false)
     updatePendingWorkflowId(null)
     setWorkflowCompleted(task.status === 'completed')
-    setIsRunning(false)
-    setActiveBranches([])
     updateRuntimeState(null)
     setFocusedParallelSplitNodeId(null)
     setNodeDetailZoomTarget(null)

@@ -350,6 +350,9 @@ export default {
     }
   },
   workflow: {
+    runtimeAction: {
+      stop: 'Stop workflow'
+    },
     delete: {
       title: 'Delete workflow',
       confirm: 'Delete workflow "{{name}}"?',
@@ -627,6 +630,11 @@ export default {
     }
   },
   terminal: {
+    action: {
+      endAndContinue: 'End terminal and continue',
+      rerunCommand: 'Rerun command',
+      stopCommand: 'Stop command'
+    },
     shell: {
       unavailable: '{{name}} (unavailable)'
     },
@@ -636,8 +644,9 @@ export default {
     },
     retry: {
       aria: 'Retry terminal command',
-      tooltip: 'Clear the screen and rerun the current command',
-      tooltipTarget: 'Clear the screen and rerun in {{target}}'
+      workflowTooltip: 'Retry this node and continue the original workflow',
+      rerunTooltip: 'Rerun this historical command without changing the original workflow',
+      rerunTooltipTarget: 'Rerun this historical command in {{target}} without changing the original workflow'
     },
     environment: {
       label: 'Environment: {{target}}'
@@ -708,6 +717,9 @@ export default {
     }
   },
   node: {
+    action: {
+      retry: 'Retry node'
+    },
     status: {
       withExitCode: '{{label}} · exit {{code}}'
     },

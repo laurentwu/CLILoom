@@ -13,7 +13,11 @@ import {
 } from '../shared/appSettings'
 import { DEFAULT_SKIN } from './theme'
 import type { WorkflowDefinition, WorkflowNode } from '../shared/workflow'
-import type { WorkflowRuntimeStartOptions, WorkflowRuntimeState } from '../shared/workflowRuntime'
+import type {
+  WorkflowRuntimeBranchRun,
+  WorkflowRuntimeStartOptions,
+  WorkflowRuntimeState
+} from '../shared/workflowRuntime'
 import type { ShellSnapshot } from '../shared/shell'
 import type { TerminalDataEvent, TerminalTranscriptSnapshot } from '../shared/terminalBuffer'
 import type { UpdateState } from '../shared/update'
@@ -372,6 +376,7 @@ vi.mock('./components/NodeDetailPanel', async () => {
       canOperate,
       node,
       onLoadTerminalTranscript,
+      onRetryNode,
       onRun,
       onVariableChange,
       sessions,
@@ -380,7 +385,8 @@ vi.mock('./components/NodeDetailPanel', async () => {
       canOperate: boolean
       node: { id: string; name: string }
       onLoadTerminalTranscript: (session: TerminalSession) => Promise<void>
-      onRun: () => void
+      onRetryNode: () => void
+      onRun?: () => void
       onVariableChange: (key: string, value: string) => void
       sessions: TerminalSession[]
       variables: Record<string, unknown>
@@ -409,14 +415,36 @@ vi.mock('./components/NodeDetailPanel', async () => {
         disabled: !canOperate,
         onClick: onRun,
         type: 'button'
-      }, '运行')
+      }, '运行'),
+      React.createElement('button', {
+        disabled: !canOperate,
+        onClick: onRetryNode,
+        type: 'button'
+      }, `重试节点 ${node.id}`)
     )
   }
 })
 
-vi.mock('./components/ParallelBranchGroup', () => ({
-  ParallelBranchGroup: () => null
-}))
+vi.mock('./components/ParallelBranchGroup', async () => {
+  const React = await import('react')
+  return {
+    ParallelBranchGroup: ({
+      branches,
+      onRetryNode
+    }: {
+      branches: WorkflowRuntimeBranchRun[]
+      onRetryNode: (branchId: string, nodeId: string) => void
+    }) => React.createElement(
+      'section',
+      { 'data-testid': 'parallel-branch-group' },
+      ...branches.map((branch) => React.createElement('button', {
+        key: branch.branchId,
+        onClick: () => onRetryNode(branch.branchId, branch.currentNodeId),
+        type: 'button'
+      }, `重试分支 ${branch.branchId}:${branch.currentNodeId}`))
+    )
+  }
+})
 
 vi.mock('./components/StatusBadge', () => ({
   StatusBadge: () => null
@@ -670,6 +698,10 @@ function setupApi(options: {
     startWorkflow: vi.fn().mockImplementation(
       (_request: WorkflowRuntimeStartOptions): Promise<WorkflowRuntimeState | undefined> => Promise.resolve(undefined)
     ),
+    retryWorkflowNode: vi.fn().mockResolvedValue(undefined),
+    retryProcess: vi.fn().mockResolvedValue({ sessionId: 'session-1' }),
+    killProcess: vi.fn().mockResolvedValue(true),
+    stopWorkflow: vi.fn().mockResolvedValue(undefined),
     updateShell: vi.fn().mockResolvedValue(data.shell),
     refreshShells: vi.fn().mockResolvedValue(data.shell),
     getUpdateState: vi.fn().mockResolvedValue(initialUpdateState),
@@ -1007,6 +1039,244 @@ describe('App task workflow selection', () => {
     fireEvent.click(screen.getByRole('button', { name: '重命名 已发起任务' }))
     await waitFor(() => expect(screen.getByTitle('手动名称')).toBeTruthy())
     expect(api.updateTaskTitle).toHaveBeenCalledWith(waitingTask.id, '手动名称')
+  })
+
+  it('keeps Stop workflow available while running and waiting for input', async () => {
+    const { api, listeners } = setupApi()
+    api.startWorkflow.mockImplementation((request: WorkflowRuntimeStartOptions) => {
+      const now = '2026-08-05T00:00:00.000Z'
+      const task: TaskRecord = {
+        id: request.taskId,
+        project_id: request.projectId,
+        title: '可停止任务',
+        status: 'running',
+        created_at: now,
+        updated_at: now
+      }
+      return Promise.resolve(runtimeState(request.taskId, request.workflow, task))
+    })
+    const newTaskButton = await renderBootstrappedApp()
+    fireEvent.click(newTaskButton)
+    fireEvent.click(screen.getByRole('button', { name: '运行' }))
+
+    const stopButton = await screen.findByRole('button', { name: 'Stop workflow' })
+    const runningTaskId = api.startWorkflow.mock.calls[0][0].taskId
+    act(() => listeners.workflowState?.({
+      ...runtimeState(runningTaskId, workflowA),
+      status: 'waiting-input',
+      currentNodeId: workflowA.nodes[1].id,
+      nodeRuns: {
+        [workflowA.nodes[1].id]: {
+          nodeId: workflowA.nodes[1].id,
+          status: 'waiting-input'
+        }
+      }
+    }))
+
+    expect(screen.getByRole('button', { name: 'Stop workflow' })).toBe(stopButton)
+    fireEvent.click(stopButton)
+    expect(api.stopWorkflow).toHaveBeenCalledWith(runningTaskId)
+  })
+
+  it('retries the current failed node and applies the returned workflow state', async () => {
+    const task: TaskRecord = {
+      id: 'retry-node-task',
+      project_id: project.id,
+      title: 'Retry node task',
+      status: 'failed',
+      created_at: '2026-08-05T00:00:00.000Z',
+      updated_at: '2026-08-05T00:00:00.000Z'
+    }
+    const retryWorkflow: WorkflowDefinition = {
+      id: 'retry-node-workflow',
+      name: 'Retry node workflow',
+      nodes: [
+        { id: 'start', type: 'start', name: 'Start', config: { variables: [] } },
+        { id: 'gate', type: 'exclusive-gateway', name: 'Gate', config: {} },
+        { id: 'end', type: 'end', name: 'End after retry', config: {} }
+      ],
+      edges: [
+        { id: 'start-gate', from: 'start', to: 'gate' },
+        { id: 'gate-end', from: 'gate', to: 'end', isDefault: true }
+      ]
+    }
+    const failedState: WorkflowRuntimeState = {
+      taskId: task.id,
+      projectId: project.id,
+      projectDir: project.path,
+      workflowId: retryWorkflow.id,
+      status: 'failed',
+      currentNodeId: 'gate',
+      variables: {},
+      nodeRuns: {
+        start: { nodeId: 'start', status: 'completed' },
+        gate: { nodeId: 'gate', status: 'failed', stderr: 'old failure' }
+      },
+      executionOrder: ['start', 'gate'],
+      activeBranches: [],
+      branchRuns: {},
+      parallelResults: {},
+      workflowCompleted: false,
+      error: 'old failure',
+      task
+    }
+    const completedTask = { ...task, status: 'completed' as const }
+    const completedState: WorkflowRuntimeState = {
+      ...failedState,
+      status: 'completed',
+      currentNodeId: 'end',
+      nodeRuns: {
+        start: { nodeId: 'start', status: 'completed' },
+        gate: { nodeId: 'gate', status: 'completed' },
+        end: { nodeId: 'end', status: 'completed' }
+      },
+      executionOrder: ['start', 'gate', 'end'],
+      workflowCompleted: true,
+      error: undefined,
+      task: completedTask
+    }
+    const { api } = setupApi({
+      data: bootstrap([task]),
+      restore: { state: failedState, workflow: retryWorkflow }
+    })
+    api.retryWorkflowNode.mockResolvedValue(completedState)
+    await renderBootstrappedApp()
+    fireEvent.click(await screen.findByRole('button', { name: '加载 Retry node task' }))
+
+    fireEvent.click(await screen.findByRole('button', { name: '重试节点 gate' }))
+
+    await waitFor(() => expect(api.retryWorkflowNode).toHaveBeenCalledWith(
+      task.id,
+      'gate',
+      undefined
+    ))
+    await waitFor(() => expect(screen.getByTestId('node-detail').textContent)
+      .toContain('End after retry'))
+    expect(screen.getByRole('button', { name: '加载 Retry node task' })
+      .getAttribute('data-task-status')).toBe('completed')
+  })
+
+  it('passes the branch id when retrying a failed parallel branch node', async () => {
+    const task: TaskRecord = {
+      id: 'retry-branch-task',
+      project_id: project.id,
+      title: 'Retry branch task',
+      status: 'failed',
+      created_at: '2026-08-05T00:00:00.000Z',
+      updated_at: '2026-08-05T00:00:00.000Z'
+    }
+    const retryWorkflow: WorkflowDefinition = {
+      id: 'retry-branch-workflow',
+      name: 'Retry branch workflow',
+      nodes: [
+        { id: 'start', type: 'start', name: 'Start', config: { variables: [] } },
+        { id: 'split', type: 'parallel-gateway', name: 'Split', config: { mode: 'split' } },
+        { id: 'gate', type: 'exclusive-gateway', name: 'Gate', config: {} },
+        { id: 'other', type: 'non-interactive-terminal', name: 'Other', config: { command: 'other', cwd: '/repo', successExitCodes: [0] } },
+        { id: 'join', type: 'parallel-gateway', name: 'Join', config: { mode: 'join', joinIncomingEdgeIds: ['gate-join', 'other-join'] } },
+        { id: 'end', type: 'end', name: 'End after branch retry', config: {} }
+      ],
+      edges: [
+        { id: 'start-split', from: 'start', to: 'split' },
+        { id: 'split-gate', from: 'split', to: 'gate' },
+        { id: 'split-other', from: 'split', to: 'other' },
+        { id: 'gate-join', from: 'gate', to: 'join', isDefault: true },
+        { id: 'other-join', from: 'other', to: 'join' },
+        { id: 'join-end', from: 'join', to: 'end' }
+      ]
+    }
+    const gateBranchId = 'split:split-gate'
+    const otherBranchId = 'split:split-other'
+    const failedState: WorkflowRuntimeState = {
+      taskId: task.id,
+      projectId: project.id,
+      projectDir: project.path,
+      workflowId: retryWorkflow.id,
+      status: 'failed',
+      currentNodeId: 'split',
+      variables: {},
+      nodeRuns: {
+        start: { nodeId: 'start', status: 'completed' },
+        split: { nodeId: 'split', status: 'completed' },
+        gate: { nodeId: 'gate', status: 'failed', stderr: 'old failure' },
+        other: { nodeId: 'other', status: 'completed', sessionId: 'session-other' }
+      },
+      executionOrder: ['start', 'split', 'gate', 'other'],
+      activeBranches: [],
+      branchRuns: {
+        [gateBranchId]: {
+          branchId: gateBranchId,
+          splitNodeId: 'split',
+          entryEdgeId: 'split-gate',
+          entryNodeId: 'gate',
+          currentNodeId: 'gate',
+          status: 'failed',
+          nodeIds: ['gate'],
+          variables: {},
+          error: 'old failure'
+        },
+        [otherBranchId]: {
+          branchId: otherBranchId,
+          splitNodeId: 'split',
+          entryEdgeId: 'split-other',
+          entryNodeId: 'other',
+          currentNodeId: 'join',
+          status: 'completed',
+          nodeIds: ['other'],
+          reachedJoinEdgeId: 'other-join',
+          reachedJoinNodeId: 'join',
+          variables: {}
+        }
+      },
+      parallelResults: {},
+      workflowCompleted: false,
+      error: 'old failure',
+      task
+    }
+    const completedState: WorkflowRuntimeState = {
+      ...failedState,
+      status: 'completed',
+      currentNodeId: 'end',
+      nodeRuns: {
+        ...failedState.nodeRuns,
+        gate: { nodeId: 'gate', status: 'completed' },
+        join: { nodeId: 'join', status: 'completed' },
+        end: { nodeId: 'end', status: 'completed' }
+      },
+      branchRuns: {
+        ...failedState.branchRuns,
+        [gateBranchId]: {
+          ...failedState.branchRuns[gateBranchId],
+          currentNodeId: 'join',
+          status: 'completed',
+          reachedJoinEdgeId: 'gate-join',
+          reachedJoinNodeId: 'join',
+          error: undefined
+        }
+      },
+      workflowCompleted: true,
+      error: undefined,
+      task: { ...task, status: 'completed' }
+    }
+    const { api } = setupApi({
+      data: bootstrap([task]),
+      restore: { state: failedState, workflow: retryWorkflow }
+    })
+    api.retryWorkflowNode.mockResolvedValue(completedState)
+    await renderBootstrappedApp()
+    fireEvent.click(await screen.findByRole('button', { name: '加载 Retry branch task' }))
+
+    fireEvent.click(await screen.findByRole('button', {
+      name: `重试分支 ${gateBranchId}:gate`
+    }))
+
+    await waitFor(() => expect(api.retryWorkflowNode).toHaveBeenCalledWith(
+      task.id,
+      'gate',
+      gateBranchId
+    ))
+    await waitFor(() => expect(screen.getByTestId('node-detail').textContent)
+      .toContain('End after branch retry'))
   })
 
   it('switches an untouched draft immediately without changing the project default', async () => {
