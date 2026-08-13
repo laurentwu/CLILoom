@@ -505,6 +505,182 @@ describe('ProcessRunner interactive PTY lifecycle', () => {
     db.close()
   })
 
+  it('removes only the bare startup command echo before the interactive prompt', async () => {
+    const command = 'codex --yolo "${PROMPT_VALUE}"'
+    const displayCommand = 'codex --yolo "implement the task"'
+    const prompt = 'wty@host:/repo$ '
+    mocks.ptySpawn.mockReturnValue({
+      pid: 124,
+      onData: vi.fn((callback: (data: string) => void) => {
+        mocks.ptyDataHandlers.push(callback)
+      }),
+      onExit: vi.fn((callback: (event: { exitCode: number }) => void) => {
+        mocks.ptyExitHandlers.push(callback)
+      }),
+      write: vi.fn(),
+      kill: vi.fn()
+    })
+    const { db, runner } = createRunner()
+
+    const run = runner.run({
+      taskId: 'task-startup-echo',
+      nodeId: 'node-startup-echo',
+      kind: 'interactive',
+      command,
+      displayCommand,
+      cwd: '/repo'
+    })
+    mocks.ptyDataHandlers[0](command.slice(0, 12))
+    mocks.ptyDataHandlers[0](`${command.slice(12)}\r`)
+    mocks.ptyDataHandlers[0](`\n${prompt}${command}\r\ncommand output\r\n`)
+    mocks.ptyExitHandlers[0]({ exitCode: 0 })
+
+    const result = await run
+    const session = db.prepare('select transcript from terminal_sessions limit 1')
+      .get() as { transcript: string }
+    expect(session.transcript).toBe(`${prompt}${displayCommand}\r\ncommand output\r\n`)
+    expect(result.stdout).toBe(`${command}\r\n${prompt}${command}\r\ncommand output\r\n`)
+    db.close()
+  })
+
+  it('restores the bare startup command when the shell does not redraw it', async () => {
+    const command = 'codex --yolo "${PROMPT_VALUE}"'
+    const displayCommand = 'codex --yolo "implement the task"'
+    mocks.ptySpawn.mockReturnValue({
+      pid: 125,
+      onData: vi.fn((callback: (data: string) => void) => {
+        mocks.ptyDataHandlers.push(callback)
+      }),
+      onExit: vi.fn((callback: (event: { exitCode: number }) => void) => {
+        mocks.ptyExitHandlers.push(callback)
+      }),
+      write: vi.fn(),
+      kill: vi.fn()
+    })
+    const { db, runner } = createRunner()
+
+    const run = runner.run({
+      taskId: 'task-no-redraw',
+      nodeId: 'node-no-redraw',
+      kind: 'interactive',
+      command,
+      displayCommand,
+      cwd: '/repo'
+    })
+    mocks.ptyDataHandlers[0](`${command}\r\n$ ready\r\n`)
+    mocks.ptyExitHandlers[0]({ exitCode: 0 })
+
+    await run
+    const session = db.prepare('select transcript from terminal_sessions limit 1')
+      .get() as { transcript: string }
+    expect(session.transcript).toBe(`${displayCommand}\r\n$ ready\r\n`)
+    db.close()
+  })
+
+  it('releases a held startup-command prefix unchanged when later output diverges', async () => {
+    const command = 'codex --yolo'
+    const prefix = command.slice(0, 10)
+    mocks.ptySpawn.mockReturnValue({
+      pid: 126,
+      onData: vi.fn((callback: (data: string) => void) => {
+        mocks.ptyDataHandlers.push(callback)
+      }),
+      onExit: vi.fn((callback: (event: { exitCode: number }) => void) => {
+        mocks.ptyExitHandlers.push(callback)
+      }),
+      write: vi.fn(),
+      kill: vi.fn()
+    })
+    const { db, runner } = createRunner()
+
+    const run = runner.run({
+      taskId: 'task-diverging-prefix',
+      nodeId: 'node-diverging-prefix',
+      kind: 'interactive',
+      command,
+      cwd: '/repo'
+    })
+    mocks.ptyDataHandlers[0](prefix)
+    mocks.ptyDataHandlers[0]('x shell output\r\n')
+    mocks.ptyExitHandlers[0]({ exitCode: 0 })
+
+    await run
+    const session = db.prepare('select transcript from terminal_sessions limit 1')
+      .get() as { transcript: string }
+    expect(session.transcript).toBe(`${prefix}x shell output\r\n`)
+    db.close()
+  })
+
+  it('flushes an incomplete startup-command prefix once when the session is killed', async () => {
+    const command = 'codex --yolo "${PROMPT_VALUE}"'
+    const prefix = command.slice(0, 12)
+    mocks.ptySpawn.mockReturnValue({
+      pid: 127,
+      onData: vi.fn((callback: (data: string) => void) => {
+        mocks.ptyDataHandlers.push(callback)
+      }),
+      onExit: vi.fn((callback: (event: { exitCode: number }) => void) => {
+        mocks.ptyExitHandlers.push(callback)
+      }),
+      write: vi.fn(),
+      kill: vi.fn()
+    })
+    const { db, runner } = createRunner()
+
+    const run = runner.run({
+      taskId: 'task-incomplete-echo',
+      nodeId: 'node-incomplete-echo',
+      kind: 'interactive',
+      command,
+      displayCommand: 'codex --yolo "implement the task"',
+      cwd: '/repo'
+    })
+    const sessionId = (db.prepare('select id from terminal_sessions limit 1')
+      .get() as { id: string }).id
+    mocks.ptyDataHandlers[0](prefix)
+
+    await expect(runner.kill(sessionId)).resolves.toBe(true)
+    await expect(run).resolves.toMatchObject({ status: 'killed' })
+    const session = db.prepare('select transcript from terminal_sessions where id = ?')
+      .get(sessionId) as { transcript: string }
+    expect(session.transcript).toBe(prefix)
+    db.close()
+  })
+
+  it('preserves initial interactive output that is not the bare startup command', async () => {
+    mocks.ptySpawn.mockReturnValue({
+      pid: 128,
+      onData: vi.fn((callback: (data: string) => void) => {
+        mocks.ptyDataHandlers.push(callback)
+      }),
+      onExit: vi.fn((callback: (event: { exitCode: number }) => void) => {
+        mocks.ptyExitHandlers.push(callback)
+      }),
+      write: vi.fn(),
+      kill: vi.fn()
+    })
+    const { db, runner } = createRunner()
+
+    const run = runner.run({
+      taskId: 'task-startup-output',
+      nodeId: 'node-startup-output',
+      kind: 'interactive',
+      command: 'codex --yolo',
+      cwd: '/repo'
+    })
+    mocks.ptyDataHandlers[0]('shell startup banner\r\n')
+    mocks.ptyDataHandlers[0]('wty@host:/repo$ codex --yolo\r\n')
+    mocks.ptyExitHandlers[0]({ exitCode: 0 })
+
+    await run
+    const session = db.prepare('select transcript from terminal_sessions limit 1')
+      .get() as { transcript: string }
+    expect(session.transcript).toBe(
+      'shell startup banner\r\nwty@host:/repo$ codex --yolo\r\n'
+    )
+    db.close()
+  })
+
   it('writes raw bytes only to interactive PTY sessions', async () => {
     const sends: Array<{ channel: string; payload: { id: string; kind: string } }> = []
     const { db, runner } = createRunner(() => ({ webContents: { send: (channel: string, payload: unknown) => { sends.push({ channel, payload: payload as { id: string; kind: string } }) } } }))
