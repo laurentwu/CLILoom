@@ -134,21 +134,22 @@ function resizeRemoteTerminal(entry: TerminalEntry, cols: number, rows: number):
   else window.cliLoom?.resizeProcess(entry.sessionId, cols, rows)
 }
 
-function fitAttachedTerminal(entry: TerminalEntry, token: symbol): void {
+function fitAttachedTerminal(entry: TerminalEntry, token: symbol): boolean {
   const attachment = entry.attachment
-  if (!attachment || attachment.token !== token) return
+  if (!attachment || attachment.token !== token) return false
   const { host } = attachment
-  if (!host.isConnected || host.clientWidth <= 0 || host.clientHeight <= 0) return
+  if (!host.isConnected || host.clientWidth <= 0 || host.clientHeight <= 0) return false
 
   try {
     entry.fit.fit()
   } catch {
-    return
+    return false
   }
 
   const cols = entry.terminal.cols
   const rows = entry.terminal.rows
   if (cols > 0 && rows > 0) resizeRemoteTerminal(entry, cols, rows)
+  return true
 }
 
 function queryInputReadiness(entry: TerminalEntry): void {
@@ -413,6 +414,7 @@ export const XtermTerminal = forwardRef<XtermTerminalHandle, {
   session: Session
   readOnly?: boolean
   persistent?: boolean
+  refitOnWindowFocus?: boolean
   onInputReadyChange?: (ready: boolean) => void
   onSendInput?: (sessionId: string, input: string) => void
   transport?: TerminalTransport
@@ -420,6 +422,7 @@ export const XtermTerminal = forwardRef<XtermTerminalHandle, {
   session,
   readOnly = false,
   persistent = false,
+  refitOnWindowFocus = false,
   onInputReadyChange,
   onSendInput,
   transport
@@ -520,6 +523,32 @@ export const XtermTerminal = forwardRef<XtermTerminalHandle, {
     syncTerminalAttachment(entry)
     syncedStateRef.current = { persistent, readOnly }
   }, [persistent, readOnly])
+
+  useEffect(() => {
+    if (!refitOnWindowFocus) return
+
+    let animationFrame: number | null = null
+    const scheduleFit = () => {
+      if (animationFrame !== null) window.cancelAnimationFrame(animationFrame)
+      animationFrame = window.requestAnimationFrame(() => {
+        animationFrame = null
+        const entry = entryRef.current
+        const attachment = attachmentRef.current
+        if (!entry || !attachment) return
+        if (fitAttachedTerminal(entry, attachment.token)) {
+          entry.terminal.refresh(0, entry.terminal.rows - 1)
+        }
+      })
+    }
+
+    // Electron 隐藏窗口显示时不会改变 DOM 尺寸，下一帧主动测量并刷新视口可修正 Windows 下的滚动条布局。
+    window.addEventListener('focus', scheduleFit)
+    scheduleFit()
+    return () => {
+      window.removeEventListener('focus', scheduleFit)
+      if (animationFrame !== null) window.cancelAnimationFrame(animationFrame)
+    }
+  }, [refitOnWindowFocus, session.id, transport])
 
   return <div className="xterm-host h-full w-full min-h-0 min-w-0 max-w-full overflow-hidden" ref={hostRef} />
 })

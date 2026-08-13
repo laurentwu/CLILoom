@@ -202,7 +202,7 @@ export function AssistantApp({
         </main>
       ) : (
         <main className="relative min-h-0 flex-1 overflow-hidden bg-[var(--terminal)] p-2">
-          <XtermTerminal session={session} transport={transport} />
+          <XtermTerminal refitOnWindowFocus session={session} transport={transport} />
           {(status.state === 'failed' || status.state === 'exited') && (
             <div className="absolute right-4 bottom-4 left-4 flex items-center justify-between gap-3 rounded-lg border bg-card/95 p-3 text-card-foreground shadow-lg backdrop-blur-sm">
               <div className="min-w-0">
