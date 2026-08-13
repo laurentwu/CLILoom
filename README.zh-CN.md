@@ -24,19 +24,19 @@ CLILoom 是一款用于可视化编排、运行和管理 AI CLI 开发任务的�
 
 ### 主工作区
 
-![CLILoom 主工作区，展示项目、任务历史和可视化工作流](docs/images/zh-CN/main-workspace.png)
+![CLILoom 主工作区，展示项目、任务历史和可视化工作流](docs/images/main-workspace.webp)
 
 在同一个工作空间中管理项目、历史任务、工作流执行和终端输出。
 
 ### 流程设计器
 
-![CLILoom 流程设计器，展示包含并行质量检查的工作流](docs/images/zh-CN/workflow-designer.png)
+![CLILoom 流程设计器，展示包含并行质量检查的工作流](docs/images/workflow-designer.webp)
 
 通过排列节点、连接路径和编辑执行设置来构建可复用的工作流。
 
 ### AI CLI 助手
 
-![CLILoom 助手 CLI 配置窗口](docs/images/zh-CN/assistant.png)
+![CLILoom 助手 CLI 配置窗口](docs/images/assistant.webp)
 
 配置你熟悉的 AI CLI，并在独立的交互式终端窗口中运行它。
 
