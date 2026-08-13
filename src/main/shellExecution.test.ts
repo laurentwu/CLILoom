@@ -177,12 +177,33 @@ describe('shell execution adapters', () => {
         platform: 'win32'
       })
 
-      expect(prepared.command).toBe(
-        'echo !CLILOOM_INTERNAL_VALUE_0! !CLILOOM_INTERNAL_VALUE_0!'
-      )
+      expect(prepared.command).toBe(value === ''
+        ? 'echo  '
+        : 'echo !CLILOOM_INTERNAL_VALUE_0! !CLILOOM_INTERNAL_VALUE_0!')
       expect(prepared.command).not.toContain(value || '<empty-value>')
       expect(prepared.env.CLILOOM_INTERNAL_VALUE_0).toBe(value)
     }
+  })
+
+  it('renders an empty cmd binding without relying on delayed environment expansion', () => {
+    const prepared = prepareShellCommand({
+      shell: shells.cmd,
+      command: {
+        version: 1,
+        segments: [
+          { type: 'literal', value: 'echo(__START__' },
+          { type: 'binding', name: 'CLILOOM_INTERNAL_VALUE_0' },
+          { type: 'literal', value: '__END__' }
+        ],
+        bindings: { CLILOOM_INTERNAL_VALUE_0: '' }
+      },
+      baseEnvironment: {},
+      platform: 'win32'
+    })
+
+    expect(prepared.command).toBe('echo(__START____END__')
+    expect(prepared.command).not.toContain('CLILOOM_INTERNAL_VALUE_0')
+    expect(prepared.env.CLILOOM_INTERNAL_VALUE_0).toBe('')
   })
 
   it('rejects cmd templates whose literal syntax conflicts with delayed expansion', () => {

@@ -9,6 +9,8 @@ const TASKKILL_TIMEOUT_MS = 2_000
 export type ProcessTreeHandle = {
   pid?: number
   kill: (signal?: 'SIGTERM' | 'SIGKILL') => unknown
+  onData?: unknown
+  onExit?: (listener: () => void) => { dispose?: () => void } | void
 }
 
 export type ProcessTerminationResult = {
@@ -38,7 +40,14 @@ export async function terminateProcessTree(
   if (typeof pid !== 'number' || !Number.isInteger(pid) || pid <= 0) {
     return { terminated: false, error: t('errors:termination.invalidPid') }
   }
-  if (platform === 'win32') return terminateWindowsProcessTree(handle, pid, options.taskkill)
+  if (platform === 'win32') {
+    return terminateWindowsProcessTree(
+      handle,
+      pid,
+      options.graceMs ?? DEFAULT_TERMINATION_GRACE_MS,
+      options.taskkill
+    )
+  }
   return terminatePosixProcessTree(
     handle,
     pid,
@@ -50,8 +59,45 @@ export async function terminateProcessTree(
 async function terminateWindowsProcessTree(
   handle: ProcessTreeHandle,
   pid: number,
+  graceMs: number,
   options?: TaskkillOptions
 ): Promise<ProcessTerminationResult> {
+  if (isPtyHandle(handle)) {
+    let rootAlreadyExited = false
+    try {
+      rootAlreadyExited = !(options?.isProcessAlive ?? isProcessAlive)(pid)
+    } catch {
+      // If liveness cannot be checked, keep the full termination path.
+    }
+    if (rootAlreadyExited) return runTaskkill(pid, options)
+
+    const exitWaiter = createPtyExitWaiter(handle, graceMs)
+    const ptyErrors = exitWaiter.registrationError ? [exitWaiter.registrationError] : []
+    try {
+      // node-pty snapshots the attached console processes before closing the
+      // pseudoconsole. Subscribe first so a fast exit cannot be missed.
+      handle.kill()
+    } catch (error) {
+      ptyErrors.push(error instanceof Error ? error.message : String(error))
+      exitWaiter.cancel()
+    }
+
+    // Start taskkill immediately after node-pty has begun its own cleanup. A
+    // PTY exit confirms only the root shell; it does not prove that detached
+    // descendants are gone, so the bounded /T sweep remains authoritative.
+    const [taskkill] = await Promise.all([
+      runTaskkill(pid, options),
+      exitWaiter.promise
+    ])
+    if (taskkill.terminated) return taskkill
+    return {
+      terminated: false,
+      error: [...ptyErrors, taskkill.error].filter(Boolean).join('; ') || undefined
+    }
+  }
+
+  // A regular ChildProcess does not kill its descendants. Keep the root alive
+  // until taskkill has captured and terminated the complete parent/child tree.
   const taskkill = await runTaskkill(pid, options)
   if (taskkill.terminated) {
     try {
@@ -61,6 +107,55 @@ async function terminateWindowsProcessTree(
     }
   }
   return taskkill
+}
+
+function isPtyHandle(
+  handle: ProcessTreeHandle
+): handle is ProcessTreeHandle & Required<Pick<ProcessTreeHandle, 'onExit'>> {
+  return typeof handle.onData === 'function' && typeof handle.onExit === 'function'
+}
+
+function createPtyExitWaiter(
+  handle: ProcessTreeHandle & Required<Pick<ProcessTreeHandle, 'onExit'>>,
+  timeoutMs: number
+): {
+    promise: Promise<boolean>
+    cancel: () => void
+    registrationError?: string
+  } {
+  let settled = false
+  let subscription: { dispose?: () => void } | void
+  let timer: NodeJS.Timeout | undefined
+  let resolvePromise: (exited: boolean) => void = () => undefined
+  const promise = new Promise<boolean>((resolve) => {
+    resolvePromise = resolve
+  })
+  const settle = (exited: boolean) => {
+    if (settled) return
+    settled = true
+    if (timer) clearTimeout(timer)
+    try {
+      subscription?.dispose?.()
+    } catch {
+      // Listener disposal is best-effort after the PTY has exited.
+    }
+    resolvePromise(exited)
+  }
+
+  let registrationError: string | undefined
+  try {
+    subscription = handle.onExit(() => settle(true))
+    if (settled) subscription?.dispose?.()
+  } catch (error) {
+    registrationError = error instanceof Error ? error.message : String(error)
+    settle(false)
+  }
+  if (!settled) {
+    if (timeoutMs > 0) timer = setTimeout(() => settle(false), timeoutMs)
+    else settle(false)
+  }
+
+  return { promise, cancel: () => settle(false), registrationError }
 }
 
 async function terminatePosixProcessTree(

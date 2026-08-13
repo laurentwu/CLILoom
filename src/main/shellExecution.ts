@@ -72,7 +72,13 @@ export function renderShellCommand(command: ShellNeutralCommand, family: ShellFa
   return validated.segments.map((segment) => {
     if (segment.type === 'literal') return segment.value
     if (family === 'powershell') return `\${env:${segment.name}}`
-    if (family === 'cmd') return `!${segment.name}!`
+    if (family === 'cmd') {
+      // cmd.exe treats an empty environment entry as undefined on some Windows
+      // versions, leaving its delayed-expansion token visible in the output.
+      // Rendering an empty binding directly is safe because it contributes no
+      // shell source or metacharacters.
+      return validated.bindings[segment.name] === '' ? '' : `!${segment.name}!`
+    }
     return `\${${segment.name}}`
   }).join('')
 }
@@ -257,7 +263,8 @@ function validateCmdCommand(
     if (value.length > CMD_MAX_ENV_VALUE_CHARS) {
       throw new ShellCommandError(t('errors:shell.cmdValueTooLarge', { limit: CMD_MAX_ENV_VALUE_CHARS }))
     }
-    expandedLength += value.length - (`!${segment.name}!`).length
+    const renderedBindingLength = value === '' ? 0 : (`!${segment.name}!`).length
+    expandedLength += value.length - renderedBindingLength
   }
 
   const oversizedEnvironmentEntry = Object.entries(environment).find(([, value]) => (
