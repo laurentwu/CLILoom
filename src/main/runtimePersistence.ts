@@ -68,7 +68,7 @@ type NodeRunRow = {
 export function persistWorkflowRuntimeState(
   db: AppDatabase,
   state: WorkflowRuntimeState,
-  taskStatus: string,
+  taskStatus: WorkflowRuntimeStatus,
   workflow: WorkflowDefinition,
   workflowVersion?: number
 ): WorkflowRuntimeTaskSnapshot {

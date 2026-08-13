@@ -8,7 +8,16 @@ import type {
   WorkflowDefinition,
   WorkflowNode
 } from '../shared/workflow'
-import type { WorkflowRuntimeBranchRun } from '../shared/workflowRuntime'
+import {
+  isRetryableRunStatus,
+  type WorkflowRuntimeBranchRun
+} from '../shared/workflowRuntime'
+import {
+  isTerminalSessionEnded,
+  isTerminalSessionRunning,
+  type TerminalSessionKind,
+  type TerminalSessionStatus
+} from '../shared/terminalSession'
 import type { TranslationKey } from '../shared/i18n/types'
 import { isAppError } from '../shared/appError'
 import { getAutomaticTaskTitle } from '../shared/taskTitle'
@@ -68,25 +77,6 @@ export function coerceValue(value: unknown, type: string): VariableValue {
   }
   if (value === undefined || value === null) return ''
   return String(value)
-}
-
-export type NodeStopTarget =
-  | { kind: 'terminal-session'; sessionId: string }
-  | { kind: 'unavailable' }
-  | { kind: 'workflow' }
-
-export function getNodeStopTarget(node: WorkflowNode, sessions: TerminalSession[]): NodeStopTarget {
-  if (node.type === 'interactive-terminal' || node.type === 'non-interactive-terminal') {
-    const sessionKind = node.type === 'interactive-terminal' ? 'interactive' : 'non-interactive'
-    const session = sessions.find((item) =>
-      item.node_id === node.id &&
-      item.kind === sessionKind &&
-      item.status.startsWith('running')
-    )
-    if (session) return { kind: 'terminal-session', sessionId: session.id }
-    return { kind: 'unavailable' }
-  }
-  return { kind: 'workflow' }
 }
 
 export function getTaskTitle(
@@ -189,10 +179,12 @@ export function getNodeOperationState({
   isWaitingForInput: boolean
   branchRuns: Record<string, WorkflowRuntimeBranchRun>
 }): NodeOperationState {
-  const activeBranch = Object.values(branchRuns).find((branch) =>
-    branch.currentNodeId === nodeId &&
-    (branch.status === 'running' || branch.status === 'waiting-input')
-  )
+  const matchingBranches = Object.values(branchRuns).filter((branch) => (
+    branch.currentNodeId === nodeId
+  ))
+  const activeBranch = matchingBranches.find((branch) => (
+    branch.status === 'running' || branch.status === 'waiting-input'
+  )) ?? matchingBranches.find((branch) => isRetryableRunStatus(branch.status))
 
   if (activeBranch) {
     return {
@@ -262,10 +254,10 @@ export type TerminalSession = {
   id: string
   task_id: string
   node_id: string
-  kind: string
+  kind: TerminalSessionKind
   command: string
   cwd: string
-  status: string
+  status: TerminalSessionStatus
   transcript: string | null
   transcript_cursor?: number | null
   execution_target?: {
@@ -275,9 +267,9 @@ export type TerminalSession = {
 }
 
 export function canRetryTerminalSession(session: TerminalSession): boolean {
-  return !session.status.startsWith('running')
+  return isTerminalSessionEnded(session.status)
 }
 
 export function canAcceptTerminalInput(session: TerminalSession): boolean {
-  return session.kind === 'interactive' && session.status.startsWith('running')
+  return session.kind === 'interactive' && isTerminalSessionRunning(session.status)
 }

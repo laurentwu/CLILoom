@@ -350,6 +350,9 @@ export default {
     }
   },
   workflow: {
+    runtimeAction: {
+      stop: '停止工作流'
+    },
     delete: {
       title: '删除工作流',
       confirm: '删除工作流“{{name}}”？',
@@ -627,6 +630,11 @@ export default {
     }
   },
   terminal: {
+    action: {
+      endAndContinue: '结束终端并继续',
+      rerunCommand: '重新运行命令',
+      stopCommand: '停止命令'
+    },
     shell: {
       unavailable: '{{name}}（不可用）'
     },
@@ -636,8 +644,9 @@ export default {
     },
     retry: {
       aria: '重试终端命令',
-      tooltip: '清屏并重新运行当前命令',
-      tooltipTarget: '清屏并在 {{target}} 中重新运行'
+      workflowTooltip: '重试此节点并继续原工作流',
+      rerunTooltip: '独立重新运行这条历史命令，不改变原工作流',
+      rerunTooltipTarget: '在 {{target}} 中独立重新运行这条历史命令，不改变原工作流'
     },
     environment: {
       label: '环境：{{target}}'
@@ -708,6 +717,9 @@ export default {
     }
   },
   node: {
+    action: {
+      retry: '重试节点'
+    },
     status: {
       withExitCode: '{{label}} · exit {{code}}'
     },

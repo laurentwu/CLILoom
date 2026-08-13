@@ -77,7 +77,7 @@ export type WorkflowRuntimeTaskSnapshot = {
   id: string
   project_id: string
   title: string
-  status: string
+  status: WorkflowRuntimeStatus
   created_at?: string
   updated_at?: string
 }
@@ -146,7 +146,10 @@ type WorkflowRuntimeHookResult = {
 
 export type WorkflowRuntimeAdapter = {
   emitState: (state: WorkflowRuntimeState) => void
-  persistTask: (state: WorkflowRuntimeState, taskStatus: string) => Promise<WorkflowRuntimeTaskSnapshot | undefined>
+  persistTask: (
+    state: WorkflowRuntimeState,
+    taskStatus: WorkflowRuntimeStatus
+  ) => Promise<WorkflowRuntimeTaskSnapshot | undefined>
   runProcess: (request: WorkflowRuntimeProcessRequest) => Promise<WorkflowRuntimeProcessResult>
   runHook: (request: WorkflowRuntimeHookRequest) => Promise<WorkflowRuntimeHookResult>
   killTask: (taskId: string) => Promise<number>
@@ -251,14 +254,49 @@ export class WorkflowRuntimeEngine {
     return this.serialize(() => this.updateVariablesInternal(variables, branchId))
   }
 
+  canRetryNode(nodeId: string, branchId?: string): boolean {
+    const run = this.state.nodeRuns[nodeId]
+    if (!this.findNode(nodeId) || !run || !isRetryableRunStatus(run.status)) return false
+
+    const branch = this.findBranchForNode(nodeId, branchId)
+    if (branch) return isRetryableRunStatus(branch.status)
+    if (branchId) return false
+    return this.state.currentNodeId === nodeId && isRetryableRunStatus(this.state.status)
+  }
+
+  async beginNodeRetry(nodeId: string, branchId?: string): Promise<boolean> {
+    return this.serialize(() => this.beginNodeRetryInternal(nodeId, branchId))
+  }
+
+  async continueNodeRetry(nodeId: string, branchId?: string): Promise<WorkflowRuntimeState> {
+    return this.serialize(() => this.continueNodeRetryInternal(nodeId, branchId))
+  }
+
+  private async continueNodeRetryInternal(
+    nodeId: string,
+    branchId?: string
+  ): Promise<WorkflowRuntimeState> {
+    const run = this.state.nodeRuns[nodeId]
+    if (this.stopped || run?.status !== 'running') return this.getState()
+
+    const branch = this.findBranchForNode(nodeId, branchId)
+    if (branch) {
+      if (branch.status !== 'running') return this.getState()
+      await this.runBranch(branch)
+      await this.updateAfterSplit(branch.splitNodeId)
+      if (this.state.status === 'running' && this.state.activeBranches.length === 0) {
+        await this.runLoop()
+      }
+    } else if (this.state.currentNodeId === nodeId && this.state.status === 'running') {
+      await this.runLoop()
+    }
+
+    return this.getState()
+  }
+
   canRetryTerminalNode(nodeId: string): boolean {
     const node = this.findNode(nodeId)
-    const run = this.state.nodeRuns[nodeId]
-    if (!node?.type.includes('terminal') || !run || !isRetryableStatus(run.status)) return false
-
-    const branch = Object.values(this.state.branchRuns).find((item) => item.currentNodeId === nodeId)
-    if (branch) return isRetryableStatus(branch.status)
-    return this.state.currentNodeId === nodeId && isRetryableStatus(this.state.status)
+    return Boolean(node?.type.includes('terminal') && this.canRetryNode(nodeId))
   }
 
   async beginTerminalRetry(nodeId: string, sessionId: string): Promise<boolean> {
@@ -267,10 +305,23 @@ export class WorkflowRuntimeEngine {
 
   private async beginTerminalRetryInternal(nodeId: string, sessionId: string): Promise<boolean> {
     if (!this.canRetryTerminalNode(nodeId)) return false
+    return this.beginNodeRetryInternal(nodeId, undefined, sessionId)
+  }
 
-    const branch = Object.values(this.state.branchRuns).find((item) => item.currentNodeId === nodeId)
+  private async beginNodeRetryInternal(
+    nodeId: string,
+    branchId?: string,
+    sessionId?: string
+  ): Promise<boolean> {
+    if (!this.canRetryNode(nodeId, branchId)) return false
+
+    const branch = this.findBranchForNode(nodeId, branchId)
     this.stopped = false
-    this.state.nodeRuns[nodeId] = { nodeId, status: 'running', sessionId }
+    this.state.nodeRuns[nodeId] = {
+      nodeId,
+      status: 'running',
+      ...(sessionId ? { sessionId } : {})
+    }
     this.state.status = 'running'
     this.state.workflowCompleted = false
     delete this.state.error
@@ -278,6 +329,8 @@ export class WorkflowRuntimeEngine {
     if (branch) {
       branch.status = 'running'
       delete branch.error
+      delete branch.reachedJoinEdgeId
+      delete branch.reachedJoinNodeId
       delete this.state.parallelResults[branch.splitNodeId]
       if (this.state.lastJoinResultSplitNodeId === branch.splitNodeId) {
         delete this.state.lastJoinResultSplitNodeId
@@ -989,7 +1042,7 @@ export class WorkflowRuntimeEngine {
     await this.persistAndEmit('failed')
   }
 
-  private async persistAndEmit(taskStatus: string): Promise<void> {
+  private async persistAndEmit(taskStatus: WorkflowRuntimeStatus): Promise<void> {
     const task = await this.adapter.persistTask(this.getState(), taskStatus)
     if (task) this.state.task = task
     this.adapter.emitState(this.getState())
@@ -1059,6 +1112,20 @@ export class WorkflowRuntimeEngine {
     return this.tr('status:runtime.nodeExitCode', { name, code: String(result.exitCode ?? 'null') }, `${name}: exit code ${result.exitCode ?? 'null'}`)
   }
 
+  private findBranchForNode(
+    nodeId: string,
+    branchId?: string
+  ): WorkflowRuntimeBranchRun | undefined {
+    if (branchId) {
+      const branch = this.state.branchRuns[branchId]
+      return branch?.currentNodeId === nodeId ? branch : undefined
+    }
+    return Object.values(this.state.branchRuns).find((branch) => (
+      branch.currentNodeId === nodeId &&
+      (branch.status === 'running' || isRetryableRunStatus(branch.status))
+    ))
+  }
+
   private findNode(nodeId: string): WorkflowNode | undefined {
     return this.workflow.nodes.find((node) => node.id === nodeId)
   }
@@ -1068,7 +1135,7 @@ function isEmptyValue(value: VariableValue | undefined): boolean {
   return value === undefined || value === null || value === ''
 }
 
-function isRetryableStatus(status: NodeRunStatus | WorkflowRuntimeStatus): boolean {
+export function isRetryableRunStatus(status: NodeRunStatus | WorkflowRuntimeStatus): boolean {
   return status === 'failed' || status === 'stopped' || status === 'interrupted'
 }
 

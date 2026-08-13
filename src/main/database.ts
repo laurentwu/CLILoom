@@ -34,6 +34,8 @@ import { normalizeProjectName } from '../shared/projectName'
 import { normalizeTaskTitle } from '../shared/taskTitle'
 import { NotFoundError } from './errors'
 import { t } from './i18n'
+import type { TerminalSessionKind, TerminalSessionStatus } from '../shared/terminalSession'
+import type { WorkflowRuntimeStatus } from '../shared/workflowRuntime'
 
 export type AppDatabase = Database.Database
 export type ProjectRecord = {
@@ -49,7 +51,7 @@ export type TaskRecord = {
   id: string
   project_id: string
   title: string
-  status: string
+  status: WorkflowRuntimeStatus
   context_json: string
   created_at: string
   updated_at: string
@@ -700,10 +702,10 @@ export type TerminalSessionRecord = {
   id: string
   task_id: string
   node_id: string
-  kind: string
+  kind: TerminalSessionKind
   command: string
   cwd: string
-  status: string
+  status: TerminalSessionStatus
   transcript: string | null
   transcript_cursor?: number | null
   execution_target?: TerminalExecutionTargetMetadata

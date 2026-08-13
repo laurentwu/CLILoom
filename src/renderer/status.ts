@@ -39,11 +39,11 @@ function getWorkflowStatusPresentation(status: string): StatusPresentation {
 }
 
 function getTerminalStatusPresentation(status: string): StatusPresentation {
-  if (status.startsWith('running')) return workflowStatusPresentations.running
-  if (status.startsWith('closed')) return { labelKey: 'status:terminal.closed', tone: 'completed' }
-  if (status.startsWith('failed')) return workflowStatusPresentations.failed
-  if (status.startsWith('killed')) return workflowStatusPresentations.stopped
-  if (status.startsWith('interrupted')) return workflowStatusPresentations.interrupted
+  if (status === 'running') return workflowStatusPresentations.running
+  if (status === 'closed') return { labelKey: 'status:terminal.closed', tone: 'completed' }
+  if (status === 'failed') return workflowStatusPresentations.failed
+  if (status === 'killed') return workflowStatusPresentations.stopped
+  if (status === 'interrupted') return workflowStatusPresentations.interrupted
   return { label: status, tone: 'neutral' }
 }
 

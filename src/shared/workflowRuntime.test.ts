@@ -1155,6 +1155,200 @@ describe('WorkflowRuntimeEngine', () => {
     expect(engine.getState().nodeRuns.end.status).toBe('completed')
   })
 
+  it('retries a failed non-terminal node without replacing the workflow state', async () => {
+    const workflow: WorkflowDefinition = {
+      id: 'wf-retry-gateway',
+      name: 'Retry gateway',
+      nodes: [
+        { id: 'gateway', type: 'exclusive-gateway', name: 'Gateway', config: {} },
+        { id: 'end', type: 'end', name: 'End', config: {} }
+      ],
+      edges: [{ id: 'gateway-end', from: 'gateway', to: 'end', isDefault: true }]
+    }
+    const { adapter } = createAdapter()
+    const engine = new WorkflowRuntimeEngine({
+      taskId: 'task-retry-gateway',
+      projectId: 'project-1',
+      projectDir: '/repo',
+      workflow,
+      variables: { preserved: 'value' },
+      initialState: {
+        taskId: 'task-retry-gateway',
+        projectId: 'project-1',
+        projectDir: '/repo',
+        workflowId: workflow.id,
+        status: 'failed',
+        currentNodeId: 'gateway',
+        variables: { preserved: 'value' },
+        nodeRuns: {
+          gateway: { nodeId: 'gateway', status: 'failed', stderr: 'old failure' }
+        },
+        executionOrder: ['gateway'],
+        activeBranches: [],
+        branchRuns: {},
+        parallelResults: {},
+        workflowCompleted: false,
+        error: 'old failure'
+      }
+    }, adapter)
+
+    await expect(engine.beginNodeRetry('gateway')).resolves.toBe(true)
+    expect(engine.getState()).toMatchObject({
+      status: 'running',
+      variables: { preserved: 'value' },
+      nodeRuns: { gateway: { status: 'running' } }
+    })
+
+    await engine.continueNodeRetry('gateway')
+
+    expect(engine.getState()).toMatchObject({
+      status: 'completed',
+      workflowCompleted: true,
+      variables: { preserved: 'value' },
+      nodeRuns: {
+        gateway: { status: 'completed' },
+        end: { status: 'completed' }
+      }
+    })
+    expect(engine.getState().error).toBeUndefined()
+  })
+
+  it('retries a failed non-terminal branch and rejoins the completed sibling', async () => {
+    const workflow: WorkflowDefinition = {
+      id: 'wf-retry-parallel-gateway',
+      name: 'Retry parallel gateway',
+      nodes: [
+        { id: 'split', type: 'parallel-gateway', name: 'Split', config: { mode: 'split' } },
+        { id: 'gate', type: 'exclusive-gateway', name: 'Gate', config: {} },
+        { id: 'other', type: 'non-interactive-terminal', name: 'Other', config: { command: 'other', cwd: '${sys_project_dir}', successExitCodes: [0] } },
+        { id: 'join', type: 'parallel-gateway', name: 'Join', config: { mode: 'join', joinIncomingEdgeIds: ['gate-join', 'other-join'] } },
+        { id: 'end', type: 'end', name: 'End', config: {} }
+      ],
+      edges: [
+        { id: 'split-gate', from: 'split', to: 'gate' },
+        { id: 'split-other', from: 'split', to: 'other' },
+        { id: 'gate-join', from: 'gate', to: 'join', isDefault: true },
+        { id: 'other-join', from: 'other', to: 'join' },
+        { id: 'join-end', from: 'join', to: 'end' }
+      ]
+    }
+    const gateBranchId = 'split:split-gate'
+    const otherBranchId = 'split:split-other'
+    const { adapter, processRequests } = createAdapter()
+    const engine = new WorkflowRuntimeEngine({
+      taskId: 'task-retry-parallel-gateway',
+      projectId: 'project-1',
+      projectDir: '/repo',
+      workflow,
+      variables: { route: 'default' },
+      initialState: {
+        taskId: 'task-retry-parallel-gateway',
+        projectId: 'project-1',
+        projectDir: '/repo',
+        workflowId: workflow.id,
+        status: 'failed',
+        currentNodeId: 'split',
+        variables: { route: 'default' },
+        nodeRuns: {
+          split: { nodeId: 'split', status: 'completed' },
+          gate: { nodeId: 'gate', status: 'failed', stderr: 'old failure' },
+          other: { nodeId: 'other', status: 'completed', sessionId: 'session-other', exitCode: 0 }
+        },
+        executionOrder: ['split', 'gate', 'other'],
+        activeBranches: [],
+        branchRuns: {
+          [gateBranchId]: {
+            branchId: gateBranchId,
+            splitNodeId: 'split',
+            entryEdgeId: 'split-gate',
+            entryNodeId: 'gate',
+            currentNodeId: 'gate',
+            status: 'failed',
+            nodeIds: ['gate'],
+            reachedJoinEdgeId: 'gate-join',
+            reachedJoinNodeId: 'join',
+            variables: { route: 'default' },
+            error: 'old failure'
+          },
+          [otherBranchId]: {
+            branchId: otherBranchId,
+            splitNodeId: 'split',
+            entryEdgeId: 'split-other',
+            entryNodeId: 'other',
+            currentNodeId: 'join',
+            status: 'completed',
+            nodeIds: ['other'],
+            reachedJoinEdgeId: 'other-join',
+            reachedJoinNodeId: 'join',
+            variables: { route: 'default' }
+          }
+        },
+        parallelResults: {
+          split: {
+            splitNodeId: 'split',
+            joinNodeId: 'join',
+            requiredIncomingEdgeIds: ['gate-join', 'other-join'],
+            branches: {}
+          }
+        },
+        lastJoinResultSplitNodeId: 'split',
+        workflowCompleted: false,
+        error: 'old failure'
+      }
+    }, adapter)
+
+    expect(engine.canRetryNode('gate', 'missing-branch')).toBe(false)
+    await expect(engine.beginNodeRetry('gate', 'missing-branch')).resolves.toBe(false)
+    expect(engine.canRetryNode('other', gateBranchId)).toBe(false)
+
+    await expect(engine.beginNodeRetry('gate', gateBranchId)).resolves.toBe(true)
+    const started = engine.getState()
+    expect(started).toMatchObject({
+      status: 'running',
+      activeBranches: [gateBranchId],
+      branchRuns: {
+        [gateBranchId]: {
+          status: 'running',
+          currentNodeId: 'gate'
+        }
+      },
+      parallelResults: {}
+    })
+    expect(started.branchRuns[gateBranchId]).not.toHaveProperty('reachedJoinEdgeId')
+    expect(started.branchRuns[gateBranchId]).not.toHaveProperty('reachedJoinNodeId')
+    expect(started.lastJoinResultSplitNodeId).toBeUndefined()
+
+    await engine.continueNodeRetry('gate', gateBranchId)
+
+    const retried = engine.getState()
+    expect(retried).toMatchObject({
+      status: 'completed',
+      workflowCompleted: true,
+      branchRuns: {
+        [gateBranchId]: {
+          status: 'completed',
+          reachedJoinEdgeId: 'gate-join',
+          reachedJoinNodeId: 'join'
+        },
+        [otherBranchId]: {
+          status: 'completed',
+          reachedJoinEdgeId: 'other-join'
+        }
+      },
+      nodeRuns: {
+        gate: { status: 'completed' },
+        other: { status: 'completed' },
+        join: { status: 'completed' },
+        end: { status: 'completed' }
+      }
+    })
+    expect(retried.parallelResults.split.branches).toMatchObject({
+      'split-gate': { status: 'completed', reachedJoinEdgeId: 'gate-join' },
+      'split-other': { status: 'completed', reachedJoinEdgeId: 'other-join' }
+    })
+    expect(processRequests).toHaveLength(0)
+  })
+
   it('rejoins parallel branches after every failed terminal retry succeeds', async () => {
     const workflow: WorkflowDefinition = {
       id: 'wf-retry-parallel',

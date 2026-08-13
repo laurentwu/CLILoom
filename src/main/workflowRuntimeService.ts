@@ -26,6 +26,7 @@ import {
   type ResolvedExecutionTarget,
   type WorkflowExecutionContext
 } from '../shared/shell'
+import type { TerminalRetryMode } from '../shared/terminalSession'
 
 type WorkflowExecutionTargetService = {
   resolveEffectiveTarget: () => Promise<ResolvedExecutionTarget>
@@ -177,7 +178,44 @@ export class WorkflowRuntimeService {
       this.pendingTerminalRetries.size > 0
   }
 
-  async retryTerminal(sessionId: string): Promise<string> {
+  async retryNode(
+    taskId: string,
+    nodeId: string,
+    branchId?: string
+  ): Promise<WorkflowRuntimeState> {
+    return this.serializeTask(taskId, () => this.retryNodeInternal(taskId, nodeId, branchId))
+  }
+
+  private async retryNodeInternal(
+    taskId: string,
+    nodeId: string,
+    branchId?: string
+  ): Promise<WorkflowRuntimeState> {
+    this.assertRuntimeAvailable()
+    this.cancelledTaskLaunches.delete(taskId)
+    const engine = this.getEngineForNodeRetry(taskId, nodeId, branchId)
+    if (!engine) throw new Error(t('errors:workflowRuntime.nodeStateChanged'))
+
+    const started = await engine.beginNodeRetry(nodeId, branchId)
+    if (!started) {
+      this.releaseEngineIfTerminal(taskId, engine)
+      throw new Error(t('errors:workflowRuntime.nodeStateChanged'))
+    }
+    this.assertRuntimeAvailable()
+    this.engines.set(taskId, engine)
+    this.runEngineOperation(
+      taskId,
+      engine,
+      'retryNode',
+      () => engine.continueNodeRetry(nodeId, branchId)
+    )
+    return engine.getState()
+  }
+
+  async retryTerminal(
+    sessionId: string,
+    mode: TerminalRetryMode | 'auto' = 'auto'
+  ): Promise<string> {
     this.assertRuntimeAvailable()
     if (this.pendingTerminalRetries.has(sessionId)) {
       throw new Error(t('errors:workflowRuntime.retryAlreadyQueued'))
@@ -190,7 +228,7 @@ export class WorkflowRuntimeService {
     try {
       return await this.serializeTask(
         target.taskId,
-        () => this.retryTerminalInternal(sessionId, target)
+        () => this.retryTerminalInternal(sessionId, target, mode)
       )
     } catch (error) {
       this.pendingTerminalRetries.delete(sessionId)
@@ -200,21 +238,23 @@ export class WorkflowRuntimeService {
 
   private async retryTerminalInternal(
     sessionId: string,
-    target: ReturnType<ProcessRunner['getRetryTarget']>
+    target: ReturnType<ProcessRunner['getRetryTarget']>,
+    mode: TerminalRetryMode | 'auto'
   ): Promise<string> {
     this.assertRuntimeAvailable()
+    if (mode === 'standalone') return this.retryStandaloneTerminal(sessionId)
+
     const engine = this.getEngineForTerminalRetry(target.taskId, target.nodeId)
     if (!engine) {
-      const retried = this.processRunner.retry(sessionId)
-      void retried.result.then(
-        () => this.pendingTerminalRetries.delete(sessionId),
-        () => this.pendingTerminalRetries.delete(sessionId)
-      )
-      return retried.sessionId
+      if (mode === 'workflow') throw new Error(t('errors:workflowRuntime.nodeStateChanged'))
+      return this.retryStandaloneTerminal(sessionId)
     }
 
     const started = await engine.beginTerminalRetry(target.nodeId, target.sessionId)
-    if (!started) throw new Error(t('errors:workflowRuntime.nodeStateChanged'))
+    if (!started) {
+      this.releaseEngineIfTerminal(target.taskId, engine)
+      throw new Error(t('errors:workflowRuntime.nodeStateChanged'))
+    }
     this.assertRuntimeAvailable()
     this.engines.set(target.taskId, engine)
 
@@ -246,6 +286,15 @@ export class WorkflowRuntimeService {
           this.pendingTerminalRetries.delete(sessionId)
         }
       }
+    )
+    return retried.sessionId
+  }
+
+  private retryStandaloneTerminal(sessionId: string): string {
+    const retried = this.processRunner.retry(sessionId)
+    void retried.result.then(
+      () => this.pendingTerminalRetries.delete(sessionId),
+      () => this.pendingTerminalRetries.delete(sessionId)
     )
     return retried.sessionId
   }
@@ -387,6 +436,29 @@ export class WorkflowRuntimeService {
     const active = this.engines.get(taskId)
     if (active) return active
 
+    const engine = this.restoreEngineForRetry(taskId)
+    if (!engine?.canRetryTerminalNode(nodeId)) return null
+
+    this.engines.set(taskId, engine)
+    return engine
+  }
+
+  private getEngineForNodeRetry(
+    taskId: string,
+    nodeId: string,
+    branchId?: string
+  ): WorkflowRuntimeEngine | null {
+    const active = this.engines.get(taskId)
+    if (active) return active.canRetryNode(nodeId, branchId) ? active : null
+
+    const engine = this.restoreEngineForRetry(taskId)
+    if (!engine?.canRetryNode(nodeId, branchId)) return null
+
+    this.engines.set(taskId, engine)
+    return engine
+  }
+
+  private restoreEngineForRetry(taskId: string): WorkflowRuntimeEngine | null {
     const restored = restoreWorkflowRuntimeState(this.db, taskId, {
       isTerminalSessionLive: (session) => this.processRunner.hasLiveSession(session.id),
       getLiveTerminalTranscript: (session) => (
@@ -407,9 +479,6 @@ export class WorkflowRuntimeService {
       initialState: restored.state,
       translator: t
     }, this.createAdapter(workflow, workflowVersion))
-    if (!engine.canRetryTerminalNode(nodeId)) return null
-
-    this.engines.set(taskId, engine)
     return engine
   }
 
@@ -421,7 +490,10 @@ export class WorkflowRuntimeService {
       emitState: (state: WorkflowRuntimeState) => {
         this.getWindow()?.webContents.send('workflow:state', state)
       },
-      persistTask: async (state: WorkflowRuntimeState, taskStatus: string) => {
+      persistTask: async (
+        state: WorkflowRuntimeState,
+        taskStatus: WorkflowRuntimeStatus
+      ) => {
         return persistWorkflowRuntimeState(
           this.db,
           state,

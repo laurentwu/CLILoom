@@ -3,6 +3,7 @@ import type { LastOpenedWorkspace } from '../shared/appState'
 import type { AppSettingsSnapshot } from '../shared/appSettings'
 import type { TerminalSession } from './utils'
 import type { ShellSnapshot } from '../shared/shell'
+import type { WorkflowRuntimeStatus } from '../shared/workflowRuntime'
 
 export type ProjectRecord = {
   id: string
@@ -17,7 +18,7 @@ export type TaskRecord = {
   id: string
   project_id: string
   title: string
-  status: string
+  status: WorkflowRuntimeStatus
   created_at: string
   updated_at: string
 }

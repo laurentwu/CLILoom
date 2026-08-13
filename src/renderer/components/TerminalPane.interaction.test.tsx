@@ -165,7 +165,7 @@ describe('TerminalPane context actions', () => {
 
   it('exposes paste only while a running interactive terminal is input-ready', () => {
     const { rerender } = render(
-      <TerminalPane session={runningSession} onRetry={vi.fn()} onSendInput={vi.fn()} />
+      <TerminalPane session={runningSession} onRetry={vi.fn()} onSendInput={vi.fn()} onStop={vi.fn()} />
     )
     expect(screen.queryByRole('button', { name: '测试粘贴' })).toBeNull()
 
@@ -174,7 +174,7 @@ describe('TerminalPane context actions', () => {
     expect(paneState.paste).toHaveBeenCalledWith('clipboard input')
 
     rerender(
-      <TerminalPane disabled session={runningSession} onRetry={vi.fn()} onSendInput={vi.fn()} />
+      <TerminalPane disabled session={runningSession} onRetry={vi.fn()} onSendInput={vi.fn()} onStop={vi.fn()} />
     )
     expect(screen.queryByRole('button', { name: '测试粘贴' })).toBeNull()
 
@@ -183,6 +183,7 @@ describe('TerminalPane context actions', () => {
         session={{ ...runningSession, kind: 'non-interactive' }}
         onRetry={vi.fn()}
         onSendInput={vi.fn()}
+        onStop={vi.fn()}
       />
     )
     expect(screen.queryByRole('button', { name: '测试粘贴' })).toBeNull()
@@ -192,6 +193,7 @@ describe('TerminalPane context actions', () => {
         session={{ ...runningSession, status: 'closed' }}
         onRetry={vi.fn()}
         onSendInput={vi.fn()}
+        onStop={vi.fn()}
       />
     )
     expect(screen.queryByRole('button', { name: '测试粘贴' })).toBeNull()
@@ -200,13 +202,13 @@ describe('TerminalPane context actions', () => {
   it('keeps an open editor snapshot stable and takes fresh content after reopening', async () => {
     paneState.snapshot = { source: 'selection', text: 'first selection' }
     const { rerender } = render(
-      <TerminalPane session={runningSession} onRetry={vi.fn()} onSendInput={vi.fn()} />
+      <TerminalPane session={runningSession} onRetry={vi.fn()} onSendInput={vi.fn()} onStop={vi.fn()} />
     )
     fireEvent.click(screen.getByRole('button', { name: '测试打开编辑器' }))
     expect((await screen.findByRole('dialog')).getAttribute('data-markdown')).toBe('first selection')
 
     paneState.snapshot = { source: 'all', text: 'new live output' }
-    rerender(<TerminalPane session={runningSession} onRetry={vi.fn()} onSendInput={vi.fn()} />)
+    rerender(<TerminalPane session={runningSession} onRetry={vi.fn()} onSendInput={vi.fn()} onStop={vi.fn()} />)
     expect(screen.getByRole('dialog').getAttribute('data-markdown')).toBe('first selection')
 
     fireEvent.click(screen.getByRole('button', { name: '测试关闭编辑器' }))
@@ -217,7 +219,7 @@ describe('TerminalPane context actions', () => {
   })
 
   it('routes menu and dialog focus restoration back to xterm', async () => {
-    render(<TerminalPane session={runningSession} onRetry={vi.fn()} onSendInput={vi.fn()} />)
+    render(<TerminalPane session={runningSession} onRetry={vi.fn()} onSendInput={vi.fn()} onStop={vi.fn()} />)
 
     fireEvent.click(screen.getByRole('button', { name: '测试恢复焦点' }))
     fireEvent.click(screen.getByRole('button', { name: '测试打开编辑器' }))
@@ -266,6 +268,7 @@ describe('TerminalPane context actions', () => {
         onLoadTranscript={onLoadTranscript}
         onRetry={vi.fn()}
         onSendInput={vi.fn()}
+        onStop={vi.fn()}
       />
     )
 
@@ -280,6 +283,7 @@ describe('TerminalPane context actions', () => {
         onLoadTranscript={onLoadTranscript}
         onRetry={vi.fn()}
         onSendInput={vi.fn()}
+        onStop={vi.fn()}
       />
     )
 
@@ -297,6 +301,7 @@ describe('TerminalPane context actions', () => {
         onLoadTranscript={onLoadTranscript}
         onRetry={vi.fn()}
         onSendInput={vi.fn()}
+        onStop={vi.fn()}
       />
     )
 
@@ -305,16 +310,16 @@ describe('TerminalPane context actions', () => {
     await waitFor(() => expect(onLoadTranscript).toHaveBeenCalledTimes(2))
   })
 
-  it('runs retry once and clears the retrying flag after the promise resolves', async () => {
+  it('reruns a historical command once and clears the retrying flag after it resolves', async () => {
     const retryDeferred = deferred<void>()
     const onRetry = vi.fn(() => retryDeferred.promise)
     const closedSession: TerminalSession = { ...runningSession, status: 'closed' }
-    render(<TerminalPane session={closedSession} onRetry={onRetry} onSendInput={vi.fn()} />)
-    const retryButton = screen.getByRole('button', { name: 'terminal:retry.aria' })
+    render(<TerminalPane session={closedSession} onRetry={onRetry} onSendInput={vi.fn()} onStop={vi.fn()} />)
+    const retryButton = screen.getByRole('button', { name: 'terminal:action.rerunCommand' })
 
     fireEvent.click(retryButton)
     expect(onRetry).toHaveBeenCalledTimes(1)
-    expect(onRetry).toHaveBeenCalledWith('session-1')
+    expect(onRetry).toHaveBeenCalledWith('session-1', 'standalone')
     await waitFor(() => expect(retryButton.hasAttribute('disabled')).toBe(true))
 
     fireEvent.click(retryButton)
@@ -324,8 +329,53 @@ describe('TerminalPane context actions', () => {
     await waitFor(() => expect(retryButton.hasAttribute('disabled')).toBe(false))
   })
 
+  it('retries the current failed workflow terminal in workflow mode', () => {
+    const onRetry = vi.fn().mockResolvedValue(undefined)
+    render(
+      <TerminalPane
+        session={{ ...runningSession, status: 'failed' }}
+        workflowRole="retryable"
+        onRetry={onRetry}
+        onSendInput={vi.fn()}
+        onStop={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'terminal:retry.aria' }))
+
+    expect(onRetry).toHaveBeenCalledWith('session-1', 'workflow')
+    expect(screen.queryByRole('button', { name: 'terminal:action.rerunCommand' })).toBeNull()
+  })
+
+  it('distinguishes ending the workflow terminal from stopping a standalone command', () => {
+    const onStop = vi.fn().mockResolvedValue(undefined)
+    const { rerender } = render(
+      <TerminalPane
+        session={runningSession}
+        workflowRole="current"
+        onRetry={vi.fn()}
+        onSendInput={vi.fn()}
+        onStop={onStop}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'terminal:action.endAndContinue' }))
+    expect(onStop).toHaveBeenCalledWith('session-1')
+
+    rerender(
+      <TerminalPane
+        session={runningSession}
+        workflowRole="history"
+        onRetry={vi.fn()}
+        onSendInput={vi.fn()}
+        onStop={onStop}
+      />
+    )
+    expect(screen.getByRole('button', { name: 'terminal:action.stopCommand' })).toBeTruthy()
+  })
+
   it('delegates xterm wheel scroll to the registered handle', () => {
-    render(<TerminalPane session={runningSession} onRetry={vi.fn()} onSendInput={vi.fn()} />)
+    render(<TerminalPane session={runningSession} onRetry={vi.fn()} onSendInput={vi.fn()} onStop={vi.fn()} />)
     const handler = scrollRegistrations.handlers.get(runningSession.id)
     expect(handler).toBeDefined()
 
@@ -347,7 +397,7 @@ describe('TerminalPane context actions', () => {
 
   it('uses an empty snapshot and rejects paste when the xterm handle is unavailable', async () => {
     terminalMockState.exposeHandle = false
-    render(<TerminalPane session={runningSession} onRetry={vi.fn()} onSendInput={vi.fn()} />)
+    render(<TerminalPane session={runningSession} onRetry={vi.fn()} onSendInput={vi.fn()} onStop={vi.fn()} />)
 
     fireEvent.click(screen.getByRole('button', { name: '测试打开编辑器' }))
     expect((await screen.findByRole('dialog')).getAttribute('data-markdown')).toBe('')

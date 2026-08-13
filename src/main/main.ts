@@ -65,6 +65,7 @@ import { InstanceHandoffCoordinator } from './instanceHandoffCoordinator'
 import { SettingsService } from './settingsService'
 import { ShellService } from './shellService'
 import { isUnsupportedProjectPath } from '../shared/projectPath'
+import type { TerminalRetryMode } from '../shared/terminalSession'
 import { clampWindowBounds } from './windowState'
 import { WorkflowConfigService } from './workflowConfigService'
 import { buildApplicationMenuTemplate } from './applicationMenu'
@@ -827,10 +828,17 @@ function registerIpc(): void {
     assertMainSender(event)
     return workflowConfigService.setDesignerState(value)
   })
-  ipcMain.handle('process:retry', async (event, sessionId: string) => {
+  ipcMain.handle('process:retry', async (
+    event,
+    sessionId: string,
+    mode: TerminalRetryMode
+  ) => {
     assertMainSender(event)
     if (typeof sessionId !== 'string' || !sessionId) throw new Error(t('errors:session.invalidId'))
-    return { sessionId: await workflowRuntime.retryTerminal(sessionId) }
+    if (mode !== 'workflow' && mode !== 'standalone') {
+      throw new Error(t('errors:session.retryDataInvalid'))
+    }
+    return { sessionId: await workflowRuntime.retryTerminal(sessionId, mode) }
   })
   ipcMain.on('process:write', (event, sessionId: string, input: string) => {
     if (!isMainSender(event)) return
@@ -854,6 +862,20 @@ function registerIpc(): void {
   ipcMain.handle('workflow:start', (event, request) => {
     assertMainSender(event)
     return workflowRuntime.start(request)
+  })
+  ipcMain.handle('workflow:retryNode', (
+    event,
+    taskId: string,
+    nodeId: string,
+    branchId?: string
+  ) => {
+    assertMainSender(event)
+    if (
+      typeof taskId !== 'string' || !taskId ||
+      typeof nodeId !== 'string' || !nodeId ||
+      (branchId !== undefined && (typeof branchId !== 'string' || !branchId))
+    ) throw new Error(t('errors:session.invalidId'))
+    return workflowRuntime.retryNode(taskId, nodeId, branchId)
   })
   ipcMain.handle('workflow:updateVariables', (event, taskId: string, variables, branchId?: string) => {
     assertMainSender(event)

@@ -46,6 +46,7 @@ describe('TerminalPane', () => {
           session={completedSession}
           onSendInput={vi.fn()}
           onRetry={vi.fn()}
+          onStop={vi.fn()}
         />
       </I18nextProvider>
     )
@@ -64,6 +65,7 @@ describe('TerminalPane', () => {
           session={{ ...completedSession, status: 'running', transcript_cursor: 7 }}
           onSendInput={vi.fn()}
           onRetry={vi.fn()}
+          onStop={vi.fn()}
         />
       </I18nextProvider>
     )

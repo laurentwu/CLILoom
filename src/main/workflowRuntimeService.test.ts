@@ -8,7 +8,11 @@ import { isUnsupportedProjectPath } from '../shared/projectPath'
 import { persistWorkflowRuntimeState } from './runtimePersistence'
 import { WorkflowRuntimeService } from './workflowRuntimeService'
 import type { WorkflowDefinition } from '../shared/workflow'
-import type { WorkflowRuntimeProcessResult, WorkflowRuntimeState } from '../shared/workflowRuntime'
+import {
+  WorkflowRuntimeEngine,
+  type WorkflowRuntimeProcessResult,
+  type WorkflowRuntimeState
+} from '../shared/workflowRuntime'
 
 const dbs: Array<{ db: AppDatabase; dir: string }> = []
 
@@ -456,6 +460,385 @@ describe('WorkflowRuntimeService restore', () => {
       exitCode: 0
     })
     await vi.waitFor(() => expect(service.getState('retry-task')).toBeNull())
+  })
+
+  it('reruns a historical command without changing its failed workflow', async () => {
+    const db = createDb()
+    const workflow: WorkflowDefinition = {
+      id: 'standalone-rerun-workflow',
+      name: 'Standalone rerun workflow',
+      nodes: [
+        { id: 'terminal', type: 'non-interactive-terminal', name: 'Terminal', config: { command: 'retry', cwd: '/repo', successExitCodes: [0] } },
+        { id: 'end', type: 'end', name: 'End', config: {} }
+      ],
+      edges: [{ id: 'terminal-end', from: 'terminal', to: 'end' }]
+    }
+    persistWorkflowRuntimeState(db, {
+      taskId: 'standalone-rerun-task',
+      projectId: 'project-1',
+      projectDir: '/repo',
+      workflowId: workflow.id,
+      status: 'failed',
+      currentNodeId: 'terminal',
+      variables: { preserved: 'value' },
+      nodeRuns: {
+        terminal: { nodeId: 'terminal', status: 'failed', sessionId: 'session-old', exitCode: 1 }
+      },
+      executionOrder: ['terminal'],
+      activeBranches: [],
+      branchRuns: {},
+      parallelResults: {},
+      workflowCompleted: false,
+      error: 'failed'
+    }, 'failed', workflow)
+    const retry = vi.fn(() => ({
+      sessionId: 'session-old',
+      taskId: 'standalone-rerun-task',
+      nodeId: 'terminal',
+      result: Promise.resolve({
+        sessionId: 'session-old',
+        stdout: 'standalone output',
+        stderr: '',
+        exitCode: 0,
+        status: 'closed' as const
+      })
+    }))
+    const runner = {
+      getRetryTarget: () => ({
+        sessionId: 'session-old',
+        taskId: 'standalone-rerun-task',
+        nodeId: 'terminal'
+      }),
+      retry,
+      run: async () => ({ sessionId: 'unused', stdout: '', stderr: '', exitCode: 0 }),
+      runHook: async () => ({ hookRunId: 'hook-1', stdout: '', stderr: '', exitCode: 0 }),
+      killByTask: () => 0,
+      hasLiveSession: () => false
+    }
+    const service = new WorkflowRuntimeService(db, runner as never, () => null)
+
+    await expect(service.retryTerminal('session-old', 'standalone')).resolves.toBe('session-old')
+    await vi.waitFor(() => expect(retry).toHaveBeenCalledWith('session-old'))
+
+    expect(db.prepare('select status from tasks where id = ?').get('standalone-rerun-task'))
+      .toEqual({ status: 'failed' })
+    expect(db.prepare('select status from node_runs where run_id = ? and node_id = ?')
+      .get('standalone-rerun-task', 'terminal')).toEqual({ status: 'failed' })
+    expect(service.getState('standalone-rerun-task')).toBeNull()
+  })
+
+  it('rejects an explicit workflow retry when no workflow state can be restored', async () => {
+    const db = createDb()
+    const retry = vi.fn()
+    const runner = {
+      getRetryTarget: () => ({
+        sessionId: 'orphan-session',
+        taskId: 'missing-task',
+        nodeId: 'terminal'
+      }),
+      retry,
+      hasLiveSession: () => false
+    }
+    const service = new WorkflowRuntimeService(db, runner as never, () => null)
+
+    await expect(service.retryTerminal('orphan-session', 'workflow')).rejects.toThrow()
+
+    expect(retry).not.toHaveBeenCalled()
+    expect(service.getState('missing-task')).toBeNull()
+  })
+
+  it('retries a failed non-terminal node from the persisted workflow context', async () => {
+    const db = createDb()
+    const workflow: WorkflowDefinition = {
+      id: 'retry-gateway-workflow',
+      name: 'Retry gateway workflow',
+      nodes: [
+        { id: 'gateway', type: 'exclusive-gateway', name: 'Gateway', config: {} },
+        { id: 'end', type: 'end', name: 'End', config: {} }
+      ],
+      edges: [{ id: 'gateway-end', from: 'gateway', to: 'end', isDefault: true }]
+    }
+    persistWorkflowRuntimeState(db, {
+      taskId: 'retry-gateway-task',
+      projectId: 'project-1',
+      projectDir: '/repo',
+      workflowId: workflow.id,
+      status: 'failed',
+      currentNodeId: 'gateway',
+      variables: { preserved: 'value' },
+      nodeRuns: {
+        gateway: { nodeId: 'gateway', status: 'failed', stderr: 'old failure' }
+      },
+      executionOrder: ['gateway'],
+      activeBranches: [],
+      branchRuns: {},
+      parallelResults: {},
+      workflowCompleted: false,
+      error: 'old failure'
+    }, 'failed', workflow)
+    const runner = {
+      run: async () => ({ sessionId: 'unused', stdout: '', stderr: '', exitCode: 0 }),
+      runHook: async () => ({ hookRunId: 'hook-1', stdout: '', stderr: '', exitCode: 0 }),
+      killByTask: () => 0,
+      hasLiveSession: () => false
+    }
+    const service = new WorkflowRuntimeService(db, runner as never, () => null)
+
+    await expect(service.retryNode('retry-gateway-task', 'gateway')).resolves.toMatchObject({
+      status: 'running',
+      variables: { preserved: 'value' },
+      nodeRuns: { gateway: { status: 'running' } }
+    })
+
+    await vi.waitFor(() => {
+      expect(db.prepare('select status from tasks where id = ?').get('retry-gateway-task'))
+        .toEqual({ status: 'completed' })
+    })
+    expect(db.prepare('select node_id, status from node_runs where run_id = ? order by node_id')
+      .all('retry-gateway-task')).toEqual([
+      { node_id: 'end', status: 'completed' },
+      { node_id: 'gateway', status: 'completed' }
+    ])
+  })
+
+  it('retries a failed non-terminal branch from persisted state and rejoins its sibling', async () => {
+    const db = createDb()
+    const workflow: WorkflowDefinition = {
+      id: 'retry-branch-gateway-workflow',
+      name: 'Retry branch gateway workflow',
+      nodes: [
+        { id: 'split', type: 'parallel-gateway', name: 'Split', config: { mode: 'split' } },
+        { id: 'gate', type: 'exclusive-gateway', name: 'Gate', config: {} },
+        { id: 'other', type: 'non-interactive-terminal', name: 'Other', config: { command: 'other', cwd: '/repo', successExitCodes: [0] } },
+        { id: 'join', type: 'parallel-gateway', name: 'Join', config: { mode: 'join', joinIncomingEdgeIds: ['gate-join', 'other-join'] } },
+        { id: 'end', type: 'end', name: 'End', config: {} }
+      ],
+      edges: [
+        { id: 'split-gate', from: 'split', to: 'gate' },
+        { id: 'split-other', from: 'split', to: 'other' },
+        { id: 'gate-join', from: 'gate', to: 'join', isDefault: true },
+        { id: 'other-join', from: 'other', to: 'join' },
+        { id: 'join-end', from: 'join', to: 'end' }
+      ]
+    }
+    const gateBranchId = 'split:split-gate'
+    const otherBranchId = 'split:split-other'
+    persistWorkflowRuntimeState(db, {
+      taskId: 'retry-branch-gateway-task',
+      projectId: 'project-1',
+      projectDir: '/repo',
+      workflowId: workflow.id,
+      status: 'failed',
+      currentNodeId: 'split',
+      variables: { preserved: 'value' },
+      nodeRuns: {
+        split: { nodeId: 'split', status: 'completed' },
+        gate: { nodeId: 'gate', status: 'failed', stderr: 'old failure' },
+        other: { nodeId: 'other', status: 'completed', sessionId: 'session-other', exitCode: 0 }
+      },
+      executionOrder: ['split', 'gate', 'other'],
+      activeBranches: [],
+      branchRuns: {
+        [gateBranchId]: {
+          branchId: gateBranchId,
+          splitNodeId: 'split',
+          entryEdgeId: 'split-gate',
+          entryNodeId: 'gate',
+          currentNodeId: 'gate',
+          status: 'failed',
+          nodeIds: ['gate'],
+          variables: { preserved: 'value' },
+          error: 'old failure'
+        },
+        [otherBranchId]: {
+          branchId: otherBranchId,
+          splitNodeId: 'split',
+          entryEdgeId: 'split-other',
+          entryNodeId: 'other',
+          currentNodeId: 'join',
+          status: 'completed',
+          nodeIds: ['other'],
+          reachedJoinEdgeId: 'other-join',
+          reachedJoinNodeId: 'join',
+          variables: { preserved: 'value' }
+        }
+      },
+      parallelResults: {},
+      workflowCompleted: false,
+      error: 'old failure'
+    }, 'failed', workflow)
+    const run = vi.fn(async () => ({
+      sessionId: 'unused',
+      stdout: '',
+      stderr: '',
+      exitCode: 0
+    }))
+    const runner = {
+      run,
+      runHook: async () => ({ hookRunId: 'hook-1', stdout: '', stderr: '', exitCode: 0 }),
+      killByTask: () => 0,
+      hasLiveSession: () => false
+    }
+    const service = new WorkflowRuntimeService(db, runner as never, () => null)
+
+    await expect(service.retryNode(
+      'retry-branch-gateway-task',
+      'gate',
+      gateBranchId
+    )).resolves.toMatchObject({
+      status: 'running',
+      activeBranches: [gateBranchId],
+      branchRuns: {
+        [gateBranchId]: { status: 'running' }
+      }
+    })
+
+    await vi.waitFor(() => {
+      expect(db.prepare('select status from tasks where id = ?')
+        .get('retry-branch-gateway-task')).toEqual({ status: 'completed' })
+    })
+    const stored = db.prepare(
+      'select context_json from workflow_runs where task_id = ?'
+    ).get('retry-branch-gateway-task') as { context_json: string }
+    const context = JSON.parse(stored.context_json) as WorkflowRuntimeState
+    expect(context.branchRuns[gateBranchId]).toMatchObject({
+      status: 'completed',
+      reachedJoinEdgeId: 'gate-join',
+      reachedJoinNodeId: 'join'
+    })
+    expect(context.parallelResults.split.branches).toMatchObject({
+      'split-gate': { status: 'completed' },
+      'split-other': { status: 'completed' }
+    })
+    expect(run).not.toHaveBeenCalled()
+  })
+
+  it('releases a restored terminal engine when its queued retry is no longer valid', async () => {
+    const db = createDb()
+    const workflow: WorkflowDefinition = {
+      id: 'stale-terminal-retry-workflow',
+      name: 'Stale terminal retry workflow',
+      nodes: [
+        { id: 'terminal', type: 'non-interactive-terminal', name: 'Terminal', config: { command: 'test', cwd: '/repo', successExitCodes: [0] } }
+      ],
+      edges: []
+    }
+    persistWorkflowRuntimeState(db, {
+      taskId: 'stale-terminal-retry-task',
+      projectId: 'project-1',
+      projectDir: '/repo',
+      workflowId: workflow.id,
+      status: 'failed',
+      currentNodeId: 'terminal',
+      variables: {},
+      nodeRuns: {
+        terminal: {
+          nodeId: 'terminal',
+          status: 'failed',
+          sessionId: 'stale-session',
+          exitCode: 1
+        }
+      },
+      executionOrder: ['terminal'],
+      activeBranches: [],
+      branchRuns: {},
+      parallelResults: {},
+      workflowCompleted: false,
+      error: 'old failure'
+    }, 'failed', workflow)
+    const runner = {
+      getRetryTarget: () => ({
+        sessionId: 'stale-session',
+        taskId: 'stale-terminal-retry-task',
+        nodeId: 'terminal'
+      }),
+      retry: vi.fn(),
+      hasLiveSession: () => false
+    }
+    const onTaskTerminal = vi.fn()
+    const service = new WorkflowRuntimeService(
+      db,
+      runner as never,
+      () => null,
+      onTaskTerminal
+    )
+    const canRetry = vi.spyOn(
+      WorkflowRuntimeEngine.prototype,
+      'canRetryTerminalNode'
+    ).mockReturnValue(true)
+    const beginRetry = vi.spyOn(
+      WorkflowRuntimeEngine.prototype,
+      'beginTerminalRetry'
+    ).mockResolvedValue(false)
+
+    try {
+      await expect(service.retryTerminal('stale-session', 'workflow')).rejects.toThrow()
+
+      expect(service.getState('stale-terminal-retry-task')).toBeNull()
+      expect(onTaskTerminal).toHaveBeenCalledOnce()
+      expect(runner.retry).not.toHaveBeenCalled()
+    } finally {
+      beginRetry.mockRestore()
+      canRetry.mockRestore()
+    }
+  })
+
+  it('releases a restored node engine when its queued retry is no longer valid', async () => {
+    const db = createDb()
+    const workflow: WorkflowDefinition = {
+      id: 'stale-node-retry-workflow',
+      name: 'Stale node retry workflow',
+      nodes: [
+        { id: 'gate', type: 'exclusive-gateway', name: 'Gate', config: {} }
+      ],
+      edges: []
+    }
+    persistWorkflowRuntimeState(db, {
+      taskId: 'stale-node-retry-task',
+      projectId: 'project-1',
+      projectDir: '/repo',
+      workflowId: workflow.id,
+      status: 'failed',
+      currentNodeId: 'gate',
+      variables: {},
+      nodeRuns: {
+        gate: { nodeId: 'gate', status: 'failed', stderr: 'old failure' }
+      },
+      executionOrder: ['gate'],
+      activeBranches: [],
+      branchRuns: {},
+      parallelResults: {},
+      workflowCompleted: false,
+      error: 'old failure'
+    }, 'failed', workflow)
+    const runner = {
+      hasLiveSession: () => false
+    }
+    const onTaskTerminal = vi.fn()
+    const service = new WorkflowRuntimeService(
+      db,
+      runner as never,
+      () => null,
+      onTaskTerminal
+    )
+    const canRetry = vi.spyOn(
+      WorkflowRuntimeEngine.prototype,
+      'canRetryNode'
+    ).mockReturnValue(true)
+    const beginRetry = vi.spyOn(
+      WorkflowRuntimeEngine.prototype,
+      'beginNodeRetry'
+    ).mockResolvedValue(false)
+
+    try {
+      await expect(service.retryNode('stale-node-retry-task', 'gate')).rejects.toThrow()
+
+      expect(service.getState('stale-node-retry-task')).toBeNull()
+      expect(onTaskTerminal).toHaveBeenCalledOnce()
+    } finally {
+      beginRetry.mockRestore()
+      canRetry.mockRestore()
+    }
   })
 
   it.each(['concurrently', 'sequentially'] as const)(

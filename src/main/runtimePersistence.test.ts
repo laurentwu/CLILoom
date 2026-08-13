@@ -15,7 +15,10 @@ import {
   restoreWorkflowRuntimeState
 } from './runtimePersistence'
 import type { WorkflowDefinition } from '../shared/workflow'
-import type { WorkflowRuntimeState } from '../shared/workflowRuntime'
+import type {
+  WorkflowRuntimeState,
+  WorkflowRuntimeStatus
+} from '../shared/workflowRuntime'
 import { MAX_PROCESS_RESULT_CHARS } from '../shared/terminalBuffer'
 
 const dbs: Array<{ db: AppDatabase; dir: string }> = []
@@ -71,7 +74,7 @@ function state(overrides: Partial<WorkflowRuntimeState> = {}): WorkflowRuntimeSt
 function persistState(
   db: AppDatabase,
   runtimeState: WorkflowRuntimeState,
-  status: string,
+  status: WorkflowRuntimeStatus,
   definition: WorkflowDefinition = workflow
 ) {
   return persistWorkflowRuntimeState(db, runtimeState, status, definition)

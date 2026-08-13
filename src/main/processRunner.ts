@@ -34,6 +34,10 @@ import {
   prepareExecutionInvocation,
   type PreparedExecutionInvocation
 } from './executionInvocation'
+import type {
+  TerminalSessionKind,
+  TerminalSessionStatus
+} from '../shared/terminalSession'
 
 const SESSION_PERSIST_INTERVAL_MS = 5000
 const TERMINAL_DATA_FLUSH_INTERVAL_MS = 16
@@ -140,7 +144,7 @@ function createInitialCommandEchoFilter(command: string): TerminalOutputMapper |
 export type RunProcessRequest = {
   taskId: string
   nodeId: string
-  kind: 'interactive' | 'non-interactive'
+  kind: TerminalSessionKind
   command: string | ShellNeutralCommand
   displayCommand?: string
   cwd: string
@@ -158,7 +162,7 @@ export type RunProcessResult = {
   stdout: string
   stderr: string
   exitCode: number | null
-  status?: 'closed' | 'killed' | 'failed'
+  status?: Extract<TerminalSessionStatus, 'closed' | 'killed' | 'failed'>
 }
 
 export type RetriedProcess = {
@@ -205,7 +209,7 @@ type Session = {
   inputReady?: boolean
   flushDisplay?: () => void
   finish: (
-    status: 'closed' | 'killed' | 'failed',
+    status: Extract<TerminalSessionStatus, 'closed' | 'killed' | 'failed'>,
     exitCode: number | null,
     terminate: boolean
   ) => Promise<boolean>
@@ -269,7 +273,7 @@ type RetriableSessionRecord = {
   kind: RunProcessRequest['kind']
   command: string
   cwd: string
-  status: string
+  status: TerminalSessionStatus
   created_at: string
   request_json?: string | null
 }
@@ -295,7 +299,11 @@ export class ProcessRunner {
   private readonly hookSessions = new Map<string, HookSession>()
   private readonly pendingSessions = new Map<string, PendingLaunch>()
   private readonly pendingHooks = new Map<string, PendingLaunch>()
-  private pendingSessionUpdates = new Map<string, { transcript: string; status: string; updatedAt: string }>()
+  private pendingSessionUpdates = new Map<string, {
+    transcript: string
+    status: TerminalSessionStatus
+    updatedAt: string
+  }>()
   private flushTimer: NodeJS.Timeout | null = null
   private terminalDataQueue: PendingTerminalData[] = []
   private terminalDataTimer: NodeJS.Timeout | null = null
@@ -486,7 +494,7 @@ export class ProcessRunner {
     ).get(sessionId) as RetriableSessionRecord | undefined
 
     if (!row) throw new Error(t('errors:session.notFound'))
-    if (row.status.startsWith('running') || this.hasLiveSession(sessionId)) {
+    if (row.status === 'running' || this.hasLiveSession(sessionId)) {
       throw new Error(t('errors:session.stillRunning'))
     }
     return row
@@ -1335,7 +1343,7 @@ export class ProcessRunner {
   private persistOutput(
     sessionId: string,
     transcript: string,
-    status: string
+    status: TerminalSessionStatus
   ): void {
     const now = new Date().toISOString()
     this.pendingSessionUpdates.set(sessionId, {
@@ -1346,7 +1354,11 @@ export class ProcessRunner {
     this.scheduleFlush()
   }
 
-  private persistSession(sessionId: string, transcript: string, status: string): void {
+  private persistSession(
+    sessionId: string,
+    transcript: string,
+    status: TerminalSessionStatus
+  ): void {
     this.pendingSessionUpdates.set(sessionId, {
       transcript: tailText(transcript, MAX_PERSISTED_TERMINAL_TRANSCRIPT_CHARS),
       status,

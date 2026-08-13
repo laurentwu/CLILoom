@@ -1,11 +1,17 @@
 import { lazy, memo, Suspense, useCallback, useEffect, useRef, useState } from 'react'
-import { LoaderCircle, RotateCcw } from 'lucide-react'
+import { LoaderCircle, RotateCcw, Square } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import {
   canAcceptTerminalInput,
   canRetryTerminalSession,
   type TerminalSession
 } from '../utils'
+import { isTerminalSessionRunning } from '../../shared/terminalSession'
+import type { TerminalRetryMode } from '../../shared/terminalSession'
+import {
+  getTerminalAction,
+  type TerminalWorkflowRole
+} from '../executionActions'
 import { StatusBadge } from './StatusBadge'
 import { XtermTerminal, type XtermTerminalHandle } from './XtermTerminal'
 import { TerminalContextMenu } from './TerminalContextMenu'
@@ -49,24 +55,30 @@ export const TerminalPane = memo(function TerminalPane({
   onLoadTranscript,
   onSendInput,
   onRetry,
+  onStop,
+  workflowRole = 'history',
   className
 }: {
   session: TerminalSession
   disabled?: boolean
   onLoadTranscript?: (session: TerminalSession) => Promise<void>
   onSendInput: (sessionId: string, input: string) => void
-  onRetry: (sessionId: string) => Promise<void>
+  onRetry: (sessionId: string, mode: TerminalRetryMode) => Promise<void>
+  onStop: (sessionId: string) => Promise<void>
+  workflowRole?: TerminalWorkflowRole
   className?: string
 }) {
-  const persistent = session.status.startsWith('running')
+  const persistent = isTerminalSessionRunning(session.status)
   const readOnly = disabled || !canAcceptTerminalInput(session)
   const { t } = useTranslation()
   const [inputReady, setInputReady] = useState(false)
   const [markdown, setMarkdown] = useState<string | null>(null)
   const [retrying, setRetrying] = useState(false)
+  const [stopping, setStopping] = useState(false)
   const [transcriptLoadAttempt, setTranscriptLoadAttempt] = useState(0)
   const [transcriptLoadState, setTranscriptLoadState] = useState<'idle' | 'loading' | 'failed'>('idle')
   const targetLabel = formatExecutionTarget(session)
+  const action = getTerminalAction(session.status, workflowRole)
   const xtermRef = useRef<XtermTerminalHandle>(null)
   const getTextSnapshot = useCallback((): TerminalTextSnapshot => (
     xtermRef.current?.getTextSnapshot() ?? { source: 'all', text: '' }
@@ -97,13 +109,23 @@ export const TerminalPane = memo(function TerminalPane({
     }
   }, [onLoadTranscript, session.id, session.task_id, session.transcript, transcriptLoadAttempt])
 
-  const retry = async () => {
+  const retry = async (mode: TerminalRetryMode) => {
     if (retrying || !canRetryTerminalSession(session)) return
     setRetrying(true)
     try {
-      await onRetry(session.id)
+      await onRetry(session.id, mode)
     } finally {
       setRetrying(false)
+    }
+  }
+
+  const stop = async () => {
+    if (stopping || !isTerminalSessionRunning(session.status)) return
+    setStopping(true)
+    try {
+      await onStop(session.id)
+    } finally {
+      setStopping(false)
     }
   }
 
@@ -119,19 +141,38 @@ export const TerminalPane = memo(function TerminalPane({
             {targetLabel ? ` · ${t('terminal:environment.label', { target: targetLabel })}` : ''}
           </CardDescription>
           <CardAction className="flex items-center gap-2">
-            {canRetryTerminalSession(session) && (
+            {(action === 'retry-workflow' || action === 'rerun-command') && (
               <Button
-                aria-label={t('terminal:retry.aria')}
+                aria-label={action === 'retry-workflow'
+                  ? t('terminal:retry.aria')
+                  : t('terminal:action.rerunCommand')}
                 disabled={retrying}
-                onClick={() => void retry()}
+                onClick={() => void retry(action === 'retry-workflow' ? 'workflow' : 'standalone')}
                 size="sm"
-                title={targetLabel
-                  ? t('terminal:retry.tooltipTarget', { target: targetLabel })
-                  : t('terminal:retry.tooltip')}
+                title={action === 'retry-workflow'
+                  ? t('terminal:retry.workflowTooltip')
+                  : targetLabel
+                    ? t('terminal:retry.rerunTooltipTarget', { target: targetLabel })
+                    : t('terminal:retry.rerunTooltip')}
                 variant="outline"
               >
                 <RotateCcw data-icon="inline-start" />
-                {t('common:action.retry')}
+                {action === 'retry-workflow'
+                  ? t('common:action.retry')
+                  : t('terminal:action.rerunCommand')}
+              </Button>
+            )}
+            {(action === 'end-and-continue' || action === 'stop-command') && (
+              <Button
+                disabled={stopping}
+                onClick={() => void stop()}
+                size="sm"
+                variant="destructive"
+              >
+                <Square data-icon="inline-start" />
+                {action === 'end-and-continue'
+                  ? t('terminal:action.endAndContinue')
+                  : t('terminal:action.stopCommand')}
               </Button>
             )}
             <StatusBadge source="terminal" status={session.status} />
