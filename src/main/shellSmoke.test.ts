@@ -299,7 +299,9 @@ describe('native shell smoke', () => {
     writeFileSync(parentScript, [
       "const { spawn } = require('node:child_process')",
       "const { writeFileSync } = require('node:fs')",
-      `const child = spawn(process.execPath, [${JSON.stringify(childScript)}], { stdio: 'ignore' })`,
+      `const child = spawn(process.execPath, [${JSON.stringify(childScript)}], { ` +
+        `stdio: 'ignore', detached: ${process.platform === 'win32'} })`,
+      ...(process.platform === 'win32' ? ['child.unref()'] : []),
       `writeFileSync(${JSON.stringify(pidFile)}, String(child.pid))`,
       'setInterval(() => undefined, 1000)'
     ].join('\n'))
