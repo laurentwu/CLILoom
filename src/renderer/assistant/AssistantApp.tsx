@@ -211,7 +211,7 @@ export function AssistantApp({
                   <div className="truncate text-xs text-destructive" title={status.message}>{status.message}</div>
                 )}
                 {shellUnavailable && (
-                  <div className="text-xs text-destructive">
+                  <div className="whitespace-pre-line text-xs text-destructive">
                     {shellSnapshot.error
                       ? i18n.t('assistant:shell.errorHint', { error: shellSnapshot.error })
                       : i18n.t('assistant:shell.unavailableTitle')}
@@ -283,7 +283,7 @@ function GlobalShellInfo({ snapshot }: { snapshot: ShellSnapshot }) {
     <Alert className="mb-3" variant="destructive">
       <CircleAlert />
       <AlertTitle>{i18n.t('assistant:shell.unavailableTitle')}</AlertTitle>
-      <AlertDescription>
+      <AlertDescription className="whitespace-pre-line">
         {snapshot.error ? i18n.t('assistant:shell.errorHint', { error: snapshot.error }) : i18n.t('assistant:shell.redirectOnly')}
       </AlertDescription>
     </Alert>

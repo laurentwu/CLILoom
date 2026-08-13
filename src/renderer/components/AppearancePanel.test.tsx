@@ -187,22 +187,22 @@ describe('AppearancePanel', () => {
       userSkins={[]}
     /></I18nextProvider>)
 
-    expect(screen.getByText('No custom skins yet.')).toBeTruthy()
+    expect(screen.getByText('No custom themes yet.')).toBeTruthy()
 
     await act(async () => {
-      fireEvent.click(screen.getByText('New skin'))
+      fireEvent.click(screen.getByText('New theme'))
     })
 
     expect(api.createSkin).not.toHaveBeenCalled()
-    expect(screen.getByLabelText('Skin name')).toHaveProperty('value', 'New skin')
-    expect(screen.getByText('No custom skins yet.')).toBeTruthy()
+    expect(screen.getByLabelText('Theme name')).toHaveProperty('value', 'New theme')
+    expect(screen.getByText('No custom themes yet.')).toBeTruthy()
 
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     })
 
     expect(api.createSkin).toHaveBeenCalledWith(
-      'New skin',
+      'New theme',
       expect.objectContaining({ mode: 'light' })
     )
     expect(api.renameSkin).not.toHaveBeenCalled()
@@ -221,7 +221,7 @@ describe('AppearancePanel', () => {
     /></I18nextProvider>)
 
     await act(async () => {
-      fireEvent.click(screen.getByText('New skin'))
+      fireEvent.click(screen.getByText('New theme'))
     })
     const saveButton = screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement
     act(() => {
@@ -250,7 +250,7 @@ describe('AppearancePanel', () => {
     /></I18nextProvider>)
 
     await act(async () => {
-      fireEvent.click(screen.getByText('New skin'))
+      fireEvent.click(screen.getByText('New theme'))
     })
     act(() => {
       fireEvent.click(screen.getByRole('button', { name: 'Save' }))
@@ -265,7 +265,7 @@ describe('AppearancePanel', () => {
     })
 
     expect(api.createSkin).toHaveBeenCalledOnce()
-    expect(screen.queryByLabelText('Skin name')).toBeNull()
+    expect(screen.queryByLabelText('Theme name')).toBeNull()
     expect(document.documentElement.dataset.skinId).toBe('builtin.dark.neutral')
   })
 
@@ -286,7 +286,7 @@ describe('AppearancePanel', () => {
 
     render(<I18nextProvider i18n={i18n}><Harness /></I18nextProvider>)
     await act(async () => {
-      fireEvent.click(screen.getByText('New skin'))
+      fireEvent.click(screen.getByText('New theme'))
     })
     act(() => {
       fireEvent.click(screen.getByRole('button', { name: 'Save' }))
@@ -301,7 +301,7 @@ describe('AppearancePanel', () => {
     })
 
     expect(api.createSkin).toHaveBeenCalledOnce()
-    expect(screen.queryByLabelText('Skin name')).toBeNull()
+    expect(screen.queryByLabelText('Theme name')).toBeNull()
     expect(document.documentElement.dataset.skinId).toBe(DEFAULT_SKIN.id)
   })
 
@@ -318,7 +318,7 @@ describe('AppearancePanel', () => {
     /></I18nextProvider>)
 
     await act(async () => {
-      fireEvent.click(screen.getByText('New skin'))
+      fireEvent.click(screen.getByText('New theme'))
     })
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Save' }))
@@ -326,7 +326,7 @@ describe('AppearancePanel', () => {
 
     expect(api.createSkin).toHaveBeenCalledOnce()
     expect(screen.getByText('create failed')).toBeTruthy()
-    expect(screen.getByLabelText('Skin name')).toHaveProperty('value', 'New skin')
+    expect(screen.getByLabelText('Theme name')).toHaveProperty('value', 'New theme')
     expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(false)
   })
 
@@ -347,17 +347,17 @@ describe('AppearancePanel', () => {
     })
 
     expect(api.duplicateSkin).toHaveBeenCalledWith(DEFAULT_SKIN.id)
-    expect(screen.getByLabelText('Skin name')).toHaveProperty('value', copy.name)
+    expect(screen.getByLabelText('Theme name')).toHaveProperty('value', copy.name)
 
     await act(async () => {
       rerender(panel([copy]))
     })
-    expect(screen.getByLabelText('Skin name')).toHaveProperty('value', copy.name)
+    expect(screen.getByLabelText('Theme name')).toHaveProperty('value', copy.name)
 
     await act(async () => {
       rerender(panel([]))
     })
-    expect(screen.queryByLabelText('Skin name')).toBeNull()
+    expect(screen.queryByLabelText('Theme name')).toBeNull()
   })
 
   it('keeps an imported skin selected until its settings broadcast arrives', async () => {
@@ -379,17 +379,17 @@ describe('AppearancePanel', () => {
     })
 
     expect(api.importSkin).toHaveBeenCalledOnce()
-    expect(screen.getByLabelText('Skin name')).toHaveProperty('value', imported.name)
+    expect(screen.getByLabelText('Theme name')).toHaveProperty('value', imported.name)
 
     await act(async () => {
       rerender(panel([imported]))
     })
-    expect(screen.getByLabelText('Skin name')).toHaveProperty('value', imported.name)
+    expect(screen.getByLabelText('Theme name')).toHaveProperty('value', imported.name)
 
     await act(async () => {
       rerender(panel([]))
     })
-    expect(screen.queryByLabelText('Skin name')).toBeNull()
+    expect(screen.queryByLabelText('Theme name')).toBeNull()
   })
 
   it('discards an unsaved new skin without creating it', async () => {
@@ -404,7 +404,7 @@ describe('AppearancePanel', () => {
     /></I18nextProvider>)
 
     await act(async () => {
-      fireEvent.click(screen.getByText('New skin'))
+      fireEvent.click(screen.getByText('New theme'))
     })
     await act(async () => {
       fireEvent.click(screen.getByText('Neutral light'))
@@ -412,7 +412,7 @@ describe('AppearancePanel', () => {
 
     expect(confirmSpy).toHaveBeenCalled()
     expect(api.createSkin).not.toHaveBeenCalled()
-    expect(screen.queryByLabelText('Skin name')).toBeNull()
+    expect(screen.queryByLabelText('Theme name')).toBeNull()
   })
 
   it('renders a custom skin icon from its gradient background', () => {
@@ -441,6 +441,26 @@ describe('AppearancePanel', () => {
     }
   })
 
+  it('distinguishes applying a theme from saving theme edits', () => {
+    const api = setupApi()
+    const skin = makeUserSkin()
+    render(<I18nextProvider i18n={i18n}><AppearancePanel
+      open
+      onOpenChange={() => undefined}
+      activeSkin={DEFAULT_SKIN}
+      activeSkinId={DEFAULT_SKIN.id}
+      userSkins={[skin]}
+    /></I18nextProvider>)
+
+    fireEvent.click(screen.getByRole('button', { name: skin.name }))
+
+    expect(screen.getByRole('button', { name: 'Apply theme' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Save' })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Apply theme' }))
+    expect(api.setActiveSkin).toHaveBeenCalledWith(skin.id)
+  })
+
   it('saves content and rename through the save button', async () => {
     const api = setupApi()
     const skin = makeUserSkin()
@@ -453,7 +473,7 @@ describe('AppearancePanel', () => {
     /></I18nextProvider>)
 
     await act(async () => {
-      fireEvent.change(screen.getByLabelText('Skin name'), { target: { value: 'Renamed' } })
+      fireEvent.change(screen.getByLabelText('Theme name'), { target: { value: 'Renamed' } })
     })
     await act(async () => {
       fireEvent.click(screen.getByText('Save'))
@@ -621,14 +641,14 @@ describe('AppearancePanel', () => {
     /></I18nextProvider>)
 
     await act(async () => {
-      fireEvent.change(screen.getByLabelText('Skin name'), { target: { value: '   ' } })
+      fireEvent.change(screen.getByLabelText('Theme name'), { target: { value: '   ' } })
     })
     await act(async () => {
       fireEvent.click(screen.getByText('Save'))
     })
 
     expect(api.updateUserSkin).not.toHaveBeenCalled()
-    expect(screen.getByText('Skin name is required')).toBeTruthy()
+    expect(screen.getByText('Theme name is required')).toBeTruthy()
   })
 
   it('asks for confirmation before discarding dirty edits when switching skins', async () => {
@@ -644,7 +664,7 @@ describe('AppearancePanel', () => {
     /></I18nextProvider>)
 
     await act(async () => {
-      fireEvent.change(screen.getByLabelText('Skin name'), { target: { value: 'dirty' } })
+      fireEvent.change(screen.getByLabelText('Theme name'), { target: { value: 'dirty' } })
     })
     await act(async () => {
       fireEvent.click(screen.getByText('Neutral light'))
@@ -667,7 +687,7 @@ describe('AppearancePanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
 
     expect(api.deleteSkin).not.toHaveBeenCalled()
-    expect(screen.getByText('Delete skin "Test skin"?')).toBeTruthy()
+    expect(screen.getByText('Delete theme "Test skin"?')).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
 
@@ -687,12 +707,12 @@ describe('AppearancePanel', () => {
       userSkins={[skin]}
     /></I18nextProvider>)
 
-    fireEvent.change(screen.getByLabelText('Skin name'), { target: { value: 'Dirty skin' } })
+    fireEvent.change(screen.getByLabelText('Theme name'), { target: { value: 'Dirty skin' } })
     fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
 
     expect(confirmSpy).not.toHaveBeenCalled()
     expect(api.deleteSkin).not.toHaveBeenCalled()
-    expect(screen.getByText('Delete skin "Test skin"?')).toBeTruthy()
+    expect(screen.getByText('Delete theme "Test skin"?')).toBeTruthy()
   })
 
   it('deletes the selected user skin after confirmation', async () => {
@@ -709,7 +729,7 @@ describe('AppearancePanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
 
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Delete skin' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Delete theme' }))
     })
 
     expect(api.deleteSkin).toHaveBeenCalledWith(skin.id)
@@ -732,7 +752,7 @@ describe('AppearancePanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
 
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Delete skin' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Delete theme' }))
     })
 
     expect(api.deleteSkin).toHaveBeenCalledWith(skin.id)
@@ -754,7 +774,7 @@ describe('AppearancePanel', () => {
     /></I18nextProvider>)
 
     await act(async () => {
-      fireEvent.change(screen.getByLabelText('Skin name'), { target: { value: 'Edited' } })
+      fireEvent.change(screen.getByLabelText('Theme name'), { target: { value: 'Edited' } })
     })
     await act(async () => {
       fireEvent.click(screen.getByText('Save'))

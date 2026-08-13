@@ -48,7 +48,7 @@ export default {
     exit: {
       unsafeTitle: 'CLILoom cannot exit safely',
       unsafeMessage: 'Some child processes could not be confirmed terminated. Resolve them and try again.\n\n{{detail}}',
-      treesNotTerminated: '{{count}} process tree(s) could not be confirmed terminated'
+      treesNotTerminated: 'Process trees not confirmed terminated: {{count}}'
     },
     startup: {
       failedTitle: 'CLILoom failed to start'
@@ -81,7 +81,7 @@ export default {
       settingsInvalid: 'Invalid settings window sender'
     },
     appearance: {
-      unsupportedSkin: 'Unsupported skin',
+      unsupportedSkin: 'Unsupported theme',
       unsupportedLanguage: 'Unsupported interface language'
     },
     windowState: {
@@ -172,16 +172,16 @@ export default {
       bodyTooLarge: 'The bridge request exceeds the size limit'
     },
     database: {
-      unsupportedSchemaDetected: 'A database from a different release was detected; opening was refused to avoid reading or modifying non-current data: {{path}}',
+      unsupportedSchemaDetected: 'This file does not have the expected CLILoom database identity, so it was not opened to avoid reading or modifying unrelated data: {{path}}',
       unsupportedSchema: 'Unsupported database schema version: {{version}}',
       invalidWorkflowJson: 'Invalid workflow JSON in the database',
       revisionConflict: 'The workflow has been modified by another operation; refresh and retry',
-      workflowNotFoundForUpdate: 'Workflow not found; cannot update by old revision',
+      workflowNotFoundForUpdate: 'Workflow not found; it cannot be updated using the previous revision',
       workflowExistsNoRevision: 'Workflow already exists; an expected revision must be provided when updating',
       revisionPositive: 'expected revision must be a positive integer',
       workflowNotFound: 'Workflow not found or has been deleted',
-      missingVersionTasks: 'This workflow has {{count}} historical task(s) missing a workflow version; delete the related tasks first',
-      activeTasksInUse: 'This workflow is still in use by {{count}} active task(s); stop or delete the related tasks first',
+      missingVersionTasks: 'Historical tasks without a workflow version: {{count}}. Delete the related tasks first.',
+      activeTasksInUse: 'Active tasks using this workflow: {{count}}. Stop or delete the related tasks first.',
       projectNotFound: 'Project not found or has been deleted',
       projectNameInvalid: 'Project name must be a string',
       projectNameEmpty: 'Project name must not be empty',
@@ -219,8 +219,8 @@ export default {
       readFileOutside: '--file cannot read files outside the assistant workspace',
       notAFile: 'The --file target must be a regular file',
       fileTooLarge: 'File exceeds the {{limit}} byte limit',
-      notADirectory: 'The managed assistant directory is not a regular directory: {{path}}',
-      managedNotAFile: 'The managed assistant file is not a regular file: {{path}}',
+      notADirectory: 'The managed assistant path must be a directory and must not be a symbolic link: {{path}}',
+      managedNotAFile: 'The managed assistant path must be a regular file and must not be a symbolic link: {{path}}',
       buildIdentityInvalid: 'The assistant workspace build identity is invalid',
       unsafeLauncherPath: 'The application path cannot be written safely to the Windows launcher'
     },
@@ -265,7 +265,7 @@ export default {
       syntaxExpected: 'Expression syntax error, expected {{type}}',
       syntaxUnexpectedToken: 'Expression syntax error, unexpected token: {{token}}',
       unsupportedFunction: 'Unsupported function: {{name}}',
-      functionArity: '{{name}} expects {{expected}} argument(s) but received {{received}}',
+      functionArity: 'Argument count for {{name}}: expected {{expected}}, received {{received}}',
       unsupportedOperator: 'Unsupported operator: {{operator}}'
     },
     clipboard: {
@@ -274,7 +274,8 @@ export default {
       readFailed: 'Could not read the system clipboard'
     },
     terminal: {
-      notInputtable: 'The terminal is not accepting input right now'
+      notInputtable: 'The terminal is not accepting input right now',
+      transcriptApiUnavailable: 'Terminal history is unavailable'
     },
     boundary: {
       title: 'The application hit an error',
@@ -476,7 +477,7 @@ export default {
       name: 'Name'
     },
     title: 'Workflow designer',
-    description: 'Drag in nodes, connect paths, and configure execution parameters.',
+    description: 'Add nodes, connect them, and configure how they run.',
     workflowName: {
       aria: 'Workflow name'
     },
@@ -499,7 +500,8 @@ export default {
       delete: {
         aria: 'Delete edge',
         tooltip: 'Delete edge'
-      }
+      },
+      defaultLabel: 'Default'
     },
     palette: {
       flowControl: 'Flow control',
@@ -516,13 +518,13 @@ export default {
       options: 'Options',
       successExitCodes: 'Success exit codes',
       exitCodesHint: 'Separate multiple exit codes with commas, spaces, or newlines.',
-      timeoutMs: 'Timeout (ms)',
+      timeoutMs: 'Timeout in milliseconds',
       unlimited: 'No limit',
       mode: 'Mode',
       modeSplit: 'Parallel branch (split)',
       modeJoin: 'Join (join)',
-      joinIncoming: 'Join incoming edges',
-      joinIncomingDescription: 'After connecting branches to this join node, select the incoming edges to wait for here.'
+      joinIncoming: 'Incoming edges to wait for',
+      joinIncomingDescription: 'Connect branches to this join node, then select which incoming edges it must wait for.'
     },
     env: {
       title: 'Environment variables',
@@ -595,7 +597,7 @@ export default {
       commandAvailable: 'Command available: {{detail}}'
     },
     shell: {
-      errorHint: '{{error}} Return to the main window settings to redetect or choose another terminal environment.',
+      errorHint: '{{error}}\n\nReturn to the main window settings to redetect or choose another terminal environment.',
       unavailableTitle: 'Global terminal environment unavailable',
       redirectOnly: 'Return to the main window settings to redetect or choose another terminal environment.'
     },
@@ -608,7 +610,7 @@ export default {
     globalShellDescription: 'Set in the main window; changes take effect the next time the assistant starts or restarts.',
     initializationCommand: 'Initialization command',
     command: {
-      placeholder: 'Enter the AI CLI launch command you usually use (such as codex or opencode) to help you use this app',
+      placeholder: 'Enter the AI CLI launch command you normally use, such as codex or opencode',
       hint: 'Supports commands and arguments, including quoted paths with spaces; pipes, redirects, and command chaining are not supported.'
     },
     status: {
@@ -617,7 +619,7 @@ export default {
       running: 'Running',
       failed: 'Start failed',
       ended: 'Ended (exit code {{code}})',
-      unknownExitCode: 'unknown exit code'
+      unknownExitCode: 'unknown'
     }
   },
   terminal: {
@@ -725,7 +727,7 @@ export default {
     end: {
       completedTitle: 'Task completed',
       pendingTitle: 'Waiting for the workflow to finish',
-      completedDescription: 'All nodes in the workflow have finished running.',
+      completedDescription: 'The workflow has reached the end node.',
       pendingDescription: 'Waiting for the flow to reach the end node.'
     },
     zoom: {
@@ -735,14 +737,14 @@ export default {
     },
     parallel: {
       viewingSingle: 'Viewing a single branch node',
-      routesCount: '{{count}} routes running in parallel',
+      routesCount: '{{count}} parallel routes',
       viewFullGraphAria: 'View full flow graph'
     }
   },
   settings: {
     menu: {
       label: 'Settings',
-      skin: 'Skin',
+      skin: 'Theme',
       defaultShell: 'Terminal Shell',
       globalShell: 'Global terminal environment'
     },
@@ -826,8 +828,8 @@ export default {
       dark: 'Dark'
     },
     group: {
-      preset: 'Preset skins',
-      mySkins: 'Custom skins'
+      preset: 'Preset themes',
+      mySkins: 'Custom themes'
     },
     section: {
       colors: 'Colors',
@@ -872,7 +874,7 @@ export default {
     },
     action: {
       customize: 'Customize…',
-      new: 'New skin',
+      new: 'New theme',
       duplicate: 'Duplicate to edit',
       rename: 'Rename',
       delete: 'Delete',
@@ -880,12 +882,13 @@ export default {
       import: 'Import…',
       export: 'Export…',
       confirm: 'Save',
+      apply: 'Apply theme',
       cancel: 'Cancel'
     },
     delete: {
-      title: 'Delete skin "{{name}}"?',
-      description: 'This custom skin will be permanently deleted. If it is active, the interface will automatically switch to the default skin. This cannot be undone.',
-      confirm: 'Delete skin'
+      title: 'Delete theme "{{name}}"?',
+      description: 'This custom theme will be permanently deleted. If it is active, the interface will automatically switch to the default theme. This cannot be undone.',
+      confirm: 'Delete theme'
     },
     background: {
       solid: 'Solid',
@@ -909,18 +912,18 @@ export default {
       lineHeight: 'UI line height'
     },
     name: {
-      label: 'Skin name',
-      placeholder: 'Skin name'
+      label: 'Theme name',
+      placeholder: 'Theme name'
     },
     hint: {
       realtimePreview: 'Changes preview live. Save to keep them.',
-      emptyCustom: 'No custom skins yet.'
+      emptyCustom: 'No custom themes yet.'
     },
     error: {
-      invalidId: 'Unknown skin id',
-      nameRequired: 'Skin name is required',
-      libraryFull: 'Skin library is full',
-      parseFailed: 'Could not import this skin file',
+      invalidId: 'Unknown theme ID',
+      nameRequired: 'Theme name is required',
+      libraryFull: 'Theme library is full',
+      parseFailed: 'Could not import this theme file',
       dirtyConfirm: 'Discard unsaved changes?'
     }
   }

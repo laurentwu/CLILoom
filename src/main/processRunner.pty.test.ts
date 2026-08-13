@@ -656,7 +656,7 @@ describe('ProcessRunner interactive PTY lifecycle', () => {
     })
 
     await expect(runner.killByTask('tree-failure-task')).rejects.toThrow(
-      '1 process tree(s) could not be confirmed terminated'
+      'Process trees not confirmed terminated: 1'
     )
     expect(db.prepare('select status from terminal_sessions limit 1').get()).toEqual({
       status: 'killed'

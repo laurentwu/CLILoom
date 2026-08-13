@@ -94,8 +94,8 @@ export default {
       valueMustBeString: '设置值必须是字符串'
     },
     workflow: {
-      revisionMissing: '缺少流程 revision，请刷新后重试',
-      saveNoResult: '保存流程未返回结果'
+      revisionMissing: '缺少工作流修订号，请刷新后重试',
+      saveNoResult: '保存工作流时未返回结果'
     },
     shell: {
       invalidSelection: 'Shell 选择无效',
@@ -132,7 +132,7 @@ export default {
       unavailable: '初始化命令不可用：{{executable}}',
       notFound: '找不到初始化命令：{{executable}}',
       unknownCommand: '未知命令：{{command}}',
-      workflowNotFound: '流程不存在或已被删除',
+      workflowNotFound: '工作流不存在或已被删除',
       invalidWorkflowSubcommand: 'workflow 子命令无效',
       invalidProjectSubcommand: 'project 子命令无效',
       invalidSettingsSubcommand: 'settings 子命令无效',
@@ -141,8 +141,8 @@ export default {
       revisionPositive: '--expected-revision 必须是正整数',
       unknownArgument: '未知参数：{{argument}}',
       stdinOrFile: '必须且只能选择 --stdin 或 --file',
-      workflowJsonEmpty: '流程 JSON 为空',
-      workflowJsonParse: '流程 JSON 无法解析',
+      workflowJsonEmpty: '工作流 JSON 为空',
+      workflowJsonParse: '无法解析工作流 JSON',
       argCount: '参数数量无效，需要 {{count}} 个',
       initMustBeString: '初始化命令必须是字符串',
       initEmpty: '初始化命令不能为空',
@@ -172,16 +172,16 @@ export default {
       bodyTooLarge: '桥接请求超过大小限制'
     },
     database: {
-      unsupportedSchemaDetected: '检测到不属于当前正式版本的数据库，已拒绝打开以避免读取或修改旧版/开发版数据：{{path}}',
+      unsupportedSchemaDetected: '该文件的数据库标识与 CLILoom 不匹配。为避免读取或修改无关数据，已拒绝打开：{{path}}',
       unsupportedSchema: '数据库 schema 版本不受支持：{{version}}',
-      invalidWorkflowJson: '数据库中的流程 JSON 无效',
-      revisionConflict: '流程已被其他操作修改，请刷新后重试',
-      workflowNotFoundForUpdate: '流程不存在，不能按旧 revision 更新',
-      workflowExistsNoRevision: '流程已存在，更新时必须提供 expected revision',
-      revisionPositive: 'expected revision 必须是正整数',
-      workflowNotFound: '流程不存在或已被删除',
-      missingVersionTasks: '该流程有 {{count}} 个历史任务缺少流程版本，请先删除关联任务',
-      activeTasksInUse: '该流程仍被 {{count}} 个进行中的任务使用，请先停止或删除关联任务',
+      invalidWorkflowJson: '数据库中的工作流 JSON 无效',
+      revisionConflict: '工作流已被其他操作修改，请刷新后重试',
+      workflowNotFoundForUpdate: '工作流不存在，无法使用旧修订号更新',
+      workflowExistsNoRevision: '工作流已存在，更新时必须提供预期修订号',
+      revisionPositive: '预期修订号必须为正整数',
+      workflowNotFound: '工作流不存在或已被删除',
+      missingVersionTasks: '缺少工作流版本的历史任务数：{{count}}。请先删除相关任务。',
+      activeTasksInUse: '正在使用该工作流的活动任务数：{{count}}。请先停止或删除相关任务。',
       projectNotFound: '项目不存在或已被删除',
       projectNameInvalid: '项目名称必须是字符串',
       projectNameEmpty: '项目名称不能为空',
@@ -195,12 +195,12 @@ export default {
     },
     workflowConfig: {
       cancelled: '用户取消了操作',
-      workflowIdLabel: '流程 ID',
+      workflowIdLabel: '工作流 ID',
       projectIdLabel: '项目 ID',
-      designerWorkflowIdLabel: '设计器流程 ID',
+      designerWorkflowIdLabel: '设计器中的工作流 ID',
       invalidDesignerState: '设计器状态无效',
-      invalidDesignerWorkflowId: '设计器流程 ID 无效',
-      dirtyInDesigner: '该流程正在设计器中编辑且有未保存修改，请先保存或关闭设计器',
+      invalidDesignerWorkflowId: '设计器中的工作流 ID 无效',
+      dirtyInDesigner: '该工作流正在设计器中编辑且有未保存的更改，请先保存或关闭设计器',
       labelInvalid: '{{label}} 无效'
     },
     workflowRuntime: {
@@ -219,8 +219,8 @@ export default {
       readFileOutside: '--file 不能读取助手工作区之外的文件',
       notAFile: '--file 目标必须是普通文件',
       fileTooLarge: '文件超过 {{limit}} 字节限制',
-      notADirectory: '受管助手目录不是普通目录：{{path}}',
-      managedNotAFile: '受管助手文件不是普通文件：{{path}}',
+      notADirectory: '受管助手路径必须是目录且不能是符号链接：{{path}}',
+      managedNotAFile: '受管助手路径必须是普通文件且不能是符号链接：{{path}}',
       buildIdentityInvalid: '助手工作区的应用构建身份无效',
       unsafeLauncherPath: '应用路径不能安全写入 Windows 启动器'
     },
@@ -236,7 +236,7 @@ export default {
       stageFailed: '平台 {{platform}}，Shell {{shell}}，{{stage}}阶段失败：{{detail}}。请重新检测 Shell 或在主窗口设置中选择其他 Shell'
     },
     runtime: {
-      workflowVersionMismatch: '流程版本与运行状态不匹配: {{actual}} !== {{expected}}',
+      workflowVersionMismatch: '工作流版本与运行状态不匹配：{{actual}} !== {{expected}}',
       executionTargetUnsupported: '该工作流使用了已不再受支持的历史执行目标',
       branchNotFound: '分支不存在: {{id}}',
       nodeNotFound: '节点不存在: {{id}}',
@@ -274,7 +274,8 @@ export default {
       readFailed: '无法读取系统剪贴板'
     },
     terminal: {
-      notInputtable: '终端当前不可输入'
+      notInputtable: '终端当前不接受输入',
+      transcriptApiUnavailable: '终端历史记录不可用'
     },
     boundary: {
       title: '应用出现错误',
@@ -282,12 +283,12 @@ export default {
       reload: '重新加载'
     },
     workflowValidation: {
-      workflow: '流程',
-      workflowId: '流程 ID',
-      workflowName: '流程名称',
-      workflowDescription: '流程描述',
-      nodes: '流程节点',
-      edges: '流程连线',
+      workflow: '工作流',
+      workflowId: '工作流 ID',
+      workflowName: '工作流名称',
+      workflowDescription: '工作流描述',
+      nodes: '工作流节点',
+      edges: '工作流连线',
       duplicateNodeId: '节点 ID 重复：{{id}}',
       duplicateEdgeId: '连线 ID 重复：{{id}}',
       fromNodeMissing: '{{id}}: 起点节点不存在',
@@ -300,10 +301,10 @@ export default {
       failPolicy: '{{label}}: failPolicy 必须是 continue 或 fail-node',
       edgeLabel: '连线 {{index}}',
       edgeIdLabel: '连线 {{index}} ID',
-      layout: '流程布局',
-      layoutNodes: '流程布局节点',
-      tooManyLayoutNodes: '流程布局节点数量过多',
-      layoutNodeMissing: '流程布局引用了不存在的节点：{{id}}',
+      layout: '工作流布局',
+      layoutNodes: '工作流布局节点',
+      tooManyLayoutNodes: '工作流布局节点数量过多',
+      layoutNodeMissing: '工作流布局引用了不存在的节点：{{id}}',
       layoutPosition: '{{id}}: 布局位置',
       tooManyEntries: '{{label}} 项目过多',
       invalidKey: '{{label}} 包含无效键名',
@@ -346,16 +347,16 @@ export default {
   },
   workflow: {
     delete: {
-      title: '删除流程',
-      confirm: '删除流程“{{name}}”？',
-      detailId: '流程 ID：{{id}}',
-      detailDefaultProjects: '作为默认流程的项目：{{count}}',
+      title: '删除工作流',
+      confirm: '删除工作流“{{name}}”？',
+      detailId: '工作流 ID：{{id}}',
+      detailDefaultProjects: '将其设为默认工作流的项目数：{{count}}',
       detailHistoricalTasks: '关联历史任务：{{count}}',
       detailActiveTasks: '进行中任务：{{count}}',
-      description: '当前流程定义和全部连线将被永久删除，历史任务仍保留启动时使用的流程版本。',
-      defaultProjectsNote: '将它设为默认流程的项目会自动改用其他可用流程。',
-      confirmButton: '删除流程',
-      tooltip: '删除流程'
+      description: '当前工作流定义和全部连线将被永久删除，历史任务仍保留启动时使用的工作流版本。',
+      defaultProjectsNote: '将它设为默认工作流的项目会自动改用其他可用工作流。',
+      confirmButton: '删除工作流',
+      tooltip: '删除工作流'
     },
     nodeType: {
       start: '开始',
@@ -383,18 +384,18 @@ export default {
       sys_join_results_json: '并行分支结构化结果 JSON 字符串（join 后可用，用于读取分支产物）'
     },
     empty: {
-      name: '暂无流程',
-      addFirst: '请先添加流程',
-      noWorkflowsDescription: '当前没有可用流程，请从左侧项目栏打开流程设计器进行添加。'
+      name: '暂无工作流',
+      addFirst: '请先添加工作流',
+      noWorkflowsDescription: '当前没有可用工作流，请从左侧项目栏打开工作流设计器进行添加。'
     },
-    newName: '新流程',
+    newName: '新工作流',
     copySuffix: '{{name}} 副本',
-    add: '添加流程',
+    add: '添加工作流',
     toast: {
-      saved: '流程已保存'
+      saved: '工作流已保存'
     },
     select: {
-      aria: '选择工作流程'
+      aria: '选择工作流'
     },
     deletedSuffix: '{{name}}（已删除）',
     summary: '{{nodes}} 个节点 · {{edges}} 条连线',
@@ -407,17 +408,17 @@ export default {
       graphLabel: '流程图'
     },
     invalidConfigTitle: '工作流配置无效',
-    saveFailedTitle: '无法保存流程',
+    saveFailedTitle: '无法保存工作流',
     switchConfirm: {
-      title: '切换工作流程？',
-      description: '切换后将清除当前任务中已填写的变量，并使用新流程的默认值。此操作无法撤销。',
+      title: '切换工作流？',
+      description: '切换后将清除当前任务中已填写的变量，并使用新工作流的默认值。此操作无法撤销。',
       confirm: '确认切换'
     },
     copy: {
-      tooltip: '复制流程'
+      tooltip: '复制工作流'
     },
     actions: {
-      aria: '流程操作 {{name}}'
+      aria: '工作流操作 {{name}}'
     }
   },
   project: {
@@ -448,7 +449,7 @@ export default {
   },
   designer: {
     action: {
-      open: '流程设计器'
+      open: '工作流设计器'
     },
     variables: {
       title: '可用变量',
@@ -475,23 +476,23 @@ export default {
       conditionExpression: '条件表达式',
       name: '名称'
     },
-    title: '流程设计器',
-    description: '拖入节点、连接路径并配置执行参数',
+    title: '工作流设计器',
+    description: '添加节点、连接路径并配置执行方式。',
     workflowName: {
-      aria: '流程名称'
+      aria: '工作流名称'
     },
     arrange: {
-      aria: '一键整理流程节点',
+      aria: '一键整理工作流节点',
       tooltip: '按流程顺序从左到右排列，并行节点同列展示，节点间隔 100px',
       label: '一键整理'
     },
-    saveWorkflow: '保存流程',
+    saveWorkflow: '保存工作流',
     close: {
-      aria: '关闭流程设计器'
+      aria: '关闭工作流设计器'
     },
     discardConfirm: {
       title: '放弃未保存的更改？',
-      description: '当前流程的修改尚未保存，关闭设计器后这些修改会丢失。',
+      description: '当前工作流的更改尚未保存，关闭设计器后这些更改会丢失。',
       keepEditing: '继续编辑',
       discard: '放弃更改'
     },
@@ -499,7 +500,8 @@ export default {
       delete: {
         aria: '删除连线',
         tooltip: '删除连线'
-      }
+      },
+      defaultLabel: '默认'
     },
     palette: {
       flowControl: '流程控制',
@@ -516,13 +518,13 @@ export default {
       options: '选项',
       successExitCodes: '成功退出码',
       exitCodesHint: '多个退出码使用逗号、空格或换行分隔。',
-      timeoutMs: '超时毫秒',
+      timeoutMs: '超时时间（毫秒）',
       unlimited: '不限',
       mode: '模式',
       modeSplit: '并行分支 (split)',
       modeJoin: '汇合 (join)',
-      joinIncoming: '汇聚入边',
-      joinIncomingDescription: '连接分支到此 join 节点后，在这里选择需要等待的入边。'
+      joinIncoming: '需要等待的入边',
+      joinIncomingDescription: '将分支连接到此汇合节点后，选择该节点需要等待的入边。'
     },
     env: {
       title: '环境变量',
@@ -595,7 +597,7 @@ export default {
       commandAvailable: '命令可用：{{detail}}'
     },
     shell: {
-      errorHint: '{{error}}请回到主窗口设置，重新检测或选择其他终端环境。',
+      errorHint: '{{error}}\n\n请返回主窗口设置，重新检测或选择其他终端环境。',
       unavailableTitle: '全局终端环境不可用',
       redirectOnly: '请回到主窗口设置并重新检测或选择终端环境。'
     },
@@ -608,7 +610,7 @@ export default {
     globalShellDescription: '由主窗口设置；更改后将在下次启动或重启助手时生效。',
     initializationCommand: '初始化命令',
     command: {
-      placeholder: '请输入你常用的 AI CLI 启动命令（如 codex、opencode 等）来协助你使用本软件',
+      placeholder: '输入常用的 AI CLI 启动命令，如 codex 或 opencode',
       hint: '支持命令及参数，包括带空格的引用路径；不支持管道、重定向或命令串联。'
     },
     status: {
@@ -616,8 +618,8 @@ export default {
       starting: '正在启动…',
       running: '运行中',
       failed: '启动失败',
-      ended: '已结束（{{code}}）',
-      unknownExitCode: '未知退出码'
+      ended: '已结束（退出码：{{code}}）',
+      unknownExitCode: '未知'
     }
   },
   terminal: {
@@ -714,7 +716,7 @@ export default {
     },
     variable: {
       emptyTitle: '此节点没有变量',
-      emptyDescription: '可在流程设计器中为节点添加变量定义。'
+      emptyDescription: '可在工作流设计器中为节点添加变量定义。'
     },
     gateway: {
       decisionCompleted: '已完成决策',
@@ -725,7 +727,7 @@ export default {
     end: {
       completedTitle: '任务已完成',
       pendingTitle: '等待流程结束',
-      completedDescription: '工作流中的全部节点已经执行完毕。',
+      completedDescription: '工作流已到达结束节点。',
       pendingDescription: '等待流程到达结束节点。'
     },
     zoom: {
@@ -735,7 +737,7 @@ export default {
     },
     parallel: {
       viewingSingle: '正在查看单个分支节点',
-      routesCount: '{{count}} 条路线并行执行',
+      routesCount: '{{count}} 条并行路线',
       viewFullGraphAria: '查看完整流程图'
     }
   },
@@ -788,8 +790,8 @@ export default {
     new: '新建任务',
     defaultTitle: '新建任务',
     selectOrCreate: '选择或新建任务',
-    defaultWorkflow: '默认流程',
-    noWorkflows: '暂无可用流程',
+    defaultWorkflow: '默认工作流',
+    noWorkflows: '暂无可用工作流',
     viewMore: '查看更多',
     actionsAria: '任务操作 {{name}}',
     action: {
@@ -880,12 +882,13 @@ export default {
       import: '导入…',
       export: '导出…',
       confirm: '保存',
+      apply: '应用主题',
       cancel: '取消'
     },
     delete: {
-      title: '删除皮肤“{{name}}”？',
-      description: '该自定义皮肤将被永久删除；如果它正在使用，界面会自动切换到默认皮肤。此操作无法撤销。',
-      confirm: '删除皮肤'
+      title: '删除主题“{{name}}”？',
+      description: '该自定义主题将被永久删除；如果它正在使用，界面会自动切换到默认主题。此操作无法撤销。',
+      confirm: '删除主题'
     },
     background: {
       solid: '纯色',

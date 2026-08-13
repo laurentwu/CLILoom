@@ -311,7 +311,7 @@ describe('database schema v1', () => {
         const bytesBefore = readFileSync(databasePath)
         const filesBefore = readdirSync(dir).sort()
 
-        expect(() => openDatabase(dir)).toThrow('A database from a different release')
+        expect(() => openDatabase(dir)).toThrow('does not have the expected CLILoom database identity')
         expect(readFileSync(databasePath).equals(bytesBefore)).toBe(true)
         expect(readdirSync(dir).sort()).toEqual(filesBefore)
       } finally {
@@ -332,7 +332,7 @@ describe('database schema v1', () => {
       const bytesBefore = readFileSync(databasePath)
       const filesBefore = readdirSync(dir).sort()
 
-      expect(() => openDatabase(dir)).toThrow('A database from a different release')
+      expect(() => openDatabase(dir)).toThrow('does not have the expected CLILoom database identity')
       expect(readFileSync(databasePath).equals(bytesBefore)).toBe(true)
       expect(readdirSync(dir).sort()).toEqual(filesBefore)
     } finally {
@@ -666,7 +666,7 @@ describe('workflow deletion', () => {
     ).run('custom-run', workflow.id, workflowVersion, 'custom-task', 'waiting-input', 'custom-end', '{}', now, now)
 
     expect(() => deleteWorkflowWithRevision(db, workflow.id, saved.revision))
-      .toThrow('This workflow is still in use by 1 active task(s)')
+      .toThrow('Active tasks using this workflow: 1')
     expect(listStoredWorkflows(db).some((item) => item.id === workflow.id)).toBe(true)
   })
 })
