@@ -8,6 +8,16 @@ const path = require('node:path')
 const VALID_SCOPES = /** @type {const} */ (['build', 'main', 'all'])
 
 const USAGE_MESSAGE = 'Usage: node scripts/clean.cjs <build|main|all>'
+const CLEANUP_MAX_RETRIES = 3
+const CLEANUP_RETRY_DELAY_MS = 100
+const RETRYABLE_CLEANUP_ERROR_CODES = new Set([
+  'EBUSY',
+  'EMFILE',
+  'ENFILE',
+  'ENOTEMPTY',
+  'EPERM'
+])
+const CLEANUP_RETRY_WAIT_BUFFER = new Int32Array(new SharedArrayBuffer(4))
 
 /**
  * Read-only cleanup target configuration keyed by scope.
@@ -74,10 +84,112 @@ function parseCleanupScope(argv) {
 }
 
 /**
+ * Return information about an existing entry without following symbolic
+ * links. A non-directory parent means the requested entry cannot exist.
+ *
+ * @param {string} target
+ * @returns {import('node:fs').Stats | undefined}
+ */
+function lstatIfPresent(target) {
+  try {
+    return fs.lstatSync(target)
+  } catch (error) {
+    if (error && (error.code === 'ENOENT' || error.code === 'ENOTDIR')) {
+      return undefined
+    }
+    throw error
+  }
+}
+
+/**
+ * Refuse a target reached through a symbolic link below the project root.
+ * Checking only the target itself is insufficient for paths such as
+ * `dist/main` when `dist` is a Windows junction to an external directory.
+ *
+ * @param {string} root
+ * @param {string} target
+ * @returns {void}
+ */
+function assertNoSymbolicLinkAncestors(root, target) {
+  const relativeParent = path.relative(root, path.dirname(target))
+  if (relativeParent === '') return
+
+  let current = root
+  for (const segment of relativeParent.split(path.sep)) {
+    current = path.join(current, segment)
+    const stats = lstatIfPresent(current)
+    if (!stats) return
+    if (stats.isSymbolicLink()) {
+      throw new Error(
+        `Refusing to clean through a symbolic link: ${path.relative(root, current)}`
+      )
+    }
+    if (!stats.isDirectory()) return
+  }
+}
+
+/**
+ * Retry a synchronous removal operation with the same bounded linear backoff
+ * previously provided by recursive rmSync. ENOENT is accepted so concurrent
+ * removal keeps the original force semantics.
+ *
+ * @param {() => void} operation
+ * @returns {void}
+ */
+function retryCleanupOperation(operation) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      operation()
+      return
+    } catch (error) {
+      if (error && error.code === 'ENOENT') return
+      if (
+        !error ||
+        !RETRYABLE_CLEANUP_ERROR_CODES.has(error.code) ||
+        attempt >= CLEANUP_MAX_RETRIES
+      ) {
+        throw error
+      }
+      Atomics.wait(
+        CLEANUP_RETRY_WAIT_BUFFER,
+        0,
+        0,
+        (attempt + 1) * CLEANUP_RETRY_DELAY_MS
+      )
+    }
+  }
+}
+
+/**
+ * Remove an entry recursively without ever traversing a symbolic link.
+ * Node reports Windows directory junctions as symbolic links through lstat,
+ * so unlinking them explicitly preserves the linked directory and contents.
+ *
+ * @param {string} target
+ * @returns {void}
+ */
+function removeCleanupEntry(target) {
+  const stats = lstatIfPresent(target)
+  if (!stats) return
+
+  if (!stats.isDirectory()) {
+    retryCleanupOperation(() => fs.unlinkSync(target))
+    return
+  }
+
+  for (const entry of fs.readdirSync(target)) {
+    removeCleanupEntry(path.join(target, entry))
+  }
+
+  retryCleanupOperation(() => fs.rmdirSync(target))
+}
+
+/**
  * Compute, validate and remove every generated artifact for the given scope.
  *
- * All targets are resolved and containment-checked before any deletion begins,
- * so a validation failure never leaves a partially cleaned tree behind.
+ * All targets are resolved, containment-checked and checked for linked parent
+ * directories before any deletion begins, so a validation failure never
+ * leaves a partially cleaned tree behind.
  *
  * @param {CleanupScope} scope
  * @param {string} [projectRoot]
@@ -114,8 +226,12 @@ function cleanGeneratedArtifacts(scope, projectRoot) {
   const uniqueTargets = Array.from(new Set(targets))
 
   for (const target of uniqueTargets) {
+    assertNoSymbolicLinkAncestors(root, target)
+  }
+
+  for (const target of uniqueTargets) {
     const display = path.relative(root, target) || path.basename(target)
-    fs.rmSync(target, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
+    removeCleanupEntry(target)
     console.log(`cleaned ${display}`)
   }
 }

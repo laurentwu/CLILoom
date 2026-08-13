@@ -2,13 +2,14 @@ import {
   existsSync,
   mkdtempSync,
   mkdirSync,
+  readdirSync,
   rmSync,
   symlinkSync,
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 type CleanupScope = 'build' | 'main' | 'all'
 
@@ -23,10 +24,12 @@ const {
   resolveCleanupTarget,
   parseCleanupScope
 } = require('./clean.cjs') as CleanModule
+const nodeFs = require('node:fs') as typeof import('node:fs')
 
 const tempRoots: string[] = []
 
 afterEach(() => {
+  vi.restoreAllMocks()
   while (tempRoots.length > 0) {
     const root = tempRoots.pop()!
     rmSync(root, { recursive: true, force: true })
@@ -50,6 +53,23 @@ function createDirectory(root: string, relativePath: string): string {
   const fullPath = path.join(root, relativePath)
   mkdirSync(fullPath, { recursive: true })
   return fullPath
+}
+
+function tryCreateDirectoryLink(target: string, linkPath: string): boolean {
+  try {
+    symlinkSync(
+      target,
+      linkPath,
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+    return true
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code !== 'EPERM' && code !== 'ENOSYS' && code !== 'EEXIST') {
+      throw error
+    }
+    return false
+  }
 }
 
 describe('clean script - build scope', () => {
@@ -92,6 +112,30 @@ describe('clean script - main scope', () => {
     expect(existsSync(path.join(root, 'dist/renderer'))).toBe(true)
     expect(existsSync(rendererIndex)).toBe(true)
     expect(existsSync(rootBuildInfo)).toBe(true)
+  })
+
+  it('removes a dist/main directory link without touching its target', () => {
+    const root = createTempRoot()
+    const dist = createDirectory(root, 'dist')
+    const mainBuildInfo = writeFile(root, 'dist/tsconfig.main.tsbuildinfo', 'info')
+    const externalDir = mkdtempSync(path.join(tmpdir(), 'cliloom-clean-main-external-'))
+    tempRoots.push(externalDir)
+    const externalSentinel = writeFile(externalDir, 'sentinel.txt', 'keep')
+
+    const linkPath = path.join(dist, 'main')
+    const linkCreated = tryCreateDirectoryLink(externalDir, linkPath)
+    if (!linkCreated) {
+      expect(existsSync(externalSentinel)).toBe(true)
+      return
+    }
+
+    cleanGeneratedArtifacts('main', root)
+
+    expect(existsSync(linkPath)).toBe(false)
+    expect(existsSync(mainBuildInfo)).toBe(false)
+    expect(readdirSync(dist)).toEqual([])
+    expect(existsSync(externalDir)).toBe(true)
+    expect(existsSync(externalSentinel)).toBe(true)
   })
 })
 
@@ -191,20 +235,7 @@ describe('clean script - external symlink target', () => {
     const externalSentinel = writeFile(externalDir, 'sentinel.txt', 'keep')
 
     const linkPath = path.join(root, 'release')
-    let linkCreated = true
-    try {
-      symlinkSync(
-        externalDir,
-        linkPath,
-        process.platform === 'win32' ? 'junction' : 'dir'
-      )
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code
-      if (code !== 'EPERM' && code !== 'ENOSYS' && code !== 'EEXIST') {
-        throw error
-      }
-      linkCreated = false
-    }
+    const linkCreated = tryCreateDirectoryLink(externalDir, linkPath)
 
     if (!linkCreated) {
       expect(existsSync(externalSentinel)).toBe(true)
@@ -215,6 +246,71 @@ describe('clean script - external symlink target', () => {
 
     expect(existsSync(linkPath)).toBe(false)
     expect(existsSync(externalDir)).toBe(true)
+    expect(existsSync(externalSentinel)).toBe(true)
+  })
+
+  it('retries a temporarily busy directory link without following it', () => {
+    const root = createTempRoot()
+    const externalDir = mkdtempSync(path.join(tmpdir(), 'cliloom-clean-retry-external-'))
+    tempRoots.push(externalDir)
+    const externalSentinel = writeFile(externalDir, 'sentinel.txt', 'keep')
+
+    const linkPath = path.join(root, 'release')
+    const linkCreated = tryCreateDirectoryLink(externalDir, linkPath)
+    if (!linkCreated) {
+      expect(existsSync(externalSentinel)).toBe(true)
+      return
+    }
+    const unlinkSpy = vi.spyOn(nodeFs, 'unlinkSync').mockImplementationOnce(() => {
+      const error = new Error('busy') as NodeJS.ErrnoException
+      error.code = 'EBUSY'
+      throw error
+    })
+
+    cleanGeneratedArtifacts('all', root)
+
+    expect(unlinkSpy).toHaveBeenCalledTimes(2)
+    expect(existsSync(linkPath)).toBe(false)
+    expect(existsSync(externalSentinel)).toBe(true)
+  })
+
+  it('never follows a directory link nested inside a cleanup target', () => {
+    const root = createTempRoot()
+    const externalDir = mkdtempSync(path.join(tmpdir(), 'cliloom-clean-nested-external-'))
+    tempRoots.push(externalDir)
+    const externalSentinel = writeFile(externalDir, 'sentinel.txt', 'keep')
+    writeFile(root, 'release/local.txt', 'remove')
+
+    const linkPath = path.join(root, 'release', 'external')
+    const linkCreated = tryCreateDirectoryLink(externalDir, linkPath)
+    if (!linkCreated) {
+      expect(existsSync(externalSentinel)).toBe(true)
+      return
+    }
+
+    cleanGeneratedArtifacts('all', root)
+
+    expect(existsSync(path.join(root, 'release'))).toBe(false)
+    expect(existsSync(externalDir)).toBe(true)
+    expect(existsSync(externalSentinel)).toBe(true)
+  })
+
+  it('refuses to clean through a linked parent directory', () => {
+    const root = createTempRoot()
+    const externalDir = mkdtempSync(path.join(tmpdir(), 'cliloom-clean-parent-external-'))
+    tempRoots.push(externalDir)
+    const externalSentinel = writeFile(externalDir, 'main/sentinel.txt', 'keep')
+
+    const linkPath = path.join(root, 'dist')
+    const linkCreated = tryCreateDirectoryLink(externalDir, linkPath)
+    if (!linkCreated) {
+      expect(existsSync(externalSentinel)).toBe(true)
+      return
+    }
+
+    expect(() => cleanGeneratedArtifacts('main', root))
+      .toThrow(/Refusing to clean through a symbolic link: dist/)
+    expect(existsSync(linkPath)).toBe(true)
     expect(existsSync(externalSentinel)).toBe(true)
   })
 })
@@ -247,6 +343,21 @@ describe('clean script - root build info symlink', () => {
 
     expect(existsSync(linkPath)).toBe(false)
     expect(existsSync(externalFile)).toBe(true)
+  })
+
+  it('retries a temporarily busy regular build info file', () => {
+    const root = createTempRoot()
+    const buildInfo = writeFile(root, 'tsconfig.tsbuildinfo', 'info')
+    const unlinkSpy = vi.spyOn(nodeFs, 'unlinkSync').mockImplementationOnce(() => {
+      const error = new Error('busy') as NodeJS.ErrnoException
+      error.code = 'EBUSY'
+      throw error
+    })
+
+    cleanGeneratedArtifacts('build', root)
+
+    expect(unlinkSpy).toHaveBeenCalledTimes(2)
+    expect(existsSync(buildInfo)).toBe(false)
   })
 })
 
