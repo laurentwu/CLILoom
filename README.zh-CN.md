@@ -112,6 +112,8 @@ CLILoom 支持 macOS、Windows 和 Linux，并可使用 PowerShell、cmd、sh、
 | Linux | ARM64 | AppImage、DEB、RPM | [查看最新版本](https://github.com/laurentwu/CLILoom/releases/latest) |
 | Linux | x64 | AppImage、DEB、RPM | [查看最新版本](https://github.com/laurentwu/CLILoom/releases/latest) |
 
+CLILoom 仅在你点击**设置 → 检查更新**时访问更新服务，启动和后台均不会自动检查。Windows 安装版与 Linux AppImage 发现新版后会自动下载，并等待你确认**重启并更新**；Windows 便携版、macOS、DEB 和 RPM 只会打开对应的 GitHub Release，由你手动安装。CLILoom 不会为了更新请求管理员/root 权限，也不会自行运行系统包管理器。
+
 ### macOS
 
 下载并打开 DMG，然后将 CLILoom 拖入“应用程序”文件夹。也可以解压 ZIP 后手动移动应用。

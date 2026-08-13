@@ -20,6 +20,7 @@ import {
   type ShellSnapshot
 } from '../../shared/shell'
 import type { SupportedLanguage, UserSkin } from '../../shared/appSettings'
+import type { UpdateState } from '../../shared/update'
 import { SUPPORTED_LANGUAGES } from '../../shared/appSettings'
 import { normalizeProjectName } from '../../shared/projectName'
 import { backgroundToCss, BUILTIN_SKIN_OPTIONS } from '../theme'
@@ -85,6 +86,10 @@ type ProjectRailProps = {
   shellSnapshot: ShellSnapshot
   onShellChange: (shellId: string | 'automatic') => Promise<void>
   onRefreshShells: () => Promise<void>
+  updateState: UpdateState
+  onCheckForUpdates: () => void
+  onInstallUpdate: () => void
+  onOpenUpdateRelease: () => void
 }
 
 export function ProjectRail({
@@ -105,7 +110,11 @@ export function ProjectRail({
   onLanguageChange,
   shellSnapshot,
   onShellChange,
-  onRefreshShells
+  onRefreshShells,
+  updateState,
+  onCheckForUpdates,
+  onInstallUpdate,
+  onOpenUpdateRelease
 }: ProjectRailProps) {
   const { t } = useTranslation()
   const [projectToRename, setProjectToRename] = useState<ProjectRecord | null>(null)
@@ -138,6 +147,26 @@ export function ProjectRail({
     : t('settings:shell.automaticHint')
   const shellError = shellActionError ?? shellSnapshot.error
   const normalizedRenameValue = normalizeProjectName(renameValue)
+  const updateBusy = updateState.status === 'checking' || updateState.status === 'downloading'
+  const updateProgress = updateState.progress?.percent === null ||
+    updateState.progress?.percent === undefined
+    ? null
+    : Math.round(updateState.progress.percent)
+  const updateLabel = updateState.status === 'checking'
+    ? t('settings:update.checking')
+    : updateState.status === 'downloading'
+      ? updateProgress === null
+        ? t('settings:update.downloading')
+        : t('settings:update.downloadingPercent', { percent: updateProgress })
+      : updateState.status === 'downloaded'
+        ? t('settings:update.restart')
+        : updateState.status === 'available'
+          ? updateState.capability === 'downloadOnly'
+            ? t('settings:update.viewRelease')
+            : t('settings:update.available')
+          : updateState.status === 'error'
+            ? t('settings:update.retry')
+            : t('settings:update.check')
 
   useEffect(() => {
     setRenameValue(projectToRename?.name ?? '')
@@ -407,6 +436,31 @@ export function ProjectRail({
                     </DropdownMenuItem>
                   </DropdownMenuSubContent>
                 </DropdownMenuSub>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  disabled={updateBusy}
+                  onSelect={() => {
+                    if (
+                      updateState.status === 'downloaded' &&
+                      updateState.capability === 'installable'
+                    ) {
+                      onInstallUpdate()
+                    } else if (
+                      updateState.status === 'available' &&
+                      updateState.capability === 'downloadOnly'
+                    ) {
+                      onOpenUpdateRelease()
+                    } else {
+                      onCheckForUpdates()
+                    }
+                  }}
+                >
+                  <RefreshCw className={updateBusy ? 'animate-spin' : undefined} />
+                  <span className="min-w-0 flex-1 truncate">{updateLabel}</span>
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {t('settings:update.currentVersion', { version: updateState.currentVersion })}
+                  </span>
+                </DropdownMenuItem>
               </DropdownMenuGroup>
             </DropdownMenuContent>
           </DropdownMenu>

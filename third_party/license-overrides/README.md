@@ -6,7 +6,8 @@ The reviewed sources are:
 
 - `cm6-theme-basic-light`: `craftzdog/cm6-themes` `LICENSE` on the upstream `main` branch.
 - `format`: the package README's MIT declaration and `Copyright 2010 - 2016 Sami Samhuri`, combined with the standard MIT terms.
+- `lazy-val`: the npm package manifest's MIT declaration and author attribution for Vladimir Krivosheev, combined with the standard MIT terms.
 - `mdast-util-highlight-mark` and `micromark-extension-highlight-mark`: `shlroland/remark-highlight-mark` `License` on the upstream `master` branch.
 - `react-remove-scroll-bar`: `theKashey/react-remove-scroll-bar` `LICENSE` on the upstream `master` branch.
 
-These copies were reviewed on 2026-08-09. Re-check the source whenever one of the mapped package versions changes.
+These copies were reviewed on 2026-08-12. Re-check the source whenever one of the mapped package versions changes.

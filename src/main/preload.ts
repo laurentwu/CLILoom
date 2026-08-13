@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { LayoutPreferences, SupportedLanguage, Skin, SkinContent, UserSkin } from '../shared/appSettings'
 import type { ShellSnapshot } from '../shared/shell'
 import type { TerminalDataEvent, TerminalTranscriptSnapshot } from '../shared/terminalBuffer'
+import type { UpdateState } from '../shared/update'
 
 const api = {
   rendererNoSandboxSwitch: process.argv.includes('--no-sandbox'),
@@ -29,6 +30,10 @@ const api = {
   refreshShells: () => ipcRenderer.invoke('settings:refresh-shells') as Promise<ShellSnapshot>,
   updateShell: (shellId: string | 'automatic') =>
     ipcRenderer.invoke('settings:update-shell', shellId) as Promise<ShellSnapshot>,
+  getUpdateState: () => ipcRenderer.invoke('updates:get-state') as Promise<UpdateState>,
+  checkForUpdates: () => ipcRenderer.invoke('updates:check') as Promise<UpdateState>,
+  installUpdate: () => ipcRenderer.invoke('updates:install') as Promise<UpdateState>,
+  openUpdateRelease: () => ipcRenderer.invoke('updates:open-release') as Promise<UpdateState>,
   themeReady: () => ipcRenderer.send('app:theme-ready'),
   openAssistant: () => ipcRenderer.invoke('assistant:open'),
   setLastOpenedWorkspace: (value: { projectId: string; taskId: string | null } | null) =>
@@ -114,6 +119,11 @@ const api = {
     const listener = (_event: Electron.IpcRendererEvent, payload: unknown) => callback(payload)
     ipcRenderer.on('projects:changed', listener)
     return () => ipcRenderer.removeListener('projects:changed', listener)
+  },
+  onUpdateState: (callback: (state: UpdateState) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, state: UpdateState) => callback(state)
+    ipcRenderer.on('updates:state', listener)
+    return () => ipcRenderer.removeListener('updates:state', listener)
   }
 }
 

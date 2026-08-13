@@ -23,6 +23,7 @@ const distributedRoots = [
   'class-variance-authority',
   'clsx',
   'cmdk',
+  'electron-updater',
   'font-list',
   'i18next',
   'lucide-react',
@@ -45,6 +46,7 @@ const directNoticeRoots = ['electron', 'shadcn']
 const noticeOverrides = {
   'cm6-theme-basic-light@0.2.0': 'cm6-theme-basic-light.txt',
   'format@0.2.2': 'format.txt',
+  'lazy-val@1.0.5': 'lazy-val.txt',
   'mdast-util-highlight-mark@1.2.2': 'remark-highlight-mark.txt',
   'micromark-extension-highlight-mark@1.2.0': 'remark-highlight-mark.txt',
   'react-remove-scroll-bar@2.3.8': 'react-remove-scroll-bar.txt'
@@ -52,6 +54,13 @@ const noticeOverrides = {
 
 const supplementalLegalFiles = {
   'node-pty@1.1.0': ['deps/winpty/LICENSE']
+}
+
+// electron-updater -> fs-extra -> jsonfile uses graceful-fs when it is present.
+// npm installs that optional dependency in the packaged production tree, so it
+// is intentionally traversed and included in the generated notice inventory.
+const reviewedOptionalRuntimeDependencies = {
+  'node_modules/jsonfile': ['graceful-fs']
 }
 
 main()
@@ -193,12 +202,19 @@ function collectDistributedPackageKeys() {
 
     const lockEntry = lockPackages[current.installKey]
     const optionalDependencies = Object.keys(lockEntry.optionalDependencies ?? {})
-    if (optionalDependencies.length > 0) {
+    const reviewedOptionalDependencies = reviewedOptionalRuntimeDependencies[current.installKey] ?? []
+    if (
+      optionalDependencies.length !== reviewedOptionalDependencies.length ||
+      optionalDependencies.some((name) => !reviewedOptionalDependencies.includes(name))
+    ) {
       throw new Error(
         `${current.installKey} has optional runtime dependencies; review their packaging and notice policy`
       )
     }
-    const runtimeDependencies = new Set(Object.keys(lockEntry.dependencies ?? {}))
+    const runtimeDependencies = new Set([
+      ...Object.keys(lockEntry.dependencies ?? {}),
+      ...reviewedOptionalDependencies
+    ])
     for (const [peerName, metadata] of Object.entries(lockEntry.peerDependenciesMeta ?? {})) {
       if (metadata.optional) runtimeDependencies.delete(peerName)
     }

@@ -112,6 +112,8 @@ Use the stable [latest GitHub Release](https://github.com/laurentwu/CLILoom/rele
 | Linux | ARM64 | AppImage, DEB, RPM | [Check latest release](https://github.com/laurentwu/CLILoom/releases/latest) |
 | Linux | x64 | AppImage, DEB, RPM | [Check latest release](https://github.com/laurentwu/CLILoom/releases/latest) |
 
+CLILoom checks for updates only when you choose **Settings → Check for updates**; it never checks automatically at startup or in the background. Windows installer and Linux AppImage builds download a discovered update and wait for you to confirm **Restart and update**. Windows Portable, macOS, DEB, and RPM builds instead open the corresponding GitHub Release for manual installation. CLILoom never requests administrator/root access or runs a system package manager for an update.
+
 ### macOS
 
 Download the DMG, open it, and drag CLILoom into the Applications folder. The ZIP package can be extracted and moved manually instead.

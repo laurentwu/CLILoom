@@ -50,6 +50,10 @@ export default {
       unsafeMessage: 'Some child processes could not be confirmed terminated. Resolve them and try again.\n\n{{detail}}',
       treesNotTerminated: 'Process trees not confirmed terminated: {{count}}'
     },
+    update: {
+      installUnavailable: 'The update is not ready to install.',
+      installCoordinationFailed: 'The update could not start after CLILoom attempted a safe shutdown. The application will remain open; resolve any running-process issue and try again.'
+    },
     startup: {
       failedTitle: 'CLILoom failed to start'
     },
@@ -761,6 +765,41 @@ export default {
       label: 'Language',
       en: 'English',
       zh: '中文'
+    },
+    update: {
+      check: 'Check for updates',
+      checking: 'Checking for updates',
+      available: 'Update found',
+      downloading: 'Downloading update',
+      downloadingPercent: 'Downloading update ({{percent}}%)',
+      restart: 'Restart and update',
+      viewRelease: 'View update',
+      retry: 'Retry update check',
+      currentVersion: 'v{{version}}',
+      upToDate: 'CLILoom v{{version}} is up to date.',
+      availableTitle: 'CLILoom v{{version}} is available',
+      readyTitle: 'CLILoom v{{version}} is ready',
+      currentAndLatest: 'Current version: v{{current}} · Latest version: v{{latest}}',
+      automaticDownload: 'The update will download automatically. You can keep using CLILoom while it downloads.',
+      downloadProgress: 'Downloaded {{percent}}%',
+      readyDescription: 'The update has downloaded. Restart CLILoom when you are ready to install it.',
+      manualDescription: 'This package cannot update itself. Open the verified GitHub Release and install the matching package manually.',
+      portableDescription: 'Portable builds are replaced manually so CLILoom never overwrites the executable that is currently running.',
+      macUnsignedDescription: 'macOS updates are download-only until CLILoom is signed and notarized.',
+      linuxPackageDescription: 'CLILoom will not request root access or run a package manager. Install the DEB or RPM through your normal system workflow.',
+      unsignedWindowsWarning: 'This Windows build is not code-signed and may trigger a SmartScreen warning. Verify that the installer came from the CLILoom GitHub Release.',
+      releaseNotes: 'Release notes',
+      noReleaseNotes: 'No release notes were provided.',
+      later: 'Later',
+      error: {
+        unsupportedBuild: 'This build cannot check for updates.',
+        checkFailed: 'Could not check for updates. Try again.',
+        downloadFailed: 'The update could not be downloaded. Try again.',
+        invalidRelease: 'The update information was invalid.',
+        installUnavailable: 'The update is not ready to install.',
+        installFailed: 'The installer could not be started.',
+        openReleaseFailed: 'The GitHub Release page could not be opened.'
+      }
     }
   },
   status: {

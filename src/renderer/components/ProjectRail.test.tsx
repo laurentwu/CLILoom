@@ -5,6 +5,7 @@ import { I18nextProvider } from 'react-i18next'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { i18n } from '../i18n'
 import { defaultSkinContent, type UserSkin } from '../../shared/skin'
+import type { UpdateState } from '../../shared/update'
 
 vi.mock('@/components/ui/tooltip', async () => {
   const React = await import('react')
@@ -97,6 +98,18 @@ vi.mock('@/components/ui/alert-dialog', async () => {
 
 import { ProjectRail } from './ProjectRail'
 
+const defaultUpdateProps = {
+  updateState: {
+    status: 'idle' as const,
+    capability: 'installable' as const,
+    packageType: 'nsis' as const,
+    currentVersion: '1.2.3'
+  },
+  onCheckForUpdates: () => undefined,
+  onInstallUpdate: () => undefined,
+  onOpenUpdateRelease: () => undefined
+}
+
 afterEach(() => {
   cleanup()
 })
@@ -115,6 +128,7 @@ describe('ProjectRail project actions', () => {
     const onSelectProject = vi.fn()
     render(<I18nextProvider i18n={i18n}>
       <ProjectRail
+        {...defaultUpdateProps}
         activeProjectId="project-1"
         activeSkinId="builtin.light.neutral"
         language="zh"
@@ -191,6 +205,7 @@ describe('ProjectRail project actions', () => {
     const onRenameProject = vi.fn().mockResolvedValue(undefined)
     render(<I18nextProvider i18n={i18n}>
       <ProjectRail
+        {...defaultUpdateProps}
         activeProjectId="project-1"
         activeSkinId="builtin.light.neutral"
         language="zh"
@@ -240,6 +255,7 @@ describe('ProjectRail Shell settings', () => {
     const onRefreshShells = vi.fn().mockResolvedValue(undefined)
     render(<I18nextProvider i18n={i18n}>
       <ProjectRail
+        {...defaultUpdateProps}
         activeProjectId={null}
         activeSkinId="builtin.light.neutral"
         language="en"
@@ -312,6 +328,7 @@ describe('ProjectRail language picker', () => {
     const onLanguageChange = vi.fn()
     render(<I18nextProvider i18n={i18n}>
       <ProjectRail
+        {...defaultUpdateProps}
         activeProjectId={null}
         activeSkinId="builtin.light.neutral"
         language="en"
@@ -344,12 +361,86 @@ describe('ProjectRail language picker', () => {
   })
 })
 
+describe('ProjectRail update menu', () => {
+  it('shows version and routes manual update actions by state and package capability', () => {
+    i18n.changeLanguage('zh')
+    const onCheckForUpdates = vi.fn()
+    const onInstallUpdate = vi.fn()
+    const onOpenUpdateRelease = vi.fn()
+    const renderRail = (updateState: UpdateState) => (
+      <I18nextProvider i18n={i18n}>
+        <ProjectRail
+          {...defaultUpdateProps}
+          activeProjectId={null}
+          activeSkinId="builtin.light.neutral"
+          language="zh"
+          projects={[]}
+          shellSnapshot={{
+            platform: 'linux',
+            preferences: { version: 3, selection: { mode: 'automatic' } },
+            candidates: [],
+            effectiveShell: null,
+            error: undefined
+          }}
+          updateState={updateState}
+          onAddProject={() => undefined}
+          onLanguageChange={() => undefined}
+          onOpenAppearance={() => undefined}
+          onDeleteProject={async () => undefined}
+          onOpenAssistant={() => undefined}
+          onOpenDesigner={() => undefined}
+          onRefreshShells={async () => undefined}
+          onRenameProject={async () => undefined}
+          onReorderProject={() => undefined}
+          onSelectProject={() => undefined}
+          onShellChange={async () => undefined}
+          onSkinChange={() => undefined}
+          onCheckForUpdates={onCheckForUpdates}
+          onInstallUpdate={onInstallUpdate}
+          onOpenUpdateRelease={onOpenUpdateRelease}
+          userSkins={[]}
+        />
+      </I18nextProvider>
+    )
+    const view = render(renderRail({
+      status: 'idle',
+      capability: 'installable',
+      packageType: 'nsis',
+      currentVersion: '1.2.3'
+    }))
+
+    fireEvent.click(screen.getByRole('button', { name: '检查更新v1.2.3' }))
+    expect(onCheckForUpdates).toHaveBeenCalledOnce()
+
+    view.rerender(renderRail({
+      status: 'downloaded',
+      capability: 'installable',
+      packageType: 'nsis',
+      currentVersion: '1.2.3',
+      targetVersion: '1.3.0'
+    }))
+    fireEvent.click(screen.getByRole('button', { name: '重启并更新v1.2.3' }))
+    expect(onInstallUpdate).toHaveBeenCalledOnce()
+
+    view.rerender(renderRail({
+      status: 'available',
+      capability: 'downloadOnly',
+      packageType: 'portable',
+      currentVersion: '1.2.3',
+      targetVersion: '1.3.0'
+    }))
+    fireEvent.click(screen.getByRole('button', { name: '查看更新v1.2.3' }))
+    expect(onOpenUpdateRelease).toHaveBeenCalledOnce()
+  })
+})
+
 describe('ProjectRail skin picker', () => {
   it('lists preset skins and a custom-skin empty hint, and reports selection', () => {
     i18n.changeLanguage('zh')
     const onSkinChange = vi.fn()
     render(<I18nextProvider i18n={i18n}>
       <ProjectRail
+        {...defaultUpdateProps}
         activeProjectId={null}
         activeSkinId="builtin.light.neutral"
         language="en"
@@ -402,6 +493,7 @@ describe('ProjectRail skin picker', () => {
     }
     const { container } = render(<I18nextProvider i18n={i18n}>
       <ProjectRail
+        {...defaultUpdateProps}
         activeProjectId={null}
         activeSkinId={skin.id}
         language="zh"

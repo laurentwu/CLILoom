@@ -132,6 +132,21 @@ Artifacts use the application version from `package.json` and include the target
 
 Linux packages identify `CLILoom Team <laurentwu@users.noreply.github.com>` as their maintainer.
 
+## Manual update support
+
+CLILoom never checks for updates at startup, on window activation, on a timer, or in the background. A request is made only after the user chooses **Settings → Check for updates**. Stable builds follow the stable channel; `alpha`, `beta`, and `rc` builds follow their matching prerelease channel. Downgrades and same-version replacement through the updater are disabled.
+
+| Running package | Update behavior after a manual check |
+| --- | --- |
+| Windows NSIS | Downloads the matching update, then waits for explicit **Restart and update** confirmation |
+| Linux AppImage | Downloads the matching update, then waits for explicit **Restart and update** confirmation |
+| Windows Portable | Opens the fixed CLILoom GitHub Release page for manual replacement |
+| macOS DMG/ZIP | Opens the Release page; in-place updates remain disabled until signing and notarization are available |
+| Linux DEB/RPM | Opens the Release page; CLILoom never invokes a package manager or requests root privileges |
+| Development or unknown package | Reports that updates are unsupported without accessing the network |
+
+`electron-updater` runs only in the main process. The renderer receives a bounded status model through the preload bridge and cannot supply a URL, version, channel, or installer path. `autoInstallOnAppQuit` is disabled, so an ordinary application exit never installs a downloaded update. The explicit install action first runs CLILoom's normal workflow, PTY, assistant, and maintenance cleanup, then releases both existing quit guards before starting the installer.
+
 ## Stable application identity
 
 The public application identity is fixed as follows:
@@ -172,7 +187,7 @@ Run in order on the host before packaging:
 ```sh
 npm ci
 npm ls --depth=0
-npm ls electron electron-builder better-sqlite3 node-pty @types/node @types/better-sqlite3
+npm ls electron electron-builder electron-updater better-sqlite3 node-pty @types/node @types/better-sqlite3
 npm ls js-yaml
 npm audit --registry=https://registry.npmjs.org
 npm run licenses:check
@@ -227,18 +242,22 @@ The `Package` workflow runs manually through `workflow_dispatch` or when a `v*` 
 
 1. **Validates the source** on Ubuntu: runs tests, type checks, builds the application, then runs Electron end-to-end tests.
 2. **Runs native shell smoke** on Windows, macOS, and Linux: cleanup contract tests first (`scripts/clean.test.ts`), then real Shell/PTY smoke tests.
-3. **Packages all six combinations** on native runners: after `npm ci`, runs the database/PTY smoke test on the target architecture, then builds and packages. Windows jobs verify the final unpacked Console CLI with a real PowerShell stdin pipeline. Linux jobs first launch the generated AppImage, then install the generated DEB, and exercise both under Xvfb. The checks assert that neither the browser nor renderer process has `--no-sandbox`, both real production entries render without CSP violations, and renderer sandboxing remains enabled. AppImage, DEB, and RPM files are retained as workflow artifacts.
+3. **Packages all six combinations** on native runners: after `npm ci`, runs the database/PTY smoke test on the target architecture, then builds and packages. Windows jobs verify the final unpacked Console CLI with a real PowerShell stdin pipeline. Linux jobs first launch the generated AppImage, then install the generated DEB, and exercise both under Xvfb. Each job creates a manifest containing the platform, architecture, version, file sizes, and SHA-256 values before uploading packages, updater channel metadata, and sidecars as isolated workflow artifacts.
+4. **Assembles a release only for a tag push** after every preceding job succeeds. The release job validates all six manifests, rejects unknown or colliding assets, merges Windows NSIS and macOS ZIP metadata across x64/ARM64, keeps separate Linux architecture channels, removes legacy top-level `path`/`sha512`, and writes `SHA256SUMS.txt`. It refuses an existing Release and creates a Draft with generated notes; prerelease SemVer versions are marked as prereleases. `workflow_dispatch` runs stop at Actions artifacts and never create a Release.
 
 Node setup uses `node-version: 24` (satisfying `>=24.15.0 <25`, matching `.nvmrc`) for all orchestration. The host Node version is distinct from Electron's embedded Node 24. Packaging waits for both source validation and all three native smoke jobs.
 
-The workflow does not create a GitHub Release.
+Repository permissions default to `contents: read`; only the final tag-only release job receives `contents: write`. Local package scripts and every native package job retain `--publish never`, so electron-builder writes updater configuration and metadata but cannot publish or mutate a Release itself.
+
+Before publishing the Draft, verify all six architecture jobs, compare at least one downloaded asset with `SHA256SUMS.txt`, confirm that Windows metadata contains only both NSIS installers, macOS metadata contains both ZIPs, and each Linux channel contains only its own AppImage/DEB/RPM files. Review the generated notes and retain the unsigned/macOS-download-only warning. Publish manually in GitHub only after an installation and launch smoke test. If a release is faulty, increment the version and tag; never replace a published tag, asset, or channel file.
 
 ## Signing
 
 Packages are currently unsigned:
 
-- macOS users may need to approve the application in Privacy & Security because it is not signed or notarized.
-- Windows may display a SmartScreen warning because the executable has no trusted publisher signature.
+- macOS users may need to approve the application in Privacy & Security because it is not signed or notarized. In-place macOS updating is deliberately disabled in this phase.
+- Windows may display a SmartScreen warning because the executable has no trusted publisher signature. NSIS updating is technically enabled, but the application and Draft notes must continue to show this trust limitation.
+- SHA-256/SHA-512 integrity data detects transfer or assembly corruption; it is not a substitute for platform code signing.
 
 Production distribution should add Apple Developer ID signing/notarization and a Windows code-signing certificate through encrypted CI secrets.
 

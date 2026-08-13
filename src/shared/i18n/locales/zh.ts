@@ -50,6 +50,10 @@ export default {
       unsafeMessage: '仍有子进程未能确认终止，请处理后重试。\n\n{{detail}}',
       treesNotTerminated: '{{count}} 个进程树未能确认终止'
     },
+    update: {
+      installUnavailable: '更新尚未准备好安装。',
+      installCoordinationFailed: 'CLILoom 尝试安全清理后仍无法启动更新。应用将保持打开，请处理仍在运行的进程后重试。'
+    },
     startup: {
       failedTitle: 'CLILoom 启动失败'
     },
@@ -761,6 +765,41 @@ export default {
       label: '语言',
       en: 'English',
       zh: '中文'
+    },
+    update: {
+      check: '检查更新',
+      checking: '正在检查更新',
+      available: '发现新版本',
+      downloading: '正在下载更新',
+      downloadingPercent: '正在下载更新（{{percent}}%）',
+      restart: '重启并更新',
+      viewRelease: '查看更新',
+      retry: '重试检查更新',
+      currentVersion: 'v{{version}}',
+      upToDate: 'CLILoom v{{version}} 已是最新版。',
+      availableTitle: 'CLILoom v{{version}} 可用',
+      readyTitle: 'CLILoom v{{version}} 已准备好',
+      currentAndLatest: '当前版本：v{{current}} · 最新版本：v{{latest}}',
+      automaticDownload: '更新将自动下载，下载期间可以继续使用 CLILoom。',
+      downloadProgress: '已下载 {{percent}}%',
+      readyDescription: '更新已下载完成。准备好安装时，请重启 CLILoom。',
+      manualDescription: '当前包型不能原地更新。请打开经过校验的 GitHub Release，手动安装对应包。',
+      portableDescription: '便携版需手动替换，CLILoom 不会覆盖当前正在运行的外层可执行文件。',
+      macUnsignedDescription: '在 CLILoom 完成签名和公证前，macOS 更新仅提供下载提示。',
+      linuxPackageDescription: 'CLILoom 不会请求 root 权限或运行包管理器；请通过系统的常规流程安装 DEB 或 RPM。',
+      unsignedWindowsWarning: '当前 Windows 构建尚未代码签名，可能触发 SmartScreen 警告。请确认安装包来自 CLILoom GitHub Release。',
+      releaseNotes: '版本说明',
+      noReleaseNotes: '此版本未提供说明。',
+      later: '稍后',
+      error: {
+        unsupportedBuild: '当前构建不支持检查更新。',
+        checkFailed: '无法检查更新，请重试。',
+        downloadFailed: '更新下载失败，请重试。',
+        invalidRelease: '更新信息无效。',
+        installUnavailable: '更新尚未准备好安装。',
+        installFailed: '无法启动更新安装程序。',
+        openReleaseFailed: '无法打开 GitHub Release 页面。'
+      }
     }
   },
   status: {

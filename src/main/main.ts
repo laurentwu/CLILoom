@@ -5,7 +5,8 @@ import {
   ipcMain,
   Menu,
   screen,
-  session
+  session,
+  shell
 } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
@@ -68,6 +69,9 @@ import { clampWindowBounds } from './windowState'
 import { WorkflowConfigService } from './workflowConfigService'
 import { buildApplicationMenuTemplate } from './applicationMenu'
 import { InstalledFontService } from './installedFonts'
+import { createElectronUpdaterAdapter } from './electronUpdaterAdapter'
+import { coordinateUpdateInstall } from './updateInstallCoordinator'
+import { readUpdatePackageTypeMarker, UpdateService } from './updateService'
 import {
   createSecureWebPreferences,
   installDevToolsShortcut,
@@ -108,6 +112,7 @@ let databaseMaintenanceScheduler: IdleMaintenanceScheduler | null = null
 let developmentServerUrl: URL | null = null
 let mainRendererUrl: string | null = null
 let applicationBuildIdentity: ApplicationBuildIdentity | null = null
+let updateService: UpdateService
 let desktopInitialized = false
 const installedFontService = new InstalledFontService()
 
@@ -199,6 +204,14 @@ function startDesktopApplication(): void {
     settingsService.ensureDetectedLanguage(detectedLanguage)
     settingsService.normalizeAppearanceOnStart(detectedLanguage)
     initMainI18n(settingsService.getSnapshot().appearance.language)
+    updateService = new UpdateService({
+      currentVersion: app.getVersion(),
+      isPackaged: app.isPackaged,
+      environment: process.env,
+      packageTypeMarker: readUpdatePackageTypeMarker(process.resourcesPath),
+      adapterFactory: createElectronUpdaterAdapter,
+      openExternal: (url) => shell.openExternal(url).then(() => undefined)
+    })
     shellService = new ShellService({ settingsService, environment: process.env })
     await shellService.refresh()
     runtimeEnvironment = (await rebuildRuntimeShellEnvironment({
@@ -692,6 +705,47 @@ function registerIpc(): void {
     await shellService.resolveEffectiveTarget()
     return shellService.getSnapshot()
   })
+  ipcMain.handle('updates:get-state', (event) => {
+    assertMainSender(event)
+    return updateService.getState()
+  })
+  ipcMain.handle('updates:check', (event) => {
+    assertMainSender(event)
+    return updateService.checkForUpdates()
+  })
+  ipcMain.handle('updates:open-release', (event) => {
+    assertMainSender(event)
+    return updateService.openRelease()
+  })
+  ipcMain.handle('updates:install', async (event) => {
+    assertMainSender(event)
+    if (!updateService.beginInstall()) {
+      throw new Error(t('errors:update.installUnavailable'))
+    }
+    try {
+      await coordinateUpdateInstall({
+        cleanup: beginSafeApplicationCleanup,
+        allowQuit: () => {
+          allowMainWindowDestroy = true
+          allowApplicationQuit = true
+        },
+        disallowQuit: () => {
+          allowMainWindowDestroy = false
+          allowApplicationQuit = false
+        },
+        quitAndInstall: () => updateService.quitAndInstall()
+      })
+    } catch {
+      console.error('[UpdateService] install coordination failed')
+      allowMainWindowDestroy = false
+      allowApplicationQuit = false
+      quitCleanup = null
+      updateService.reportInstallFailure()
+      showUnsafeExitError(new Error(t('errors:update.installCoordinationFailed')))
+      if (!mainWindow && app.isReady() && desktopInitialized) createWindow()
+    }
+    return updateService.getState()
+  })
   ipcMain.on('app:theme-ready', (event) => {
     if (!isMainSender(event)) return
     mainThemeReady = true
@@ -884,6 +938,9 @@ async function chooseAndAddProject() {
 }
 
 function registerServiceBroadcasts(): void {
+  updateService.onChanged((state) => {
+    mainWindow?.webContents.send('updates:state', state)
+  })
   settingsService.onChanged((snapshot) => {
     setMainI18nLanguage(snapshot.appearance.language)
     assistantWindowManager.refreshTitle()
