@@ -171,6 +171,40 @@ describe('packaging configuration', () => {
     expect(workflow).toContain('release/*.exe')
   })
 
+  it('uses a guided Windows installer with explicit user choices', () => {
+    const builderConfig = readProjectFile('electron-builder.yml')
+    const nsisConfig = getTopLevelSection(builderConfig, 'nsis')
+    const installerInclude = readProjectFile('build/installer.nsh')
+    const packagingGuide = readProjectFile('PACKAGING.md')
+    const readme = readProjectFile('README.md')
+    const chineseReadme = readProjectFile('README.zh-CN.md')
+
+    expect(getYamlScalar(nsisConfig, 'oneClick')).toBe('false')
+    expect(getYamlScalar(nsisConfig, 'perMachine')).toBe('false')
+    expect(getYamlScalar(nsisConfig, 'selectPerMachineByDefault')).toBe('false')
+    expect(getYamlScalar(nsisConfig, 'allowElevation')).toBe('true')
+    expect(getYamlScalar(nsisConfig, 'allowToChangeInstallationDirectory')).toBe('true')
+    expect(getYamlScalar(nsisConfig, 'createDesktopShortcut')).toBe('false')
+    expect(getYamlScalar(nsisConfig, 'createStartMenuShortcut')).toBe('true')
+    expect(getYamlScalar(nsisConfig, 'runAfterFinish')).toBe('true')
+    expect(getYamlList(nsisConfig, 'installerLanguages')).toEqual(['en_US', 'zh_CN'])
+
+    expect(installerInclude).toContain('!macro customPageAfterChangeDir')
+    expect(installerInclude).toContain('${NSD_CreateCheckbox}')
+    expect(installerInclude).toContain('${NSD_Check} $DesktopShortcutCheckbox')
+    expect(installerInclude).toContain('!macro customInstall')
+    expect(installerInclude).toContain('${IfNot} ${isUpdated}')
+    expect(installerInclude).toContain('${AndIfNot} ${isNoDesktopShortcut}')
+    expect(installerInclude).toContain('$CreateDesktopShortcut == ${BST_CHECKED}')
+    expect(installerInclude).toContain('!macro customUnInstall')
+    expect(installerInclude).toContain('${IfNot} ${isKeepShortcuts}')
+    expect(installerInclude).toMatch(/\$\{If\} \$\{isUpdated\}[\s\S]*?Abort/)
+    expect(packagingGuide).toContain('The Windows NSIS artifact is an assisted installer')
+    expect(packagingGuide).toContain('an all-users installation may then require Windows UAC')
+    expect(readme).toContain('The installer opens a guided setup.')
+    expect(chineseReadme).toContain('安装版会打开分步安装向导')
+  })
+
   it('uses Windows-compatible bitmap frames for the executable icon', () => {
     const icon = readProjectBuffer('build/icons/icon.ico')
     const expectedSizes = [16, 24, 32, 48, 64, 128, 256]

@@ -112,7 +112,7 @@ Use the stable [latest GitHub Release](https://github.com/laurentwu/CLILoom/rele
 | Linux | ARM64 | AppImage, DEB, RPM | [Check latest release](https://github.com/laurentwu/CLILoom/releases/latest) |
 | Linux | x64 | AppImage, DEB, RPM | [Check latest release](https://github.com/laurentwu/CLILoom/releases/latest) |
 
-CLILoom checks for updates only when you choose **Settings → Check for updates**; it never checks automatically at startup or in the background. Windows installer and Linux AppImage builds download a discovered update and wait for you to confirm **Restart and update**. Windows Portable, macOS, DEB, and RPM builds instead open the corresponding GitHub Release for manual installation. CLILoom never requests administrator/root access or runs a system package manager for an update.
+CLILoom checks for updates only when you choose **Settings → Check for updates**; it never checks automatically at startup or in the background. Windows installer and Linux AppImage builds download a discovered update and wait for you to confirm **Restart and update**. Windows Portable, macOS, DEB, and RPM builds instead open the corresponding GitHub Release for manual installation. A Windows installation made available to all users may show a Windows UAC prompt when an explicitly confirmed update starts; current-user installations do not require elevation. CLILoom never runs a system package manager for an update.
 
 ### macOS
 
@@ -122,7 +122,7 @@ CLILoom release builds are currently not Apple-signed or notarized. On first lau
 
 ### Windows
 
-Use the installer for a standard installation, or download the portable EXE to run CLILoom without installing it.
+The installer opens a guided setup. It defaults to the current user, while an all-users installation is also available and requires Windows administrator approval. You can choose the installation directory and whether to create a desktop shortcut; a Start menu shortcut is always created. The final page lets you choose whether to launch CLILoom immediately. Use the portable EXE instead to run CLILoom without installing it.
 
 Windows release builds are currently unsigned, so Microsoft Defender SmartScreen may display an unknown-publisher warning. Confirm that the file came from the CLILoom GitHub Releases page before continuing.
 
