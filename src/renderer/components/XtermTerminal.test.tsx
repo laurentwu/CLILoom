@@ -22,6 +22,7 @@ type TerminalMockInstance = {
   open: ReturnType<typeof vi.fn>
   options: Record<string, unknown>
   paste: ReturnType<typeof vi.fn>
+  refresh: ReturnType<typeof vi.fn>
   reset: ReturnType<typeof vi.fn>
   rows: number
   scrollLines: ReturnType<typeof vi.fn>
@@ -65,6 +66,7 @@ vi.mock('@xterm/xterm', () => ({
       paste: vi.fn((text: string): void => {
         instance.dataHandler?.(text)
       }),
+      refresh: vi.fn(),
       reset: vi.fn(),
       rows: 24,
       scrollLines: vi.fn(),
@@ -242,6 +244,81 @@ describe('XtermTerminal', () => {
       overviewRuler: { width: 12 },
       theme: { overviewRulerBorder: '#00000000' }
     })
+  })
+
+  it('keeps focus refitting disabled by default', () => {
+    const requestAnimationFrame = vi.fn()
+    vi.stubGlobal('requestAnimationFrame', requestAnimationFrame)
+    createBridge(() => Promise.resolve(false))
+    render(<XtermTerminal session={session} onSendInput={vi.fn()} />)
+    const terminal = xtermState.instances[0]
+    const fit = xtermState.fitInstances[0].fit
+
+    expect(fit).toHaveBeenCalledOnce()
+    act(() => window.dispatchEvent(new Event('focus')))
+
+    expect(requestAnimationFrame).not.toHaveBeenCalled()
+    expect(fit).toHaveBeenCalledOnce()
+    expect(terminal.refresh).not.toHaveBeenCalled()
+  })
+
+  it('refits after mounting and whenever an opted-in window regains focus', () => {
+    const animationFrames = new Map<number, FrameRequestCallback>()
+    let nextAnimationFrameId = 0
+    const requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
+      nextAnimationFrameId += 1
+      animationFrames.set(nextAnimationFrameId, callback)
+      return nextAnimationFrameId
+    })
+    const cancelAnimationFrame = vi.fn((id: number) => {
+      animationFrames.delete(id)
+    })
+    const runNextAnimationFrame = () => {
+      const pending = animationFrames.entries().next().value as
+        | [number, FrameRequestCallback]
+        | undefined
+      if (!pending) throw new Error('Expected a pending animation frame')
+      animationFrames.delete(pending[0])
+      pending[1](0)
+    }
+    vi.stubGlobal('requestAnimationFrame', requestAnimationFrame)
+    vi.stubGlobal('cancelAnimationFrame', cancelAnimationFrame)
+    createBridge(() => Promise.resolve(false))
+
+    const { unmount } = render(
+      <XtermTerminal refitOnWindowFocus session={session} onSendInput={vi.fn()} />
+    )
+    const terminal = xtermState.instances[0]
+    const fit = xtermState.fitInstances[0].fit
+
+    expect(fit).toHaveBeenCalledOnce()
+    expect(terminal.refresh).not.toHaveBeenCalled()
+    expect(requestAnimationFrame).toHaveBeenCalledOnce()
+
+    act(runNextAnimationFrame)
+    expect(fit).toHaveBeenCalledTimes(2)
+    expect(terminal.refresh).toHaveBeenLastCalledWith(0, terminal.rows - 1)
+
+    act(() => window.dispatchEvent(new Event('focus')))
+    act(runNextAnimationFrame)
+    expect(fit).toHaveBeenCalledTimes(3)
+    expect(terminal.refresh).toHaveBeenCalledTimes(2)
+
+    fit.mockImplementationOnce(() => {
+      throw new Error('fit failed')
+    })
+    act(() => window.dispatchEvent(new Event('focus')))
+    act(runNextAnimationFrame)
+    expect(fit).toHaveBeenCalledTimes(4)
+    expect(terminal.refresh).toHaveBeenCalledTimes(2)
+
+    act(() => window.dispatchEvent(new Event('focus')))
+    const pendingFrameId = nextAnimationFrameId
+    unmount()
+    expect(cancelAnimationFrame).toHaveBeenCalledWith(pendingFrameId)
+
+    act(() => window.dispatchEvent(new Event('focus')))
+    expect(requestAnimationFrame).toHaveBeenCalledTimes(4)
   })
 
   it('updates the active terminal when the theme code font changes', () => {

@@ -11,8 +11,15 @@ import {
 import { DEFAULT_SKIN } from '../theme'
 import type { ShellSnapshot } from '../../shared/shell'
 
+const { xtermTerminalRender } = vi.hoisted(() => ({
+  xtermTerminalRender: vi.fn()
+}))
+
 vi.mock('../components/XtermTerminal', () => ({
-  XtermTerminal: () => null
+  XtermTerminal: (props: unknown) => {
+    xtermTerminalRender(props)
+    return null
+  }
 }))
 
 vi.mock('@/components/ui/tooltip', async () => {
@@ -162,6 +169,10 @@ describe('AssistantApp global shell state', () => {
         transcript: ''
       }}
     />)
+
+    expect(xtermTerminalRender).toHaveBeenCalledWith(expect.objectContaining({
+      refitOnWindowFocus: true
+    }))
 
     const restartButton = screen.getByRole('button', { name: 'Restart' }) as HTMLButtonElement
     expect(restartButton.disabled).toBe(false)
