@@ -55,6 +55,17 @@ nsis:
   guid: 2af5650f-5c23-520c-b262-debedf73652c
   artifactName: ${productName}-Setup-${version}-Windows-${arch}.${ext}
   buildUniversalInstaller: false
+  oneClick: false
+  perMachine: false
+  selectPerMachineByDefault: false
+  allowElevation: true
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: false
+  createStartMenuShortcut: true
+  runAfterFinish: true
+  installerLanguages:
+    - en_US
+    - zh_CN
 
 portable:
   artifactName: ${productName}-Portable-${version}-Windows-${arch}.${ext}

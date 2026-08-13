@@ -130,6 +130,8 @@ Native dependencies make builds most reliable when each architecture is built on
 
 Artifacts use the application version from `package.json` and include the target architecture in their file names.
 
+The Windows NSIS artifact is an assisted installer in English and Simplified Chinese. A fresh installation defaults to the current user and also offers an all-users mode through Windows UAC. Users can change the installation directory and choose a desktop shortcut (selected by default); the Start menu shortcut is always created, and the finish page offers to launch CLILoom. Updater-driven reinstalls retain the existing installation scope, directory, and desktop-shortcut state without reopening the installation-directory or desktop-shortcut choice pages. The Portable EXE remains unchanged and does not use this wizard.
+
 Linux packages identify `CLILoom Team <laurentwu@users.noreply.github.com>` as their maintainer.
 
 ## Manual update support
@@ -138,7 +140,7 @@ CLILoom never checks for updates at startup, on window activation, on a timer, o
 
 | Running package | Update behavior after a manual check |
 | --- | --- |
-| Windows NSIS | Downloads the matching update, then waits for explicit **Restart and update** confirmation |
+| Windows NSIS | Downloads the matching update, then waits for explicit **Restart and update** confirmation; an all-users installation may then require Windows UAC |
 | Linux AppImage | Downloads the matching update, then waits for explicit **Restart and update** confirmation |
 | Windows Portable | Opens the fixed CLILoom GitHub Release page for manual replacement |
 | macOS DMG/ZIP | Opens the Release page; in-place updates remain disabled until signing and notarization are available |
@@ -218,6 +220,7 @@ After satisfying the Linux sandbox prerequisite above, launch the `package:dir` 
 - An existing project database opens correctly (projects, tasks, workflows, skins, terminal history).
 - Creating a new project/task and launching an interactive terminal works (PTY input, resize, exit, close).
 - On Windows, drive-backed and ordinary network UNC projects run with a selected native Shell.
+- A fresh Windows NSIS installer defaults to the current user, offers an all-users/UAC choice and a changeable installation directory, defaults the desktop-shortcut checkbox on, always creates a Start menu shortcut, and offers to launch CLILoom on the finish page. An updater-driven reinstall preserves the existing scope, path, and shortcut state without reopening the installation-directory or desktop-shortcut choice pages.
 - The frameless assistant window opens, drags, and closes normally.
 - Replacing a Windows portable build with another build of the same semantic version offers a safe handoff, then updates `.cliloom-workspace.json` and the managed assistant launchers while preserving a user-created file in `assistant-workspace`.
 - Directory selection and skin import accept the Electron 43 default of starting from Downloads (or home if Downloads is absent) when no `defaultPath` is supplied.

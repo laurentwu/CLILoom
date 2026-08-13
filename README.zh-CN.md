@@ -88,7 +88,7 @@ CLILoom 是一款用于可视化编排、运行和管理 AI CLI 开发任务的�
 | Linux | ARM64 | AppImage、DEB、RPM | [查看最新版本](https://github.com/laurentwu/CLILoom/releases/latest) |
 | Linux | x64 | AppImage、DEB、RPM | [查看最新版本](https://github.com/laurentwu/CLILoom/releases/latest) |
 
-CLILoom 仅在你点击**设置 → 检查更新**时访问更新服务，启动和后台均不会自动检查。Windows 安装版与 Linux AppImage 发现新版后会自动下载，并等待你确认**重启并更新**；Windows 便携版、macOS、DEB 和 RPM 只会打开对应的 GitHub Release，由你手动安装。CLILoom 不会为了更新请求管理员/root 权限，也不会自行运行系统包管理器。
+CLILoom 仅在你点击**设置 → 检查更新**时访问更新服务，启动和后台均不会自动检查。Windows 安装版与 Linux AppImage 发现新版后会自动下载，并等待你确认**重启并更新**；Windows 便携版、macOS、DEB 和 RPM 只会打开对应的 GitHub Release，由你手动安装。如果 Windows 安装时选择了“所有用户”，在明确确认更新后启动安装程序时可能出现 Windows UAC 提示；仅为当前用户安装则不需要提权。CLILoom 不会为了更新自行运行系统包管理器。
 
 ### macOS
 
@@ -98,7 +98,7 @@ CLILoom 的发布构建当前尚未进行 Apple 代码签名或公证。首次�
 
 ### Windows
 
-推荐使用安装版完成标准安装；如果不希望安装，也可以下载便携版 EXE 直接运行。
+安装版会打开分步安装向导，默认仅为当前用户安装，也可选择为所有用户安装，后者需要 Windows 管理员授权。你可以选择安装目录及是否创建桌面快捷方式；开始菜单快捷方式会始终创建。完成页还可选择是否立即启动 CLILoom。如果不希望安装，也可以下载便携版 EXE 直接运行。
 
 Windows 发布构建当前尚未签名，因此 Microsoft Defender SmartScreen 可能显示未知发布者警告。继续运行前，请确认文件来自 CLILoom 的 GitHub Releases 页面。
 
