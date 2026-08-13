@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module'
-import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -74,7 +74,9 @@ describe('Linux Chromium sandbox configuration', () => {
       .toThrow(/sudo chmod 4755 '\/opt\/CLILoom\/chrome-sandbox'/)
   })
 
-  it('marks the Linux package helper as SUID for DEB and RPM installation', async () => {
+  it.skipIf(process.platform === 'win32')(
+    'marks the Linux package helper as SUID for DEB and RPM installation',
+    async () => {
     const appOutDir = mkdtempSync(path.join(tmpdir(), 'cliloom-after-pack-'))
     temporaryDirectories.push(appOutDir)
     const helperPath = path.join(appOutDir, 'chrome-sandbox')
@@ -83,9 +85,12 @@ describe('Linux Chromium sandbox configuration', () => {
     await afterPack({ appOutDir, electronPlatformName: 'linux' })
 
     expect(statSync(helperPath).mode & 0o7777).toBe(sandbox.SETUID_SANDBOX_MODE)
-  })
+    }
+  )
 
-  it('installs an AppImage launcher that never adds the no-sandbox switch', async () => {
+  it.skipIf(process.platform === 'win32')(
+    'installs an AppImage launcher that never adds the no-sandbox switch',
+    async () => {
     const appOutDir = mkdtempSync(path.join(tmpdir(), 'cliloom-after-pack-'))
     temporaryDirectories.push(appOutDir)
     writeFileSync(path.join(appOutDir, 'chrome-sandbox'), 'fixture', { mode: 0o755 })
@@ -102,17 +107,18 @@ describe('Linux Chromium sandbox configuration', () => {
     expect(statSync(launcherPath).mode & 0o7777).toBe(0o755)
     expect(launcher).toContain('exec "${APPDIR}/cliloom" --disable-setuid-sandbox "$@"')
     expect(launcher).not.toContain('--no-sandbox')
-  })
+    }
+  )
 
   it('does not alter non-Linux package contents', async () => {
     const appOutDir = mkdtempSync(path.join(tmpdir(), 'cliloom-after-pack-'))
     temporaryDirectories.push(appOutDir)
     const helperPath = path.join(appOutDir, 'chrome-sandbox')
     writeFileSync(helperPath, 'fixture', { mode: 0o755 })
-    chmodSync(helperPath, 0o755)
+    const originalContent = readFileSync(helperPath, 'utf8')
 
     await afterPack({ appOutDir, electronPlatformName: 'darwin' })
 
-    expect(statSync(helperPath).mode & 0o7777).toBe(0o755)
+    expect(readFileSync(helperPath, 'utf8')).toBe(originalContent)
   })
 })

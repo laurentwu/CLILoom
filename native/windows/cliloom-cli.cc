@@ -12,8 +12,10 @@
 #endif
 
 #include <windows.h>
+#include <bcrypt.h>
 
 #include <cwctype>
+#include <new>
 #include <string>
 #include <vector>
 
@@ -21,6 +23,8 @@ namespace {
 
 constexpr int kLauncherErrorExitCode = 10;
 constexpr size_t kMaximumCommandLineCharacters = 32'767;
+constexpr size_t kMaximumStdinBytes = 2 * 1024 * 1024;
+constexpr wchar_t kStdinPipeEnvironment[] = L"CLILOOM_ASSISTANT_CLI_STDIN_PIPE";
 
 std::wstring formatWindowsError(DWORD errorCode) {
   wchar_t* message = nullptr;
@@ -164,6 +168,109 @@ void closeIfValid(HANDLE handle) {
   if (handle != nullptr && handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
 }
 
+bool requestsStdin(int argumentCount, wchar_t* arguments[]) {
+  bool cliArgumentsStarted = false;
+  for (int index = 2; index < argumentCount; index += 1) {
+    const std::wstring argument(arguments[index]);
+    if (argument == L"--cliloom-cli") {
+      cliArgumentsStarted = true;
+    } else if (cliArgumentsStarted && argument == L"--stdin") {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool readBoundedStdin(HANDLE source, std::vector<char>& input, DWORD& errorCode) {
+  char buffer[8 * 1024];
+  DWORD bytesRead = 0;
+  while (ReadFile(source, buffer, sizeof(buffer), &bytesRead, nullptr) && bytesRead > 0) {
+    if (input.size() + bytesRead > kMaximumStdinBytes) {
+      errorCode = ERROR_BUFFER_OVERFLOW;
+      return false;
+    }
+    input.insert(input.end(), buffer, buffer + bytesRead);
+  }
+  const DWORD readError = GetLastError();
+  if (bytesRead == 0 || readError == ERROR_BROKEN_PIPE || readError == ERROR_HANDLE_EOF) {
+    return true;
+  }
+  errorCode = readError;
+  return false;
+}
+
+bool createStdinPipe(std::wstring& pipeName, HANDLE& pipeHandle, DWORD& errorCode) {
+  unsigned char randomBytes[16];
+  const NTSTATUS randomStatus = BCryptGenRandom(
+    nullptr,
+    randomBytes,
+    static_cast<ULONG>(sizeof(randomBytes)),
+    BCRYPT_USE_SYSTEM_PREFERRED_RNG
+  );
+  if (randomStatus < 0) {
+    errorCode = static_cast<DWORD>(randomStatus);
+    return false;
+  }
+
+  constexpr wchar_t hexDigits[] = L"0123456789abcdef";
+  pipeName = L"\\\\.\\pipe\\cliloom-cli-stdin-";
+  for (const unsigned char value : randomBytes) {
+    pipeName.push_back(hexDigits[value >> 4]);
+    pipeName.push_back(hexDigits[value & 0x0f]);
+  }
+  pipeHandle = CreateNamedPipeW(
+    pipeName.c_str(),
+    PIPE_ACCESS_OUTBOUND | FILE_FLAG_FIRST_PIPE_INSTANCE,
+    PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+    1,
+    64 * 1024,
+    64 * 1024,
+    0,
+    nullptr
+  );
+  if (pipeHandle == INVALID_HANDLE_VALUE) {
+    errorCode = GetLastError();
+    return false;
+  }
+  return true;
+}
+
+struct StdinPipeContext {
+  HANDLE pipe;
+  std::vector<char> input;
+};
+
+DWORD WINAPI writeStdinPipe(void* parameter) {
+  StdinPipeContext* context = static_cast<StdinPipeContext*>(parameter);
+  const BOOL connected = ConnectNamedPipe(context->pipe, nullptr)
+    ? TRUE
+    : GetLastError() == ERROR_PIPE_CONNECTED;
+  if (connected) {
+    size_t offset = 0;
+    while (offset < context->input.size()) {
+      const size_t remaining = context->input.size() - offset;
+      const DWORD requested = static_cast<DWORD>(
+        remaining > MAXDWORD ? MAXDWORD : remaining
+      );
+      DWORD bytesWritten = 0;
+      if (!WriteFile(
+        context->pipe,
+        context->input.data() + offset,
+        requested,
+        &bytesWritten,
+        nullptr
+      ) || bytesWritten == 0) {
+        break;
+      }
+      offset += bytesWritten;
+    }
+    FlushFileBuffers(context->pipe);
+  }
+  closeIfValid(context->pipe);
+  delete context;
+  return 0;
+}
+
 }  // namespace
 
 int wmain(int argumentCount, wchar_t* arguments[]) {
@@ -180,7 +287,43 @@ int wmain(int argumentCount, wchar_t* arguments[]) {
   std::vector<wchar_t> mutableCommandLine(commandLine.begin(), commandLine.end());
   mutableCommandLine.push_back(L'\0');
 
-  const HANDLE stdinHandle = duplicateStandardHandle(STD_INPUT_HANDLE);
+  const bool stdinRequested = requestsStdin(argumentCount, arguments);
+  std::vector<char> stdinData;
+  std::wstring stdinPipeName;
+  HANDLE stdinPipe = INVALID_HANDLE_VALUE;
+  if (stdinRequested) {
+    const HANDLE stdinSource = duplicateStandardHandle(STD_INPUT_HANDLE);
+    DWORD stdinError = ERROR_SUCCESS;
+    if (stdinSource == INVALID_HANDLE_VALUE) {
+      stdinError = GetLastError();
+      if (stdinError == ERROR_SUCCESS) stdinError = ERROR_INVALID_HANDLE;
+    }
+    if (stdinSource == INVALID_HANDLE_VALUE || !readBoundedStdin(stdinSource, stdinData, stdinError)) {
+      closeIfValid(stdinSource);
+      const std::wstring detail = stdinError == ERROR_BUFFER_OVERFLOW
+        ? L"standard input exceeds the 2097152 byte limit"
+        : L"unable to read standard input: " + formatWindowsError(stdinError);
+      writeLauncherError(detail);
+      return kLauncherErrorExitCode;
+    }
+    closeIfValid(stdinSource);
+    if (!createStdinPipe(stdinPipeName, stdinPipe, stdinError)) {
+      writeLauncherError(L"unable to create the standard input pipe: " + formatWindowsError(stdinError));
+      return kLauncherErrorExitCode;
+    }
+    if (!SetEnvironmentVariableW(kStdinPipeEnvironment, stdinPipeName.c_str())) {
+      const DWORD environmentError = GetLastError();
+      closeIfValid(stdinPipe);
+      writeLauncherError(L"unable to configure the standard input pipe: " + formatWindowsError(environmentError));
+      return kLauncherErrorExitCode;
+    }
+  } else {
+    SetEnvironmentVariableW(kStdinPipeEnvironment, nullptr);
+  }
+
+  const HANDLE stdinHandle = stdinRequested
+    ? createInheritedNullHandle(STD_INPUT_HANDLE)
+    : duplicateStandardHandle(STD_INPUT_HANDLE);
   const HANDLE stdoutHandle = duplicateStandardHandle(STD_OUTPUT_HANDLE);
   const HANDLE stderrHandle = duplicateStandardHandle(STD_ERROR_HANDLE);
   if (
@@ -190,6 +333,7 @@ int wmain(int argumentCount, wchar_t* arguments[]) {
   ) {
     const DWORD errorCode = GetLastError();
     closeIfValid(stdinHandle);
+    closeIfValid(stdinPipe);
     closeIfValid(stdoutHandle);
     closeIfValid(stderrHandle);
     writeLauncherError(L"unable to inherit standard handles: " + formatWindowsError(errorCode));
@@ -217,16 +361,42 @@ int wmain(int argumentCount, wchar_t* arguments[]) {
     &processInformation
   );
   const DWORD startError = started ? ERROR_SUCCESS : GetLastError();
+  SetEnvironmentVariableW(kStdinPipeEnvironment, nullptr);
   closeIfValid(stdinHandle);
   closeIfValid(stdoutHandle);
   closeIfValid(stderrHandle);
 
   if (!started) {
+    closeIfValid(stdinPipe);
     writeLauncherError(L"unable to start the CLI runtime: " + formatWindowsError(startError));
     return kLauncherErrorExitCode;
   }
 
   CloseHandle(processInformation.hThread);
+  if (stdinRequested) {
+    // Electron 的 GUI 子系统会把继承的 stdin 视为 EOF，使用随机命名管道
+    // 将已限制大小的输入交给 CLI，避免临时文件和命令行泄漏。
+    StdinPipeContext* pipeContext = new (std::nothrow) StdinPipeContext;
+    if (pipeContext != nullptr) {
+      pipeContext->pipe = stdinPipe;
+      pipeContext->input.swap(stdinData);
+    }
+    HANDLE pipeThread = pipeContext == nullptr
+      ? nullptr
+      : CreateThread(nullptr, 0, writeStdinPipe, pipeContext, 0, nullptr);
+    if (pipeThread == nullptr) {
+      const DWORD pipeError = pipeContext == nullptr ? ERROR_NOT_ENOUGH_MEMORY : GetLastError();
+      delete pipeContext;
+      closeIfValid(stdinPipe);
+      TerminateProcess(processInformation.hProcess, kLauncherErrorExitCode);
+      WaitForSingleObject(processInformation.hProcess, INFINITE);
+      CloseHandle(processInformation.hProcess);
+      writeLauncherError(L"unable to forward standard input: " + formatWindowsError(pipeError));
+      return kLauncherErrorExitCode;
+    }
+    CloseHandle(pipeThread);
+  }
+
   const DWORD waitResult = WaitForSingleObject(processInformation.hProcess, INFINITE);
   if (waitResult != WAIT_OBJECT_0) {
     const DWORD waitError = GetLastError();

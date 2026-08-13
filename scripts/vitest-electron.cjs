@@ -14,7 +14,8 @@ const child = spawn(
     stdio: 'inherit',
     env: {
       ...process.env,
-      ELECTRON_RUN_AS_NODE: '1'
+      ELECTRON_RUN_AS_NODE: '1',
+      CLILOOM_TEST_NODE_EXECUTABLE: process.execPath
     }
   }
 )

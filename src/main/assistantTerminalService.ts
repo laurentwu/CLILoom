@@ -91,6 +91,7 @@ export class AssistantTerminalService {
         [ASSISTANT_BRIDGE_PORT_ENV]: String(bridge.port),
         [ASSISTANT_BRIDGE_TOKEN_ENV]: bridge.token
       }
+      const platform = this.options.platform ?? process.platform
       stage = t('errors:assistantTerminal.stageParse')
       const bootstrap = buildAssistantBootstrapCommand(
         shell.family,
@@ -111,11 +112,13 @@ export class AssistantTerminalService {
           overlay: {
             PATH: prependPath(
               this.options.workspace.binPath,
-              this.options.environment.PATH ?? this.options.environment.Path ?? ''
+              this.options.environment.PATH ?? this.options.environment.Path ?? '',
+              platform
             ),
             ...requestEnvironment
           },
-          family: shell.family
+          family: shell.family,
+          platform
         })
       }
 
@@ -309,7 +312,12 @@ export class AssistantTerminalService {
       ? `${configuredShell.displayName} (${configuredShell.executablePath}, ${configuredShell.family})`
       : t('errors:assistantTerminal.autoRecommendedUnparsed')
     const detail = error instanceof Error ? error.message : String(error)
-    return t('errors:assistantTerminal.stageFailed', { platform: process.platform, shell: shellDescription, stage, detail })
+    return t('errors:assistantTerminal.stageFailed', {
+      platform: this.options.platform ?? process.platform,
+      shell: shellDescription,
+      stage,
+      detail
+    })
   }
 
   private async terminateTerminal(terminal: IPty): Promise<ProcessTerminationResult> {
@@ -326,8 +334,13 @@ export class AssistantTerminalService {
   }
 }
 
-function prependPath(directory: string, currentPath: string): string {
-  return `${directory}${path.delimiter}${currentPath}`
+function prependPath(
+  directory: string,
+  currentPath: string,
+  platform: NodeJS.Platform
+): string {
+  const delimiter = platform === 'win32' ? path.win32.delimiter : path.posix.delimiter
+  return `${directory}${delimiter}${currentPath}`
 }
 
 function clampDimension(value: number): number {

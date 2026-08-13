@@ -118,7 +118,8 @@ export async function launchReplacementExecutable(
     const normalized = name.toUpperCase()
     if (normalized.startsWith('PORTABLE_EXECUTABLE_') ||
       normalized === 'CLILOOM_ASSISTANT_BRIDGE_PORT' ||
-      normalized === 'CLILOOM_ASSISTANT_BRIDGE_TOKEN') {
+      normalized === 'CLILOOM_ASSISTANT_BRIDGE_TOKEN' ||
+      normalized === 'CLILOOM_ASSISTANT_CLI_STDIN_PIPE') {
       delete environment[name]
     }
   }

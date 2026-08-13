@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { I18nextProvider } from 'react-i18next'
 import { describe, expect, it, vi } from 'vitest'
 import type { TerminalSession } from '../utils'
-import { i18n } from '../i18n'
+import { createI18n } from '../../shared/i18n'
 
 vi.mock('./XtermTerminal', async () => {
   const { createElement, forwardRef } = await import('react')
@@ -37,11 +37,12 @@ const completedSession: TerminalSession = {
   status: 'closed',
   transcript: '\u001b[32mcompleted\u001b[0m\r\n'
 }
+const testI18n = createI18n('en')
 
 describe('TerminalPane', () => {
   it('keeps completed sessions in xterm instead of converting them to plain text', () => {
     const markup = renderToStaticMarkup(
-      <I18nextProvider i18n={i18n}>
+      <I18nextProvider i18n={testI18n}>
         <TerminalPane
           session={completedSession}
           onSendInput={vi.fn()}
@@ -60,7 +61,7 @@ describe('TerminalPane', () => {
 
   it('marks running sessions for xterm instance persistence', () => {
     const markup = renderToStaticMarkup(
-      <I18nextProvider i18n={i18n}>
+      <I18nextProvider i18n={testI18n}>
         <TerminalPane
           session={{ ...completedSession, status: 'running', transcript_cursor: 7 }}
           onSendInput={vi.fn()}

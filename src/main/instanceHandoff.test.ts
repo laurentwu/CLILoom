@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { lstatSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -15,9 +15,26 @@ const temporaryDirectories: string[] = []
 const currentBuildId = `sha256:${'a'.repeat(64)}`
 const incomingBuildId = `sha256:${'b'.repeat(64)}`
 
+function canCreateFileSymbolicLinks(): boolean {
+  const directory = mkdtempSync(path.join(tmpdir(), 'cliloom-symlink-probe-'))
+  const target = path.join(directory, 'target')
+  const link = path.join(directory, 'link')
+  try {
+    writeFileSync(target, 'probe')
+    symlinkSync(target, link)
+    return lstatSync(link).isSymbolicLink()
+  } catch {
+    return false
+  } finally {
+    rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
+  }
+}
+
+const supportsFileSymbolicLinks = canCreateFileSymbolicLinks()
+
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
-    rmSync(directory, { recursive: true, force: true })
+    rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
   }
 })
 
@@ -124,9 +141,7 @@ describe('portable instance handoff', () => {
   it('rejects unavailable, unsafe, and non-Windows portable executable paths', () => {
     const executablePath = createPortableFixture()
     const directoryPath = path.join(path.dirname(executablePath), 'Directory.exe')
-    const symlinkPath = path.join(path.dirname(executablePath), 'Alias.exe')
     mkdirSync(directoryPath)
-    symlinkSync(executablePath, symlinkPath)
 
     expect(resolvePortableExecutablePath({
       PORTABLE_EXECUTABLE_FILE: executablePath
@@ -137,6 +152,13 @@ describe('portable instance handoff', () => {
     expect(resolvePortableExecutablePath({
       PORTABLE_EXECUTABLE_FILE: directoryPath
     }, 'win32')).toBeNull()
+  })
+
+  it.runIf(supportsFileSymbolicLinks)('rejects a symbolic-link portable executable', () => {
+    const executablePath = createPortableFixture()
+    const symlinkPath = path.join(path.dirname(executablePath), 'Alias.exe')
+    symlinkSync(executablePath, symlinkPath)
+
     expect(resolvePortableExecutablePath({
       PORTABLE_EXECUTABLE_FILE: symlinkPath
     }, 'win32')).toBeNull()
@@ -156,7 +178,8 @@ describe('portable instance handoff', () => {
       environment: {
         PATH: '/bin',
         PORTABLE_EXECUTABLE_FILE: '/old/CLILoom.exe',
-        CLILOOM_ASSISTANT_BRIDGE_TOKEN: 'secret'
+        CLILOOM_ASSISTANT_BRIDGE_TOKEN: 'secret',
+        CLILOOM_ASSISTANT_CLI_STDIN_PIPE: '\\\\.\\pipe\\stale'
       },
       spawnProcess: spawnProcess as never
     })

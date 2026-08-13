@@ -30,6 +30,7 @@ import { ensureAssistantWorkspace } from './assistantWorkspace'
 import { startAssistantCommandBridge } from './assistantCommandBridge'
 import { runAssistantCliMode } from './assistantCli'
 import { AssistantTerminalService } from './assistantTerminalService'
+import { t } from './i18n'
 
 type NativeContext = {
   directory: string
@@ -46,7 +47,12 @@ afterEach(async () => {
   for (const context of contexts.splice(0)) {
     await context.runner.killAll()
     context.db.close()
-    rmSync(context.directory, { recursive: true, force: true })
+    rmSync(context.directory, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 50
+    })
   }
 })
 
@@ -192,7 +198,7 @@ describe('native shell smoke', () => {
       expect(restarted.resolveEffectiveShell().id).toBe(alternate.id)
       restarted.select('automatic')
     }
-  })
+  }, 15_000)
 
   it('runs Unicode bindings, hooks and an interactive PTY through the same real shell', async () => {
     const { db, runner, shells, workingDirectory } = createNativeContext()
@@ -295,11 +301,12 @@ describe('native shell smoke', () => {
     const childScript = path.join(workingDirectory, 'descendant-child.cjs')
     const parentScript = path.join(workingDirectory, 'descendant-parent.cjs')
     const pidFile = path.join(workingDirectory, 'descendant.pid')
+    const nodeExecutablePath = process.env.CLILOOM_TEST_NODE_EXECUTABLE ?? process.execPath
     writeFileSync(childScript, 'setInterval(() => undefined, 1000)\n')
     writeFileSync(parentScript, [
       "const { spawn } = require('node:child_process')",
       "const { writeFileSync } = require('node:fs')",
-      `const child = spawn(process.execPath, [${JSON.stringify(childScript)}], { ` +
+      `const child = spawn(${JSON.stringify(nodeExecutablePath)}, [${JSON.stringify(childScript)}], { ` +
         `stdio: 'ignore', detached: ${process.platform === 'win32'} })`,
       ...(process.platform === 'win32' ? ['child.unref()'] : []),
       `writeFileSync(${JSON.stringify(pidFile)}, String(child.pid))`,
@@ -310,7 +317,7 @@ describe('native shell smoke', () => {
       taskId: 'native-descendant-tree',
       nodeId: 'parent',
       kind: 'non-interactive',
-      command: runExecutableCommand(shell.family, process.execPath, parentScript),
+      command: runExecutableCommand(shell.family, nodeExecutablePath, parentScript),
       cwd: workingDirectory
     })
     const sessionId = newestSessionId(db)
@@ -509,31 +516,31 @@ describe('native shell smoke', () => {
       expect(accepted).toMatchObject({ status: 'closed', exitCode: 0 })
 
       const rejected: Array<{ name: string; command: string | ShellNeutralCommand; message: string }> = [
-        { name: 'literal-bang', command: 'echo literal!', message: '命令模板不能包含 !' },
+        { name: 'literal-bang', command: 'echo literal!', message: t('errors:shell.cmdBang') },
         {
           name: 'binding-newline',
           command: printBoundValue('cmd', 'line 1\r\nline 2'),
-          message: '变量值不能包含换行'
+          message: t('errors:shell.cmdValueNewline')
         },
         {
           name: 'binding-carriage-return',
           command: printBoundValue('cmd', 'line 1\rline 2'),
-          message: '变量值不能包含换行'
+          message: t('errors:shell.cmdValueNewline')
         },
         {
           name: 'percent-expansion',
           command: 'echo %PATH:~0,5%',
-          message: '不能使用 %NAME%'
+          message: t('errors:shell.cmdEnvExpansion')
         },
         {
           name: 'binding-nul',
           command: printBoundValue('cmd', 'before\0after'),
-          message: 'NUL'
+          message: t('errors:shell.neutralInvalid')
         },
         {
           name: 'command-length',
           command: `${acceptedBoundary}x`,
-          message: '命令展开后超过'
+          message: t('errors:shell.cmdCommandTooLarge', { limit: CMD_MAX_COMMAND_CHARS })
         }
       ]
       for (const item of rejected) {
