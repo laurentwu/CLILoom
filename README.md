@@ -3,46 +3,22 @@
 </p>
 
 <p align="center">
-  Bring AI CLIs, visual workflows, and real terminals into one desktop workspace.
-</p>
-
-<p align="center">
   <strong>English</strong> | <a href="README.zh-CN.md">简体中文</a>
 </p>
 
 ## 1. Overview
 
-CLILoom is a cross-platform desktop workspace built for AI-assisted CLI development.
-
-It turns terminal commands, human input, and automation steps into reusable visual workflows. Design and run those workflows in a project and task context, inspect real terminal output, and step into an interactive terminal whenever human judgment is needed.
-
-Whether you are working with an AI coding assistant, running builds and tests, or coordinating conditional and parallel jobs, CLILoom keeps the whole process visible, controllable, and repeatable.
+CLILoom is a cross-platform desktop app for visually orchestrating, running, and managing AI CLI development tasks.
 
 ## 2. Why CLILoom
 
-### See the whole process
-
-Replace steps scattered across scripts, terminal windows, and runbooks with a workflow you can inspect and edit. Command order, decision points, and parallel paths stay visible on the canvas.
-
-### Combine automation with human input
-
-Use non-interactive terminal nodes for unattended commands, then pause for parameters or continue in a fully interactive terminal when a task needs your attention.
-
-### Keep every task in context
-
-Organize work by project and task. CLILoom retains the workflow version, runtime status, terminal sessions, and historical output associated with each run.
-
-### Use your preferred AI CLI
-
-Launch an installed AI CLI or another command-line tool through a configurable initialization command in a dedicated assistant window. CLILoom does not tie the workflow to a single model or provider.
-
-### Work across operating systems
-
-Run CLILoom on macOS, Windows, or Linux with native shells including PowerShell, cmd, sh, bash, zsh, and Git Bash.
-
-### Keep workspace data local
-
-Projects, tasks, workflows, settings, and runtime records are stored locally in SQLite. Local does not mean encrypted: commands, variables, environment values, and terminal output can be retained as plaintext. The interface also includes English and Simplified Chinese, built-in themes, and reusable custom skins.
+- **Visual workflows:** Clearly arrange commands, conditions, and parallel tasks, then reuse them.
+- **Natural-language workflow customization:** Tell your AI CLI assistant what you need to easily create or adjust your own workflow.
+- **Parallel real terminals:** View live terminal output from multiple parallel branches on one page.
+- **Automation with human input:** Run commands automatically, then provide input or enter an interactive terminal when needed.
+- **Full task context:** Retain workflow versions, runtime status, terminal sessions, and historical output.
+- **Your preferred AI CLI:** Launch Codex and other installed CLI assistants with a custom command.
+- **Cross-platform, local storage:** Use macOS, Windows, or Linux while keeping workspace data on your machine.
 
 ## 3. Interface Preview
 
