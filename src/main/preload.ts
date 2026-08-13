@@ -36,6 +36,7 @@ const api = {
   chooseAndAddProject: () => ipcRenderer.invoke('projects:choose-add'),
   listProjects: () => ipcRenderer.invoke('projects:list'),
   deleteProject: (projectId: string) => ipcRenderer.invoke('projects:delete', projectId),
+  renameProject: (projectId: string, name: string) => ipcRenderer.invoke('projects:rename', projectId, name),
   reorderProjects: (projectIds: string[]) => ipcRenderer.invoke('projects:reorder', projectIds),
   setProjectDefaultWorkflow: (projectId: string, workflowId: string) => ipcRenderer.invoke('projects:setDefaultWorkflow', projectId, workflowId),
   listTasks: (projectId: string) => ipcRenderer.invoke('tasks:list', projectId),

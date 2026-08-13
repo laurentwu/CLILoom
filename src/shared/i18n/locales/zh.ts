@@ -183,6 +183,8 @@ export default {
       missingVersionTasks: '缺少工作流版本的历史任务数：{{count}}。请先删除相关任务。',
       activeTasksInUse: '正在使用该工作流的活动任务数：{{count}}。请先停止或删除相关任务。',
       projectNotFound: '项目不存在或已被删除',
+      projectNameInvalid: '项目名称必须是字符串',
+      projectNameEmpty: '项目名称不能为空',
       projectPathInvalid: '项目路径无效或不是绝对路径',
       projectPathNotDirectory: '所选项目路径不是可访问的文件夹',
       projectPathUnsupported: '不支持该项目路径',
@@ -427,6 +429,12 @@ export default {
     },
     tooltip: {
       deleteProject: '删除项目'
+    },
+    rename: {
+      title: '重命名项目',
+      description: '仅更改项目的显示名称，项目文件夹路径不会改变。',
+      nameAria: '项目名称',
+      save: '保存名称'
     },
     delete: {
       title: '删除项目“{{name}}”？',
@@ -784,7 +792,7 @@ export default {
     selectOrCreate: '选择或新建任务',
     defaultWorkflow: '默认工作流',
     noWorkflows: '暂无可用工作流',
-    viewAll: '查看全部 {{count}} 个任务',
+    viewMore: '查看更多',
     actionsAria: '任务操作 {{name}}',
     action: {
       rename: '重命名'

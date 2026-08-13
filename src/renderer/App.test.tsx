@@ -229,6 +229,7 @@ vi.mock('./components/ProjectRail', async () => {
   return {
     ProjectRail: ({
       onOpenDesigner,
+      onRenameProject,
       onSelectProject,
       projects,
       shellSnapshot,
@@ -236,6 +237,7 @@ vi.mock('./components/ProjectRail', async () => {
       onRefreshShells
     }: {
       onOpenDesigner: () => void
+      onRenameProject: (project: ProjectRecord, name: string) => Promise<void>
       onSelectProject: (project: ProjectRecord) => void
       projects: ProjectRecord[]
       shellSnapshot: ShellSnapshot
@@ -244,11 +246,18 @@ vi.mock('./components/ProjectRail', async () => {
     }) => React.createElement(
       'nav',
       null,
-      ...projects.map((item) => React.createElement('button', {
-        key: item.id,
-        onClick: () => onSelectProject(item),
-        type: 'button'
-      }, `切换项目 ${item.name}`)),
+      ...projects.map((item) => React.createElement(
+        React.Fragment,
+        { key: item.id },
+        React.createElement('button', {
+          onClick: () => onSelectProject(item),
+          type: 'button'
+        }, `切换项目 ${item.name}`),
+        React.createElement('button', {
+          onClick: () => void onRenameProject(item, '  Renamed project  '),
+          type: 'button'
+        }, `重命名项目 ${item.name}`)
+      )),
       React.createElement('button', {
         onClick: onOpenDesigner,
         type: 'button'
@@ -284,15 +293,19 @@ vi.mock('./components/TaskSidebar', async () => {
       displayedTasks,
       onLoadTask,
       onRenameTask,
+      onShowMoreTasks,
       onStartNewTask,
-      showDraftTask
+      showDraftTask,
+      totalTaskCount
     }: {
       activeProject: ProjectRecord | null
       displayedTasks: TaskRecord[]
       onLoadTask: (task: TaskRecord) => void
       onRenameTask: (task: TaskRecord, title: string) => Promise<void>
+      onShowMoreTasks: () => void
       onStartNewTask: () => void
       showDraftTask?: boolean
+      totalTaskCount: number
     }) => React.createElement(
       'aside',
       null,
@@ -316,7 +329,13 @@ vi.mock('./components/TaskSidebar', async () => {
           onClick: () => void onRenameTask(task, '手动名称'),
           type: 'button'
         }, `重命名 ${task.title}`)
-      ))
+      )),
+      displayedTasks.length < totalTaskCount
+        ? React.createElement('button', {
+            onClick: onShowMoreTasks,
+            type: 'button'
+          }, '查看更多')
+        : null
     )
   }
 })
@@ -536,6 +555,21 @@ function bootstrap(tasks: TaskRecord[] = []): Bootstrap & { tasks: TaskRecord[] 
   }
 }
 
+function taskRecords(
+  projectRecord: ProjectRecord,
+  count: number,
+  titlePrefix = '任务'
+): TaskRecord[] {
+  return Array.from({ length: count }, (_, index) => ({
+    id: `${projectRecord.id}-task-${index + 1}`,
+    project_id: projectRecord.id,
+    title: `${titlePrefix} ${index + 1}`,
+    status: 'completed',
+    created_at: '2026-08-10T19:30:00.000Z',
+    updated_at: '2026-08-10T19:30:00.000Z'
+  }))
+}
+
 function runtimeState(
   taskId: string,
   definition: WorkflowDefinition,
@@ -591,6 +625,7 @@ function setupApi(options: {
       cursor: null
     }),
     setLastOpenedWorkspace: vi.fn().mockResolvedValue(undefined),
+    renameProject: vi.fn().mockResolvedValue(undefined),
     updateTaskTitle: vi.fn().mockResolvedValue(undefined),
     setDesignerState: vi.fn().mockResolvedValue(undefined),
     setProjectDefaultWorkflow: vi.fn().mockResolvedValue(undefined),
@@ -706,6 +741,81 @@ describe('App language synchronization', () => {
       appearance: { version: 2, activeSkinId: DEFAULT_APPEARANCE_PREFERENCES.activeSkinId, language: 'en' }
     }))
     expect(document.documentElement.lang).toBe('en')
+  })
+})
+
+describe('App task pagination', () => {
+  it('shows tasks in batches of ten', async () => {
+    const tasks = taskRecords(project, 25)
+    setupApi({ data: bootstrap(tasks) })
+
+    await renderBootstrappedApp()
+
+    expect(await screen.findByRole('button', { name: '加载 任务 10' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '加载 任务 11' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: '查看更多' }))
+
+    expect(await screen.findByRole('button', { name: '加载 任务 20' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '加载 任务 21' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: '查看更多' }))
+
+    expect(await screen.findByRole('button', { name: '加载 任务 25' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '查看更多' })).toBeNull()
+  })
+
+  it('expands through the restored task batch on startup', async () => {
+    const tasks = taskRecords(project, 25)
+    const data = bootstrap(tasks)
+    data.lastOpenedWorkspace = {
+      projectId: project.id,
+      taskId: tasks[10].id
+    }
+    setupApi({ data })
+
+    await renderBootstrappedApp()
+
+    expect(await screen.findByRole('button', { name: '加载 任务 11' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '加载 任务 20' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '加载 任务 21' })).toBeNull()
+    expect(screen.getByRole('button', { name: '查看更多' })).toBeTruthy()
+  })
+
+  it('resets the visible task count when switching projects', async () => {
+    const projectTasks = taskRecords(project, 25, '项目一任务')
+    const otherProjectTasks = taskRecords(otherProject, 25, '项目二任务')
+    const data = bootstrap(projectTasks)
+    data.projects = [project, otherProject]
+    const { api } = setupApi({ data })
+    api.listTasks.mockImplementation((projectId: string) => Promise.resolve(
+      projectId === otherProject.id ? otherProjectTasks : projectTasks
+    ))
+
+    await renderBootstrappedApp()
+    expect(await screen.findByRole('button', { name: '加载 项目一任务 10' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '查看更多' }))
+    expect(await screen.findByRole('button', { name: '加载 项目一任务 20' })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: '切换项目 Other Project' }))
+
+    expect(await screen.findByRole('button', { name: '加载 项目二任务 10' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '加载 项目二任务 11' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '加载 项目一任务 20' })).toBeNull()
+    expect(screen.getByRole('button', { name: '查看更多' })).toBeTruthy()
+  })
+})
+
+describe('App project renaming', () => {
+  it('persists the trimmed name and updates the project UI without changing its identity', async () => {
+    const { api } = setupApi()
+    await renderBootstrappedApp()
+
+    fireEvent.click(screen.getByRole('button', { name: '重命名项目 Project' }))
+
+    await waitFor(() => expect(api.renameProject).toHaveBeenCalledWith(project.id, 'Renamed project'))
+    expect(screen.getByRole('button', { name: '切换项目 Renamed project' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '切换项目 Project' })).toBeNull()
   })
 })
 

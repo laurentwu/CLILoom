@@ -183,6 +183,8 @@ export default {
       missingVersionTasks: 'Historical tasks without a workflow version: {{count}}. Delete the related tasks first.',
       activeTasksInUse: 'Active tasks using this workflow: {{count}}. Stop or delete the related tasks first.',
       projectNotFound: 'Project not found or has been deleted',
+      projectNameInvalid: 'Project name must be a string',
+      projectNameEmpty: 'Project name must not be empty',
       projectPathInvalid: 'The project path is invalid or is not absolute',
       projectPathNotDirectory: 'The selected project path is not an accessible directory',
       projectPathUnsupported: 'This project path is not supported',
@@ -427,6 +429,12 @@ export default {
     },
     tooltip: {
       deleteProject: 'Delete project'
+    },
+    rename: {
+      title: 'Rename project',
+      description: 'This only changes the project display name. The project folder path will not change.',
+      nameAria: 'Project name',
+      save: 'Save name'
     },
     delete: {
       title: 'Delete project "{{name}}"?',
@@ -784,7 +792,7 @@ export default {
     selectOrCreate: 'Select or create a task',
     defaultWorkflow: 'Default workflow',
     noWorkflows: 'No workflows available',
-    viewAll: 'View all {{count}} tasks',
+    viewMore: 'Show more',
     actionsAria: 'Task actions {{name}}',
     action: {
       rename: 'Rename'

@@ -102,21 +102,24 @@ afterEach(() => {
 })
 
 describe('ProjectRail project actions', () => {
-  it('uses a smaller transparent delete target without an active-project ring', () => {
+  it('moves rename and delete into an ordered project context menu', async () => {
     i18n.changeLanguage('zh')
+    const project = {
+      id: 'project-1',
+      name: 'Demo',
+      path: '/repo/demo',
+      sort_order: 0,
+      created_at: '2026-08-11T00:00:00.000Z'
+    }
+    const onRenameProject = vi.fn().mockResolvedValue(undefined)
+    const onSelectProject = vi.fn()
     render(<I18nextProvider i18n={i18n}>
       <ProjectRail
         activeProjectId="project-1"
         activeSkinId="builtin.light.neutral"
         language="zh"
         projects={[
-          {
-            id: 'project-1',
-            name: 'Demo',
-            path: '/repo/demo',
-            sort_order: 0,
-            created_at: '2026-08-11T00:00:00.000Z'
-          },
+          project,
           {
             id: 'project-2',
             name: 'Other',
@@ -139,8 +142,9 @@ describe('ProjectRail project actions', () => {
         onOpenAssistant={() => undefined}
         onOpenDesigner={() => undefined}
         onRefreshShells={async () => undefined}
+        onRenameProject={onRenameProject}
         onReorderProject={() => undefined}
-        onSelectProject={() => undefined}
+        onSelectProject={onSelectProject}
         onShellChange={async () => undefined}
         onSkinChange={() => undefined}
         userSkins={[]}
@@ -155,20 +159,77 @@ describe('ProjectRail project actions', () => {
     expect(projectButtonClasses).not.toContain('ring-primary/20')
     expect(projectButton.getAttribute('data-variant')).toBe('default')
     expect(screen.getByRole('button', { name: '打开项目 Other' }).getAttribute('data-variant')).toBe('ghost')
+    expect(screen.queryByRole('button', { name: '删除项目 Demo' })).toBeNull()
 
-    const deleteButton = screen.getByRole('button', { name: '删除项目 Demo' })
-    const deleteButtonClasses = deleteButton.className.split(/\s+/)
-    expect(deleteButtonClasses).toContain('size-4')
-    expect(deleteButtonClasses).not.toContain('size-6')
-    expect(deleteButtonClasses).toContain('bg-transparent')
-    expect(deleteButtonClasses).toContain('hover:bg-transparent')
-    expect(deleteButtonClasses).toContain('focus-visible:bg-transparent')
-    expect(deleteButtonClasses).toContain('dark:bg-transparent')
-    expect(deleteButtonClasses).toContain('dark:hover:bg-transparent')
-    expect(deleteButtonClasses).toContain('shadow-none')
-    expect(deleteButtonClasses).toContain('opacity-0')
-    expect(deleteButtonClasses).toContain('group-hover:opacity-100')
-    expect(deleteButtonClasses).toContain('focus-visible:opacity-100')
+    fireEvent.contextMenu(projectButton, { clientX: 20, clientY: 20 })
+    const menuItems = await screen.findAllByRole('menuitem')
+    expect(menuItems.map((item) => item.textContent)).toEqual(['重命名', '删除'])
+    expect(menuItems[1].getAttribute('data-variant')).toBe('destructive')
+    expect(onSelectProject).not.toHaveBeenCalled()
+
+    fireEvent.click(menuItems[0])
+    const nameInput = await screen.findByLabelText('项目名称') as HTMLInputElement
+    expect(nameInput.value).toBe('Demo')
+    fireEvent.change(nameInput, { target: { value: '  Renamed project  ' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存名称' }))
+    await waitFor(() => expect(onRenameProject).toHaveBeenCalledWith(project, 'Renamed project'))
+
+    fireEvent.contextMenu(projectButton, { clientX: 20, clientY: 20 })
+    fireEvent.click(await screen.findByRole('menuitem', { name: '删除' }))
+    expect(screen.getByText('删除项目“Demo”？')).toBeTruthy()
+  })
+
+  it('disables blank names and submits a valid rename with Enter', async () => {
+    i18n.changeLanguage('zh')
+    const project = {
+      id: 'project-1',
+      name: 'Demo',
+      path: '/repo/demo',
+      sort_order: 0,
+      created_at: '2026-08-11T00:00:00.000Z'
+    }
+    const onRenameProject = vi.fn().mockResolvedValue(undefined)
+    render(<I18nextProvider i18n={i18n}>
+      <ProjectRail
+        activeProjectId="project-1"
+        activeSkinId="builtin.light.neutral"
+        language="zh"
+        projects={[project]}
+        shellSnapshot={{
+          platform: 'linux',
+          preferences: { version: 3, selection: { mode: 'automatic' } },
+          candidates: [],
+          effectiveShell: null,
+          error: undefined
+        }}
+        onAddProject={() => undefined}
+        onLanguageChange={() => undefined}
+        onOpenAppearance={() => undefined}
+        onDeleteProject={async () => undefined}
+        onOpenAssistant={() => undefined}
+        onOpenDesigner={() => undefined}
+        onRefreshShells={async () => undefined}
+        onRenameProject={onRenameProject}
+        onReorderProject={() => undefined}
+        onSelectProject={() => undefined}
+        onShellChange={async () => undefined}
+        onSkinChange={() => undefined}
+        userSkins={[]}
+      />
+    </I18nextProvider>)
+
+    fireEvent.contextMenu(screen.getByRole('button', { name: '打开项目 Demo' }), { clientX: 20, clientY: 20 })
+    fireEvent.click(await screen.findByRole('menuitem', { name: '重命名' }))
+    const nameInput = await screen.findByLabelText('项目名称')
+    fireEvent.change(nameInput, { target: { value: '   ' } })
+    const saveButton = screen.getByRole('button', { name: '保存名称' }) as HTMLButtonElement
+    expect(saveButton.disabled).toBe(true)
+    fireEvent.click(saveButton)
+    expect(onRenameProject).not.toHaveBeenCalled()
+
+    fireEvent.change(nameInput, { target: { value: '  Renamed with Enter  ' } })
+    fireEvent.keyDown(nameInput, { key: 'Enter' })
+    await waitFor(() => expect(onRenameProject).toHaveBeenCalledWith(project, 'Renamed with Enter'))
   })
 })
 
@@ -215,6 +276,7 @@ describe('ProjectRail Shell settings', () => {
       onOpenAssistant={() => undefined}
       onOpenDesigner={() => undefined}
       onRefreshShells={onRefreshShells}
+      onRenameProject={async () => undefined}
       onReorderProject={() => undefined}
       onSelectProject={() => undefined}
       onShellChange={onShellChange}
@@ -268,6 +330,7 @@ describe('ProjectRail language picker', () => {
         onOpenAssistant={() => undefined}
         onOpenDesigner={() => undefined}
         onRefreshShells={async () => undefined}
+        onRenameProject={async () => undefined}
         onReorderProject={() => undefined}
         onSelectProject={() => undefined}
         onShellChange={async () => undefined}
@@ -305,6 +368,7 @@ describe('ProjectRail skin picker', () => {
         onOpenAssistant={() => undefined}
         onOpenDesigner={() => undefined}
         onRefreshShells={async () => undefined}
+        onRenameProject={async () => undefined}
         onReorderProject={() => undefined}
         onSelectProject={() => undefined}
         onShellChange={async () => undefined}
@@ -356,6 +420,7 @@ describe('ProjectRail skin picker', () => {
         onOpenAssistant={() => undefined}
         onOpenDesigner={() => undefined}
         onRefreshShells={async () => undefined}
+        onRenameProject={async () => undefined}
         onReorderProject={() => undefined}
         onSelectProject={() => undefined}
         onShellChange={async () => undefined}

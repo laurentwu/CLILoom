@@ -33,6 +33,7 @@ import {
   saveWorkflowWithRevision,
   setLastOpenedWorkspace,
   setProjectDefaultWorkflow,
+  updateProjectName,
   type AppDatabase
 } from './database'
 
@@ -399,6 +400,35 @@ describe('project path identity', () => {
     const tracked = createTrackedDatabase()
     expect(addProject(tracked.db, tracked.dir).path).toBe(tracked.dir)
     expect(() => addProject(tracked.db, path.join(tracked.dir, 'missing-project'))).toThrow()
+  })
+})
+
+describe('project renaming', () => {
+  it('trims and persists a display name without changing the project path or requiring uniqueness', () => {
+    const { db } = createTrackedDatabase()
+    const first = addProject(db, '/repo/first-project', assumeProjectDirectory)
+    const second = addProject(db, '/repo/second-project', assumeProjectDirectory)
+
+    const renamed = updateProjectName(db, second.id, `  ${first.name}  `)
+
+    expect(renamed).toEqual({
+      ...second,
+      name: first.name
+    })
+    expect(listProjects(db)).toEqual([
+      first,
+      { ...second, name: first.name }
+    ])
+  })
+
+  it('rejects invalid, empty, and missing project names at the database boundary', () => {
+    const { db } = createTrackedDatabase()
+    const project = addProject(db, '/repo/rename-validation', assumeProjectDirectory)
+
+    expect(() => updateProjectName(db, project.id, 42)).toThrow()
+    expect(() => updateProjectName(db, project.id, '   ')).toThrow()
+    expect(() => updateProjectName(db, 'missing-project', 'Renamed')).toThrow()
+    expect(listProjects(db)).toEqual([project])
   })
 })
 

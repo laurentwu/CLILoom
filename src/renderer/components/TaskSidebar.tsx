@@ -50,13 +50,12 @@ type TaskSidebarProps = {
   displayedTasks: TaskRecord[]
   totalTaskCount: number
   activeTaskId: string
-  showAllTasks: boolean
   onSetDefaultWorkflow: (workflowId: string) => void
   onStartNewTask: () => void
   onLoadTask: (task: TaskRecord) => void
   onRenameTask: (task: TaskRecord, title: string) => Promise<void>
   onDeleteTask: (task: TaskRecord) => Promise<void>
-  onShowAllTasks: () => void
+  onShowMoreTasks: () => void
 }
 
 export function formatTaskStartedAt(createdAt: string): string {
@@ -74,13 +73,12 @@ export function TaskSidebar({
   displayedTasks,
   totalTaskCount,
   activeTaskId,
-  showAllTasks,
   onSetDefaultWorkflow,
   onStartNewTask,
   onLoadTask,
   onRenameTask,
   onDeleteTask,
-  onShowAllTasks
+  onShowMoreTasks
 }: TaskSidebarProps) {
   const { t } = useTranslation()
   const [renameTask, setRenameTask] = useState<TaskRecord | null>(null)
@@ -213,9 +211,9 @@ export function TaskSidebar({
               )
             })}
 
-            {totalTaskCount > 5 && !showAllTasks && (
-              <Button variant="ghost" onClick={onShowAllTasks}>
-                {t('task:viewAll', { count: totalTaskCount })}
+            {displayedTasks.length < totalTaskCount && (
+              <Button variant="ghost" onClick={onShowMoreTasks}>
+                {t('task:viewMore')}
               </Button>
             )}
 

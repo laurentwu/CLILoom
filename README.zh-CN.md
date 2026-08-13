@@ -124,8 +124,6 @@ CLILoom 的发布构建当前尚未进行 Apple 代码签名或公证。首次�
 
 Windows 发布构建当前尚未签名，因此 Microsoft Defender SmartScreen 可能显示未知发布者警告。继续运行前，请确认文件来自 CLILoom 的 GitHub Releases 页面。
 
-CLILoom 不提供 WSL 集成，不会发现或启动 WSL 发行版，也不支持 `\\wsl$` 或 `\\wsl.localhost` 下的项目文件夹。用户填写的命令仍是任意 Shell 输入；如需禁止 `wsl.exe`，请使用 Windows、AppLocker 或组织级策略。详见[终端环境故障排查](SHELLS.md)。
-
 ### Linux
 
 请根据使用的发行版选择安装包：
@@ -142,7 +140,7 @@ sudo apt install ./CLILoom-*.deb
 sudo dnf install ./CLILoom-*.rpm
 ```
 
-Linux 安装包需要 glibc，推荐使用 Ubuntu 24.04 或同等环境；暂不支持 Alpine Linux 等基于 musl 的发行版。在 WSL 内运行 Linux 安装包属于不支持、未测试场景。AppImage 无需安装，但系统必须允许 Chromium 使用 user namespace 沙箱。Ubuntu 23.10 及更高版本默认会阻止下载的应用使用该能力；除非你已为 AppImage 显式配置 AppArmor 策略，否则请在这些系统上使用 DEB。DEB 和 RPM 会安装由 root 所有、启用 SUID 的 Electron 沙箱辅助程序。CLILoom 始终不会降级使用 `--no-sandbox`。
+Linux 安装包需要 glibc，推荐使用 Ubuntu 24.04 或同等环境；暂不支持 Alpine Linux 等基于 musl 的发行版。AppImage 无需安装，但系统必须允许 Chromium 使用 user namespace 沙箱。Ubuntu 23.10 及更高版本默认会阻止下载的应用使用该能力；除非你已为 AppImage 显式配置 AppArmor 策略，否则请在这些系统上使用 DEB。DEB 和 RPM 会安装由 root 所有、启用 SUID 的 Electron 沙箱辅助程序。CLILoom 始终不会降级使用 `--no-sandbox`。
 
 ## 6. 安全与本地数据
 
