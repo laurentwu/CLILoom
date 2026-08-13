@@ -24,19 +24,19 @@ CLILoom is a cross-platform desktop app for visually orchestrating, running, and
 
 ### Main workspace
 
-![CLILoom main workspace showing projects, task history, and a visual workflow](docs/images/en/main-workspace.png)
+![CLILoom main workspace showing projects, task history, and a visual workflow](docs/images/main-workspace.webp)
 
 Manage projects, previous tasks, workflow execution, and terminal output from one workspace.
 
 ### Workflow designer
 
-![CLILoom workflow designer with a parallel quality-check workflow](docs/images/en/workflow-designer.png)
+![CLILoom workflow designer with a parallel quality-check workflow](docs/images/workflow-designer.webp)
 
 Build reusable workflows by arranging nodes, connecting paths, and editing execution settings.
 
 ### AI CLI assistant
 
-![CLILoom assistant CLI configuration window](docs/images/en/assistant.png)
+![CLILoom assistant CLI configuration window](docs/images/assistant.webp)
 
 Configure your preferred AI CLI and run it in a dedicated interactive terminal window.
 
