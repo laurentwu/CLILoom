@@ -1,38 +1,48 @@
 # Repository Guidelines
 
-## Project Structure & Module Organization
+## Project Structure & Boundaries
 
-This is a TypeScript Electron desktop application with a Vite/React renderer.
+This is a TypeScript Electron desktop application with Vite/React renderers.
 
-- `src/renderer/` contains the React entry points, application UI, theme utilities, and global CSS. Reusable UI lives in `components/`, shadcn/Radix primitives in `components/ui/`, and workflow-editor code in `designer/`.
-- `src/main/` contains the Electron main process and preload bridge, IPC handlers, SQLite access and schema initialization, PTY process execution, runtime persistence/reconciliation, and task cleanup.
-- `src/shared/` contains cross-process workflow types, validation and interpolation, expression evaluation, the runtime engine, and terminal-buffer helpers. Keep this layer free of Electron and browser dependencies.
-- `scripts/` contains the Electron development launcher and the Vitest wrapper used to run tests in Electron's Node runtime.
-- `dist/`, `.vite/`, `release/`, `out/`, and `*.tsbuildinfo` are generated. Do not edit or commit them.
+- `src/renderer/` contains the main and assistant renderer entry points, UI, themes, and CSS. Reusable components live in `components/`, shadcn/Radix primitives in `components/ui/`, and workflow-editor code in `designer/`.
+- `src/main/` contains Electron windows and preload bridges, IPC, SQLite, PTY/process execution, runtime persistence, updates, and cleanup.
+- `src/shared/` contains cross-process types and pure logic, including workflow/runtime, shell, terminal, settings, and i18n code. Keep it free of Electron and browser dependencies.
+- `e2e/` contains Playwright Electron tests. `scripts/` contains development, test, build, license, and packaging tooling.
+- `native/windows/` contains the C++20 Console launcher. `build/` contains checked-in packaging resources; neither directory is generated output.
+- `dist/`, `.vite/`, `release/`, `out/`, `coverage/`, `playwright-report/`, `test-results/`, and `*.tsbuildinfo` are generated. Do not edit or commit them.
+- `THIRD_PARTY_NOTICES.md` is tracked but generated; refresh it with the license script instead of editing it directly.
+- Do not commit databases or WAL files, environment files, logs, or machine-specific paths.
 
-## Build, Test, and Development Commands
+## Toolchain & Commands
 
-- `npm install` installs dependencies; its `postinstall` hook rebuilds native modules for Electron.
-- `npm run dev` starts only the Vite renderer dev server.
-- `npm run electron:dev` starts Vite and launches Electron against the dev server.
-- `npm run build` type-checks, builds the renderer, then compiles the Electron main process.
-- `npm run build:main` compiles only the main-process TypeScript project.
-- `npm run typecheck` runs TypeScript project checks without emitting app bundles.
-- `npm test` runs the Vitest suite once through the Electron runtime.
-- `npm run electron:rebuild` rebuilds the native `better-sqlite3` and `node-pty` dependencies.
+- Use the Node version declared by `.nvmrc` and `package.json#engines` (currently Node 24) and use npm with `package-lock.json`.
+- `npm install` installs dependencies and rebuilds Electron native modules. Do not use `--ignore-scripts`.
+- `npm run dev` starts only Vite; `npm run electron:dev` builds the main process and launches Electron.
+- `npm run typecheck` checks application and E2E TypeScript. `npm run build` checks licenses and builds both renderers and the main process.
+- `npm test` runs Vitest through Electron and excludes `src/main/shellSmoke.test.ts`. Use `npm run test:shell-smoke` for real host Shell/PTY coverage and `npm run test:e2e` for Playwright Electron flows.
+- On real Windows, `npm run test:windows-cli-smoke` validates the native Console launcher. See `PACKAGING.md` for packaging commands and platform prerequisites.
+- After runtime dependency changes, run `npm run licenses:generate`, review the result, and run `npm run licenses:check`.
 
-## Coding Style & Naming Conventions
+## Coding Style & Cross-Cutting Changes
 
-Use TypeScript throughout. Match the existing style: two-space indentation, single quotes, no trailing semicolons, and named exports for shared utilities. React components use `PascalCase`; functions, variables, and file-local helpers use `camelCase`. The `@/` import alias points to `src/renderer/`; use it only in renderer code. Prefer existing primitives in `src/renderer/components/ui/` and Lucide icons when extending the UI. Keep Electron-only APIs in `src/main/`, browser UI in `src/renderer/`, and cross-process types or pure logic in `src/shared/`.
+Use TypeScript for application code. Match the existing style: two-space indentation, single quotes, no trailing semicolons, and named exports for shared utilities. React components use `PascalCase`; functions, variables, and file-local helpers use `camelCase`. Follow the local style for CJS/Shell tooling and C++ native code.
+
+Use the `@/` alias only in renderer code. Prefer existing `components/ui/` primitives and Lucide icons. Keep Electron APIs in `src/main/`, browser UI in `src/renderer/`, and portable logic in `src/shared/`.
+
+Update both `src/shared/i18n/locales/en.ts` and `zh.ts` for user-facing text, preserving matching keys and interpolation placeholders. Keep `README.md` and `README.zh-CN.md` aligned; update `SHELLS.md`, `PACKAGING.md`, or `SECURITY_MODEL.md` when their documented behavior changes.
 
 ## Testing Guidelines
 
-Tests use Vitest, follow the `*.test.ts` naming pattern, and live beside the code they cover across `src/main/`, `src/renderer/`, and `src/shared/`. Add focused regression tests for changes to workflow validation/runtime behavior, expression parsing, persistence and schema initialization, process/session lifecycle, renderer helpers, or designer geometry. Native-module tests rely on the repository's Electron-based test wrapper. Run `npm test` and `npm run typecheck` before submitting changes; also run `npm run build` when changing build configuration or Electron entry points.
+Vitest tests use `*.test.{ts,tsx}` and live beside covered code or in `scripts/`; Playwright tests use `*.e2e.ts` in `e2e/`. Add focused regression tests for changed behavior, especially workflow/runtime logic, IPC and persistence, process/session lifecycle, renderer helpers, and designer geometry.
+
+Run focused tests while iterating. For code changes, run `npm test` and `npm run typecheck` before handoff; also run `npm run build` for build configuration or Electron entry-point changes, `npm run test:e2e` for Electron UI integration, and the relevant smoke tests for Shell, PTY, native launcher, or packaging changes.
+
+## Security & IPC
+
+Keep renderer sandboxing and `contextIsolation` enabled, `nodeIntegration` disabled, the CSP restrictive, and navigation/new-window creation blocked. Expose renderer capabilities only through typed preload APIs.
+
+When changing IPC, update the main handler, preload API, and renderer type declarations together. Treat renderer payloads as untrusted: verify the expected window/main frame and validate filesystem paths, process inputs, and other privileged arguments in the main process.
 
 ## Commit & Pull Request Guidelines
 
-Recent history uses concise, imperative commit subjects such as `Refine terminal detail layout` and `Fix workflow output persistence stalls`. Keep each commit focused. Pull requests should include a short summary, testing performed, linked issues when applicable, and screenshots or screen recordings for visible UI changes.
-
-## Security & Configuration Tips
-
-Keep `contextIsolation: true` and `nodeIntegration: false`. Expose renderer capabilities through the preload bridge and typed IPC APIs rather than importing Node or Electron modules into renderer code. Validate filesystem paths and process inputs at the IPC boundary. Do not commit local databases and WAL files, environment files, logs, generated output, or machine-specific paths.
+Use concise Conventional Commit subjects such as `feat(scope): ...`, `fix(scope): ...`, or `docs: ...`, and keep commits focused. Pull requests should summarize the change and testing, link relevant issues, and include screenshots or recordings for visible UI changes.
