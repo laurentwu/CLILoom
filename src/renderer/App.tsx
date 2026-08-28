@@ -110,6 +110,7 @@ import { pruneJoinIncomingEdgeIds } from './designer/joinEdges'
 import { NodeDetailPanel } from './components/NodeDetailPanel'
 import { ParallelBranchGroup } from './components/ParallelBranchGroup'
 import { ProjectRail } from './components/ProjectRail'
+import { ReleaseNotesView } from './components/ReleaseNotesView'
 import { AppearancePanel } from './components/AppearancePanel'
 import { StatusBadge } from './components/StatusBadge'
 import { TaskSidebar } from './components/TaskSidebar'
@@ -2252,8 +2253,8 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
       />
 
       <Dialog open={updateDialogOpen} onOpenChange={setUpdateDialogOpen}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
+        <DialogContent className="flex max-h-[calc(100dvh-2rem)] flex-col overflow-hidden sm:max-w-lg">
+          <DialogHeader className="shrink-0">
             <DialogTitle>
               {t(
                 updateState.status === 'downloaded'
@@ -2297,13 +2298,22 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
                 )}
             </DialogDescription>
           </DialogHeader>
-          <section aria-label={t('settings:update.releaseNotes')} className="min-h-0">
-            <h3 className="mb-2 text-sm font-medium">{t('settings:update.releaseNotes')}</h3>
-            <p className="max-h-56 overflow-y-auto whitespace-pre-wrap rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground">
-              {updateState.releaseNotes ?? t('settings:update.noReleaseNotes')}
-            </p>
+          <section
+            aria-label={t('settings:update.releaseNotes')}
+            className="flex min-h-0 flex-1 flex-col"
+          >
+            <h3 className="mb-2 shrink-0 text-sm font-medium">{t('settings:update.releaseNotes')}</h3>
+            <div className="min-h-0 flex-1 overflow-hidden rounded-md border bg-muted/40">
+              {updateState.releaseNotes ? (
+                <ReleaseNotesView markdown={updateState.releaseNotes} />
+              ) : (
+                <p className="h-full overflow-y-auto p-3 text-sm text-muted-foreground">
+                  {t('settings:update.noReleaseNotes')}
+                </p>
+              )}
+            </div>
           </section>
-          <DialogFooter>
+          <DialogFooter className="shrink-0">
             <Button variant="outline" onClick={() => setUpdateDialogOpen(false)}>
               {t('settings:update.later')}
             </Button>

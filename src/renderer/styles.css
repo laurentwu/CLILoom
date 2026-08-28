@@ -798,6 +798,145 @@ body,
   text-underline-offset: 0.2em;
 }
 
+.mdxeditor.release-notes-editor {
+  --accentBase: var(--background);
+  --accentBgSubtle: var(--muted);
+  --accentBg: var(--accent);
+  --accentBgHover: var(--accent);
+  --accentBgActive: var(--secondary);
+  --accentLine: var(--border);
+  --accentBorder: var(--border);
+  --accentBorderHover: var(--ring);
+  --accentSolid: var(--primary);
+  --accentSolidHover: var(--primary);
+  --accentText: var(--foreground);
+  --accentTextContrast: var(--primary-foreground);
+  --basePageBg: var(--background);
+  --baseBase: var(--background);
+  --baseBgSubtle: var(--muted);
+  --baseBg: var(--muted);
+  --baseBgHover: var(--accent);
+  --baseBgActive: var(--secondary);
+  --baseLine: var(--border);
+  --baseBorder: var(--border);
+  --baseBorderHover: var(--ring);
+  --baseSolid: var(--muted-foreground);
+  --baseSolidHover: var(--foreground);
+  --baseText: var(--muted-foreground);
+  --baseTextContrast: var(--foreground);
+  background: transparent;
+  color: var(--foreground);
+}
+
+.release-notes-content {
+  width: 100%;
+  max-width: none;
+  min-height: 100%;
+  padding: 0.75rem;
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-size: 0.875rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.release-notes-content h1,
+.release-notes-content h2,
+.release-notes-content h3,
+.release-notes-content h4,
+.release-notes-content h5,
+.release-notes-content h6 {
+  margin-block: 1em 0.4em;
+  color: var(--foreground);
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.release-notes-content h1 {
+  font-size: 1.125rem;
+}
+
+.release-notes-content h2 {
+  font-size: 1rem;
+}
+
+.release-notes-content h3,
+.release-notes-content h4,
+.release-notes-content h5,
+.release-notes-content h6 {
+  font-size: 0.9375rem;
+}
+
+.release-notes-content p,
+.release-notes-content ul,
+.release-notes-content ol,
+.release-notes-content blockquote,
+.release-notes-content pre,
+.release-notes-content table {
+  margin-block: 0.5rem;
+}
+
+.release-notes-content ul,
+.release-notes-content ol {
+  padding-left: 1.25rem;
+}
+
+.release-notes-content ul {
+  list-style: disc;
+}
+
+.release-notes-content ol {
+  list-style: decimal;
+}
+
+.release-notes-content blockquote {
+  border-left: 3px solid var(--border);
+  padding-left: 0.75rem;
+  color: var(--muted-foreground);
+}
+
+.release-notes-content code {
+  border-radius: 0.25rem;
+  background: var(--muted);
+  padding: 0.1rem 0.3rem;
+  font-family: var(--font-code);
+  font-size: 0.875em;
+}
+
+.release-notes-content pre {
+  overflow-x: auto;
+}
+
+.release-notes-content pre code {
+  background: transparent;
+  padding: 0;
+}
+
+.release-notes-content hr {
+  margin-block: 0.75rem;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+.release-notes-content table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.release-notes-content th,
+.release-notes-content td {
+  border: 1px solid var(--border);
+  padding: 0.3rem 0.5rem;
+  text-align: left;
+}
+
+.release-notes-content a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+  cursor: default;
+}
+
 .react-flow__controls {
   overflow: hidden;
   border: 1px solid var(--border);
