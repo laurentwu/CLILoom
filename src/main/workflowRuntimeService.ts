@@ -313,7 +313,8 @@ export class WorkflowRuntimeService {
           isTerminalSessionLive: (session) => this.processRunner.hasLiveSession(session.id),
           getLiveTerminalTranscript: (session) => (
             this.processRunner.getLiveTranscriptSnapshot(session.id)
-          )
+          ),
+          reconcileRunning: false
         })
       : this.restoreWithoutActiveEngine(taskId)
     if (active) return { ...restored, state: active.getState() }

@@ -179,6 +179,76 @@ describe('WorkflowRuntimeService restore', () => {
     expect(service.getState('running-task')).toBeNull()
   })
 
+  it('keeps persisted running state intact when restoring a task whose engine is live mid-flight', async () => {
+    const db = createDb()
+    const runningWorkflow: WorkflowDefinition = {
+      id: 'live-running-workflow',
+      name: 'Live running workflow',
+      nodes: [
+        { id: 'start', type: 'start', name: 'Start', config: { variables: [] } },
+        {
+          id: 'terminal',
+          type: 'non-interactive-terminal',
+          name: 'Terminal',
+          config: { command: 'sleep 60', cwd: '/repo', successExitCodes: [0] }
+        },
+        { id: 'end', type: 'end', name: 'End', config: {} }
+      ],
+      edges: [
+        { id: 'start-terminal', from: 'start', to: 'terminal' },
+        { id: 'terminal-end', from: 'terminal', to: 'end' }
+      ]
+    }
+    let resolveTerminal!: (result: WorkflowRuntimeProcessResult) => void
+    const terminalResult = new Promise<WorkflowRuntimeProcessResult>((resolve) => {
+      resolveTerminal = resolve
+    })
+    const killByTask = vi.fn(() => 0)
+    const runner = {
+      run: vi.fn(() => terminalResult),
+      runHook: async () => ({ hookRunId: 'hook-1', stdout: '', stderr: '', exitCode: 0 }),
+      killByTask,
+      hasLiveSession: () => true,
+      getLiveTranscriptSnapshot: () => ({ transcript: 'partial output', cursor: 3 })
+    }
+    const service = new WorkflowRuntimeService(db, runner as never, () => null)
+
+    await service.start({
+      taskId: 'live-running-task',
+      projectId: 'project-1',
+      projectDir: '/repo',
+      workflow: runningWorkflow,
+      variables: {}
+    })
+    await vi.waitFor(() => {
+      expect(runner.run).toHaveBeenCalledWith(expect.objectContaining({ nodeId: 'terminal' }))
+    })
+    killByTask.mockClear()
+
+    const restored = await service.restore('live-running-task')
+
+    expect(killByTask).not.toHaveBeenCalled()
+    expect(restored.state?.status).toBe('running')
+    expect(restored.state?.nodeRuns.terminal.status).toBe('running')
+    expect(service.getState('live-running-task')?.status).toBe('running')
+    const task = db.prepare('select status from tasks where id = ?')
+      .get('live-running-task') as { status: string }
+    const workflowRun = db.prepare('select status from workflow_runs where task_id = ?')
+      .get('live-running-task') as { status: string }
+    const nodeRun = db.prepare('select status from node_runs where run_id = ? and node_id = ?')
+      .get('live-running-task', 'terminal') as { status: string }
+    expect(task.status).toBe('running')
+    expect(workflowRun.status).toBe('running')
+    expect(nodeRun.status).toBe('running')
+
+    resolveTerminal({ sessionId: 'live-session', stdout: 'done', stderr: '', exitCode: 0, status: 'closed' })
+    await vi.waitFor(() => {
+      const completed = db.prepare('select status from tasks where id = ?')
+        .get('live-running-task') as { status: string }
+      expect(completed.status).toBe('completed')
+    })
+  })
+
   it('validates the workflow before creating runtime records', async () => {
     const db = createDb()
     const runner = {
