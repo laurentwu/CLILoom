@@ -234,6 +234,8 @@ vi.mock('./components/ProjectRail', async () => {
   const React = await import('react')
   return {
     ProjectRail: ({
+      onAddProject,
+      onDeleteProject,
       onOpenDesigner,
       onRenameProject,
       onSelectProject,
@@ -246,6 +248,8 @@ vi.mock('./components/ProjectRail', async () => {
       onInstallUpdate,
       onOpenUpdateRelease
     }: {
+      onAddProject: () => void
+      onDeleteProject: (project: ProjectRecord) => Promise<void>
       onOpenDesigner: () => void
       onRenameProject: (project: ProjectRecord, name: string) => Promise<void>
       onSelectProject: (project: ProjectRecord) => void
@@ -270,8 +274,16 @@ vi.mock('./components/ProjectRail', async () => {
         React.createElement('button', {
           onClick: () => void onRenameProject(item, '  Renamed project  '),
           type: 'button'
-        }, `重命名项目 ${item.name}`)
+        }, `重命名项目 ${item.name}`),
+        React.createElement('button', {
+          onClick: () => void onDeleteProject(item),
+          type: 'button'
+        }, `删除项目 ${item.name}`)
       )),
+      React.createElement('button', {
+        onClick: onAddProject,
+        type: 'button'
+      }, '添加项目文件夹'),
       React.createElement('button', {
         onClick: onOpenDesigner,
         type: 'button'
@@ -700,6 +712,9 @@ function setupApi(options: {
   const api = {
     bootstrap: vi.fn().mockResolvedValue(data),
     listTasks: vi.fn().mockResolvedValue(data.tasks),
+    listProjects: vi.fn().mockResolvedValue(data.projects),
+    chooseAndAddProject: vi.fn().mockResolvedValue(null),
+    deleteProject: vi.fn().mockResolvedValue(undefined),
     listWorkflows: vi.fn(() => Promise.resolve(workflowRecords)),
     restoreWorkflowState: vi.fn().mockResolvedValue(options.restore ?? null),
     getTaskContext: vi.fn().mockResolvedValue('{}'),
@@ -1051,18 +1066,25 @@ describe('App task workflow selection', () => {
     expect((await screen.findByLabelText('Select workflow')).getAttribute('title')).toBe('流程 A')
   })
 
-  it('restores a project draft only when New task is clicked', async () => {
-    const cachedDraft = taskDraft(project.id, workflowA, { prompt: 'cached prompt' }, 7)
-    const { api } = setupApi({ drafts: { [project.id]: cachedDraft } })
-    const newTaskButton = await renderBootstrappedApp()
+  it('automatically restores a project draft after switching projects', async () => {
+    const data = bootstrap()
+    data.projects = [project, otherProject]
+    const cachedDraft = taskDraft(otherProject.id, workflowB, { prompt: 'cached prompt' }, 7)
+    const { api } = setupApi({ data, drafts: { [otherProject.id]: cachedDraft } })
+    await renderBootstrappedApp()
 
     expect(screen.getByTestId('variables').textContent).toContain('default a')
     expect(api.getTaskDraft).not.toHaveBeenCalled()
 
-    fireEvent.click(newTaskButton)
+    fireEvent.click(screen.getByRole('button', { name: '切换项目 Other Project' }))
+
+    await waitFor(() => expect(api.getTaskDraft).toHaveBeenCalledWith(otherProject.id))
+    await waitFor(() => expect(screen.getByTestId('variables').textContent).toContain('cached prompt'))
+
+    fireEvent.click(screen.getByRole('button', { name: '切换项目 Project' }))
 
     await waitFor(() => expect(api.getTaskDraft).toHaveBeenCalledWith(project.id))
-    await waitFor(() => expect(screen.getByTestId('variables').textContent).toContain('cached prompt'))
+    await waitFor(() => expect(screen.getByTestId('variables').textContent).toContain('default a'))
   })
 
   it('keeps drafts scoped to a project while switching projects', async () => {
@@ -1074,20 +1096,135 @@ describe('App task workflow selection', () => {
     })
 
     await renderBootstrappedApp()
-    fireEvent.click(screen.getByRole('button', { name: '新建任务' }))
-    await waitFor(() => expect(screen.getByTestId('variables').textContent).toContain('project one'))
 
     fireEvent.click(screen.getByRole('button', { name: '切换项目 Other Project' }))
     await waitFor(() => expect(api.listTasks).toHaveBeenCalledWith(otherProject.id))
+    await waitFor(() => expect(api.getTaskDraft).toHaveBeenCalledWith(otherProject.id))
+    await waitFor(() => expect(screen.getByTestId('variables').textContent).toContain('default b'))
     expect(api.getTaskDraft).toHaveBeenCalledTimes(1)
 
     fireEvent.click(screen.getByRole('button', { name: '切换项目 Project' }))
-    await waitFor(() => expect(api.listTasks).toHaveBeenCalledWith(project.id))
-    expect(api.getTaskDraft).toHaveBeenCalledTimes(1)
-
-    fireEvent.click(screen.getByRole('button', { name: '新建任务' }))
     await waitFor(() => expect(api.getTaskDraft).toHaveBeenCalledTimes(2))
     await waitFor(() => expect(screen.getByTestId('variables').textContent).toContain('project one'))
+  })
+
+  it('ignores a stale draft lookup when the user switches projects again before it resolves', async () => {
+    const data = bootstrap()
+    data.projects = [project, otherProject]
+    const cachedDraft = taskDraft(otherProject.id, workflowB, { prompt: 'other draft' }, 5)
+    const { api } = setupApi({ data, drafts: { [otherProject.id]: cachedDraft } })
+    const pendingLookup = deferred<TaskDraftRecord | null>()
+    api.getTaskDraft.mockReturnValueOnce(pendingLookup.promise)
+    await renderBootstrappedApp()
+
+    fireEvent.click(screen.getByRole('button', { name: '切换项目 Other Project' }))
+    await waitFor(() => expect(api.getTaskDraft).toHaveBeenCalledWith(otherProject.id))
+    fireEvent.click(screen.getByRole('button', { name: '切换项目 Project' }))
+    await waitFor(() => expect(api.getTaskDraft).toHaveBeenCalledTimes(2))
+
+    await act(async () => {
+      pendingLookup.resolve(cachedDraft)
+      await pendingLookup.promise
+    })
+
+    expect(screen.getByTestId('variables').textContent).toContain('default a')
+  })
+
+  it('treats New task as a fresh-draft request when a stale lookup cleared a newer pending marker', async () => {
+    const data = bootstrap()
+    data.projects = [project, otherProject]
+    const cachedDraft = taskDraft(otherProject.id, workflowB, { prompt: 'other draft' }, 5)
+    const { api, draftStore } = setupApi({ data, drafts: { [otherProject.id]: cachedDraft } })
+    const staleLookup = deferred<TaskDraftRecord | null>()
+    const activeLookup = deferred<TaskDraftRecord | null>()
+    const otherLookups = [staleLookup, activeLookup]
+    api.getTaskDraft.mockImplementation((projectId: string) => (
+      projectId === otherProject.id && otherLookups.length > 0
+        ? otherLookups.shift()!.promise
+        : Promise.resolve(draftStore.get(projectId) ?? null)
+    ))
+    const newTaskButton = await renderBootstrappedApp()
+
+    fireEvent.click(screen.getByRole('button', { name: '切换项目 Other Project' }))
+    await waitFor(() => expect(api.getTaskDraft).toHaveBeenCalledWith(otherProject.id))
+    fireEvent.click(screen.getByRole('button', { name: '切换项目 Project' }))
+    await waitFor(() => expect(api.getTaskDraft).toHaveBeenCalledTimes(2))
+    fireEvent.click(screen.getByRole('button', { name: '切换项目 Other Project' }))
+    await waitFor(() => expect(api.getTaskDraft).toHaveBeenCalledTimes(3))
+
+    await act(async () => {
+      staleLookup.resolve(cachedDraft)
+      await staleLookup.promise
+    })
+
+    // The second lookup for the same project is still pending, so New task
+    // must immediately create a fresh draft instead of restoring the cache.
+    fireEvent.click(newTaskButton)
+    await waitFor(() => expect(screen.getByTestId('variables').textContent).toContain('default b'))
+    await waitFor(() => expect(draftStore.get(otherProject.id)?.variables).toEqual({ prompt: 'default b' }))
+
+    await act(async () => {
+      activeLookup.resolve(cachedDraft)
+      await activeLookup.promise
+    })
+    expect(screen.getByTestId('variables').textContent).toContain('default b')
+    expect(draftStore.get(otherProject.id)?.variables).toEqual({ prompt: 'default b' })
+  })
+
+  it('restores the draft when the folder picker switches to an already registered project', async () => {
+    const data = bootstrap()
+    data.projects = [project, otherProject]
+    const { api } = setupApi({
+      data,
+      drafts: { [otherProject.id]: taskDraft(otherProject.id, workflowB, { prompt: 'cached prompt' }) }
+    })
+    api.chooseAndAddProject.mockResolvedValue(otherProject)
+    await renderBootstrappedApp()
+
+    fireEvent.click(screen.getByRole('button', { name: '添加项目文件夹' }))
+
+    await waitFor(() => expect(api.getTaskDraft).toHaveBeenCalledWith(otherProject.id))
+    await waitFor(() => expect(screen.getByTestId('variables').textContent).toContain('cached prompt'))
+  })
+
+  it('restores the draft of the fallback project after the active project is deleted', async () => {
+    const data = bootstrap()
+    data.projects = [project, otherProject]
+    const { api } = setupApi({
+      data,
+      drafts: { [otherProject.id]: taskDraft(otherProject.id, workflowB, { prompt: 'cached prompt' }) }
+    })
+    api.listProjects.mockResolvedValue([otherProject])
+    await renderBootstrappedApp()
+
+    fireEvent.click(screen.getByRole('button', { name: '删除项目 Project' }))
+
+    await waitFor(() => expect(api.deleteProject).toHaveBeenCalledWith(project.id))
+    await waitFor(() => expect(api.getTaskDraft).toHaveBeenCalledWith(otherProject.id))
+    await waitFor(() => expect(screen.getByTestId('variables').textContent).toContain('cached prompt'))
+  })
+
+  it('keeps the neutral workspace and reports the error when the draft lookup fails after switching', async () => {
+    const data = bootstrap()
+    data.projects = [project, otherProject]
+    const { api } = setupApi({ data, drafts: {} })
+    api.getTaskDraft.mockRejectedValueOnce(new Error('draft store unavailable'))
+    const appErrors: string[] = []
+    const onAppError = (event: Event) => {
+      appErrors.push((event as CustomEvent<{ text: string }>).detail.text)
+    }
+    window.addEventListener('app:error', onAppError)
+    try {
+      await renderBootstrappedApp()
+
+      fireEvent.click(screen.getByRole('button', { name: '切换项目 Other Project' }))
+
+      await waitFor(() => expect(api.getTaskDraft).toHaveBeenCalledWith(otherProject.id))
+      await waitFor(() => expect(appErrors.some((text) => text.includes('getTaskDraft'))).toBe(true))
+      expect(screen.getByTestId('variables').textContent).toContain('default b')
+    } finally {
+      window.removeEventListener('app:error', onAppError)
+    }
   })
 
   it('flushes a debounced draft edit before switching projects', async () => {
