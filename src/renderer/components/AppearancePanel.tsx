@@ -15,7 +15,6 @@ import type { UserSkin } from '../../shared/appSettings'
 import {
   BUILTIN_SKIN_LIGHT_ID,
   SKIN_BOUNDS,
-  SKIN_COLOR_TOKEN_KEYS,
   defaultSkinContent,
   getBuiltinSkin,
   type Skin,
@@ -50,6 +49,55 @@ import { Slider } from '@/components/ui/slider'
 import { cn } from '@/lib/utils'
 
 const NEW_SKIN_DRAFT_ID = 'user.unsaved-draft'
+
+type SkinColorTokenKey = keyof SkinContent['colors']
+
+type SkinColorGroup = {
+  labelKey: TranslationKey
+  tokens: readonly SkinColorTokenKey[]
+}
+
+const SKIN_COLOR_GROUPS: readonly SkinColorGroup[] = [
+  {
+    labelKey: 'skin:section.surfaces',
+    tokens: ['background', 'foreground', 'card', 'cardForeground', 'popover', 'popoverForeground']
+  },
+  {
+    labelKey: 'skin:section.interaction',
+    tokens: [
+      'primary',
+      'primaryForeground',
+      'secondary',
+      'secondaryForeground',
+      'muted',
+      'mutedForeground',
+      'accent',
+      'accentForeground',
+      'destructive'
+    ]
+  },
+  {
+    labelKey: 'skin:section.structure',
+    tokens: ['border', 'input', 'ring']
+  },
+  {
+    labelKey: 'skin:section.navigation',
+    tokens: [
+      'sidebar',
+      'sidebarForeground',
+      'sidebarPrimary',
+      'sidebarPrimaryForeground',
+      'sidebarAccent',
+      'sidebarAccentForeground',
+      'sidebarBorder',
+      'sidebarRing'
+    ]
+  },
+  {
+    labelKey: 'skin:section.charts',
+    tokens: ['chart1', 'chart2', 'chart3', 'chart4', 'chart5']
+  }
+]
 
 type AppearancePanelProps = {
   open: boolean
@@ -531,29 +579,41 @@ function SkinEditor({
         </div>
       </div>
 
-      <section>
-        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+      <section className="flex flex-col gap-5">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           {t('skin:section.colors')}
         </h3>
-        <div className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {SKIN_COLOR_TOKEN_KEYS.map((key) => (
-            <div className="flex flex-col gap-1.5" key={key}>
-              <Label className="text-xs">{t(`skin:token.${key}` as TranslationKey)}</Label>
-              <ColorPicker
-                className="w-full"
-                label={t(`skin:token.${key}` as TranslationKey)}
-                value={draft.colors[key]}
-                onChange={(value) => onColorChange(key, value)}
-              />
+        {SKIN_COLOR_GROUPS.map((group) => (
+          <div className="flex flex-col gap-2" key={group.labelKey}>
+            <h4 className="text-xs font-medium text-foreground">{t(group.labelKey)}</h4>
+            <div className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+              {group.tokens.map((key) => {
+                const label = t(`skin:token.${key}` as TranslationKey)
+                return (
+                  <div className="flex min-w-0 flex-col gap-1.5" data-skin-token={key} key={key}>
+                    <Label className="text-xs leading-4">{label}</Label>
+                    <p className="min-h-8 text-[11px] leading-4 text-muted-foreground">
+                      {t(`skin:tokenDescription.${key}` as TranslationKey)}
+                    </p>
+                    <ColorPicker
+                      className="w-full"
+                      label={label}
+                      value={draft.colors[key]}
+                      onChange={(value) => onColorChange(key, value)}
+                    />
+                  </div>
+                )
+              })}
             </div>
-          ))}
-        </div>
+          </div>
+        ))}
       </section>
 
       <section className="flex flex-col gap-3">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           {t('skin:section.background')}
         </h3>
+        <p className="text-xs text-muted-foreground">{t('skin:background.description')}</p>
         <div className="flex gap-2">
           <Button
             onClick={() => onBackgroundChange({ kind: 'solid', color: background.kind === 'solid' ? background.color : draft.colors.background })}
@@ -583,7 +643,7 @@ function SkinEditor({
             {background.stops.map((stop, index) => (
               <div className="flex items-center gap-2" key={index}>
                 <ColorPicker
-                  label={`${t('skin:background.gradient')} ${index + 1}`}
+                  label={`${t('skin:background.stop')} ${index + 1}`}
                   value={stop}
                   onChange={(value) => {
                     const stops = [...background.stops]

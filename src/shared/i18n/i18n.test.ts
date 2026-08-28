@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import en from './locales/en'
 import zh from './locales/zh'
 import { createI18n } from './index'
+import { SKIN_COLOR_TOKEN_KEYS } from '../skin'
 
 type Leaf = Record<string, unknown> | string
 
@@ -78,5 +79,35 @@ describe('createI18n', () => {
     expect(i18n.t('node:parallel.routesCount', { count: 2 })).toBe('2 条并行路线')
     expect(i18n.t('skin:action.apply')).toBe('应用主题')
     expect(i18n.t('skin:action.confirm')).toBe('保存')
+  })
+
+  it('names theme colors by their interface location and state', () => {
+    const i18n = createI18n('en')
+    expect(i18n.t('skin:token.background')).toBe('Page base background')
+    expect(i18n.t('skin:token.accent')).toBe('Hover or selected-item background')
+    expect(i18n.t('skin:tokenDescription.mutedForeground')).toContain('descriptions')
+
+    i18n.changeLanguage('zh')
+    expect(i18n.t('skin:token.background')).toBe('页面基础背景色')
+    expect(i18n.t('skin:section.navigation')).toBe('左侧导航栏')
+    expect(i18n.t('skin:background.description')).toContain('页面基础背景色')
+  })
+
+  it('provides labels and descriptions for every editable theme color in both languages', () => {
+    const i18n = createI18n('en')
+
+    for (const language of ['en', 'zh'] as const) {
+      i18n.changeLanguage(language)
+      for (const key of SKIN_COLOR_TOKEN_KEYS) {
+        const label = i18n.t(`skin:token.${key}`)
+        const description = i18n.t(`skin:tokenDescription.${key}`)
+        expect(label, `${language} label for ${key}`).toBeTypeOf('string')
+        expect(label, `${language} label for ${key}`).not.toBe('')
+        expect(label, `${language} label for ${key}`).not.toMatch(/^skin:/)
+        expect(description, `${language} description for ${key}`).toBeTypeOf('string')
+        expect(description, `${language} description for ${key}`).not.toBe('')
+        expect(description, `${language} description for ${key}`).not.toMatch(/^skin:/)
+      }
+    }
   })
 })
