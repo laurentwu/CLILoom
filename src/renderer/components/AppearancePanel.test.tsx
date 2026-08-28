@@ -6,7 +6,7 @@ import { useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { i18n } from '../i18n'
 import { DEFAULT_SKIN } from '../theme'
-import type { SkinContent, UserSkin } from '../../shared/skin'
+import { SKIN_COLOR_TOKEN_KEYS, type SkinContent, type UserSkin } from '../../shared/skin'
 import { AppearancePanel } from './AppearancePanel'
 
 vi.mock('@/components/ui/dialog', async () => {
@@ -165,6 +165,7 @@ afterEach(() => {
 
 describe('AppearancePanel', () => {
   beforeEach(() => {
+    void i18n.changeLanguage('en')
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     vi.stubGlobal('ResizeObserver', class {
       observe() {}
@@ -175,6 +176,38 @@ describe('AppearancePanel', () => {
       configurable: true,
       value: vi.fn()
     })
+  })
+
+  it('uses location-based color labels, grouped sections, and usage descriptions', () => {
+    setupApi()
+    const skin = makeUserSkin()
+    render(<I18nextProvider i18n={i18n}><AppearancePanel
+      open
+      onOpenChange={() => undefined}
+      activeSkin={DEFAULT_SKIN}
+      activeSkinId={DEFAULT_SKIN.id}
+      userSkins={[skin]}
+    /></I18nextProvider>)
+
+    fireEvent.click(screen.getByRole('button', { name: skin.name }))
+
+    expect(screen.getByText('Interface colors')).toBeTruthy()
+    expect(screen.getByText('Pages & containers')).toBeTruthy()
+    expect(screen.getByText('Actions & states')).toBeTruthy()
+    expect(screen.getByText('Borders & inputs')).toBeTruthy()
+    expect(screen.getByText('Left navigation')).toBeTruthy()
+    expect(screen.getByText('Chart data series')).toBeTruthy()
+    expect(screen.getByText('Page base background')).toBeTruthy()
+    expect(screen.getByText('The base surface for pages, workspaces, and general areas.')).toBeTruthy()
+    expect(screen.getByText('Hover or selected-item background')).toBeTruthy()
+    expect(screen.getByText('Window/workspace background effect')).toBeTruthy()
+    expect(screen.getByText('Controls the outer window and workspace surface; it is separate from Page base background.')).toBeTruthy()
+    const renderedTokens = [...document.querySelectorAll<HTMLElement>('[data-skin-token]')]
+      .map((element) => element.dataset.skinToken)
+    expect(renderedTokens).toHaveLength(SKIN_COLOR_TOKEN_KEYS.length)
+    expect(new Set(renderedTokens)).toEqual(new Set(SKIN_COLOR_TOKEN_KEYS))
+    expect(screen.queryByText('Primary')).toBeNull()
+    expect(screen.queryByText('Foreground')).toBeNull()
   })
 
   it('keeps a new skin in memory until it is saved', async () => {
