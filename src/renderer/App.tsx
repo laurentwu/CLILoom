@@ -286,6 +286,13 @@ type PendingDraftLaunch = {
   projectId: string
 }
 
+type DraftLookupOutcome = 'restored' | 'missing' | 'aborted' | 'error'
+
+type PendingDraftLoad = {
+  projectId: string
+  requestId: number
+}
+
 export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
   const { t } = useTranslation()
   const [bootstrap, setBootstrap] = useState<Bootstrap>(fallbackBootstrap)
@@ -371,7 +378,7 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
   const scheduledDraftSavesRef = useRef(new Map<string, ScheduledDraftSave>())
   const pendingDraftLaunchesRef = useRef(new Map<string, PendingDraftLaunch>())
   const draftLoadRequestRef = useRef(0)
-  const pendingDraftLoadProjectRef = useRef<string | null>(null)
+  const pendingDraftLoadRef = useRef<PendingDraftLoad | null>(null)
   const draftFlushPromiseRef = useRef<Promise<void> | null>(null)
   const rendererPreparingToCloseRef = useRef(false)
   const manualFocusRef = useRef(false)
@@ -1071,7 +1078,7 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
       for (const item of scheduledDraftSavesRef.current.values()) clearTimeout(item.timer)
       scheduledDraftSavesRef.current.clear()
       pendingDraftLaunchesRef.current.clear()
-      pendingDraftLoadProjectRef.current = null
+      pendingDraftLoadRef.current = null
       activeTaskPersistedRef.current = false
       updateNewTaskDraft(false)
       updatePendingWorkflowId(null)
@@ -1411,7 +1418,7 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
       const requestId = draftLoadRequestRef.current + 1
       draftLoadRequestRef.current = requestId
       pendingStartupTaskRef.current = null
-      pendingDraftLoadProjectRef.current = null
+      pendingDraftLoadRef.current = null
       await flushActiveDraft()
       if (draftLoadRequestRef.current !== requestId) return
       const nextProjects = (await window.cliLoom?.listProjects()) as ProjectRecord[]
@@ -1427,6 +1434,9 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
       setTasks([])
       resetTaskWorkspaceForProject(project, { draftStarted: false })
       rememberWorkspace(project.id, null)
+      // Landing on the project through the folder picker is a project switch
+      // as well, so restore its draft like the rail navigation does.
+      await loadPersistedDraft(project, requestId)
     } catch (error) {
       handleError(error, 'chooseFolder')
     }
@@ -1434,9 +1444,11 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
 
   async function deleteActiveProject(project: ProjectRecord) {
     try {
+      let switchRequestId: number | null = null
       if (project.id === activeProjectIdRef.current) {
-        draftLoadRequestRef.current += 1
-        pendingDraftLoadProjectRef.current = null
+        switchRequestId = draftLoadRequestRef.current + 1
+        draftLoadRequestRef.current = switchRequestId
+        pendingDraftLoadRef.current = null
         await flushActiveDraft()
       }
       await window.cliLoom?.deleteProject(project.id)
@@ -1449,6 +1461,11 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
       setTasks([])
       resetTaskWorkspaceForProject(nextProject, { draftStarted: false })
       rememberWorkspace(nextProject?.id ?? null, null)
+      // Falling back to a neighboring project is a project switch too, so
+      // restore its draft like an explicit navigation would.
+      if (switchRequestId !== null && nextProject) {
+        await loadPersistedDraft(nextProject, switchRequestId)
+      }
     } catch (error) {
       handleError(error, 'deleteActiveProject')
     }
@@ -1604,6 +1621,80 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
     void persistDraftSnapshot(project.id, workflowRef.current, variablesRef.current, { overwrite: true })
   }
 
+  // Loads the persisted draft for a project and applies it to the workspace.
+  // Shared by the explicit New task action and the automatic restore that
+  // follows switching projects. Aborts without touching the workspace when a
+  // newer navigation request has taken over.
+  async function loadPersistedDraft(project: ProjectRecord, requestId: number): Promise<DraftLookupOutcome> {
+    const getDraft = window.cliLoom?.getTaskDraft
+    if (getDraft) pendingDraftLoadRef.current = { projectId: project.id, requestId }
+
+    const isCurrentRequest = () => (
+      draftLoadRequestRef.current === requestId && activeProjectIdRef.current === project.id
+    )
+    // Only the request that owns the pending marker may clear it, so a stale
+    // lookup for the same project cannot unset a newer pending lookup.
+    const clearPendingLoad = () => {
+      if (pendingDraftLoadRef.current?.requestId === requestId) {
+        pendingDraftLoadRef.current = null
+      }
+    }
+
+    const pendingDraftOperation = draftSaveQueuesRef.current.get(project.id)
+    if (pendingDraftOperation) {
+      await pendingDraftOperation.catch(() => undefined)
+      if (!isCurrentRequest()) {
+        clearPendingLoad()
+        return 'aborted'
+      }
+    }
+
+    let draft: TaskDraftRecord | null = null
+    if (getDraft) {
+      try {
+        draft = await getDraft(project.id)
+      } catch (error) {
+        clearPendingLoad()
+        if (!isCurrentRequest()) return 'aborted'
+        handleError(error, 'getTaskDraft')
+        return 'error'
+      }
+    }
+
+    if (!isCurrentRequest()) {
+      clearPendingLoad()
+      return 'aborted'
+    }
+    clearPendingLoad()
+
+    // Treat a mismatched response as an empty draft. The project ID is part of
+    // the persisted record so a stale or misrouted IPC response can never be
+    // applied to the currently selected project.
+    if (draft && draft.projectId !== project.id) draft = null
+
+    if (!draft) return 'missing'
+
+    const latestWorkflow = availableWorkflowsRef.current.find((item) => item.id === draft.workflow.id)
+      ?? availableWorkflowsRef.current.find((item) => item.id === project.default_workflow_id)
+      ?? availableWorkflowsRef.current[0]
+      ?? emptyWorkflow
+    const restoredVariables = restoreDraftVariables(latestWorkflow, draft.variables)
+    draftRevisionsRef.current.set(project.id, draft.revision)
+    resetTaskWorkspaceWithWorkflow(latestWorkflow, {
+      draftStarted: true,
+      isNewTaskDraft: true,
+      variables: restoredVariables
+    })
+    rememberWorkspace(project.id, null)
+
+    const workflowChanged = JSON.stringify(latestWorkflow) !== JSON.stringify(draft.workflow)
+    const variablesChanged = JSON.stringify(restoredVariables) !== JSON.stringify(draft.variables)
+    if (workflowChanged || variablesChanged) {
+      void persistDraftSnapshot(project.id, latestWorkflow, restoredVariables)
+    }
+    return 'restored'
+  }
+
   async function startNewTask(): Promise<void> {
     if (!canStartNewTask({ hasActiveProject: Boolean(activeProject) }) || availableWorkflows.length === 0) return
     if (!activeProject) return
@@ -1624,82 +1715,27 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
 
     // Treat a second click while the first draft lookup is still pending as an
     // explicit request for a fresh draft as well.
-    if (pendingDraftLoadProjectRef.current === project.id) {
-      pendingDraftLoadProjectRef.current = null
+    if (pendingDraftLoadRef.current?.projectId === project.id) {
+      pendingDraftLoadRef.current = null
       createFreshProjectDraft(project)
       return
     }
 
-    const getDraft = window.cliLoom?.getTaskDraft
-    if (getDraft) pendingDraftLoadProjectRef.current = project.id
+    // Without a draft bridge there is nothing to look up, so keep this path
+    // synchronous and create the fresh draft immediately.
+    if (!window.cliLoom?.getTaskDraft && !draftSaveQueuesRef.current.get(project.id)) {
+      createFreshProjectDraft(project)
+      return
+    }
 
-    const pendingDraftOperation = draftSaveQueuesRef.current.get(project.id)
-    if (pendingDraftOperation) {
-      await pendingDraftOperation.catch(() => undefined)
+    const outcome = await loadPersistedDraft(project, requestId)
+    if (outcome === 'missing') {
       if (
-        draftLoadRequestRef.current !== requestId ||
-        activeProjectIdRef.current !== project.id
-      ) return
-    }
-
-    let draft: TaskDraftRecord | null = null
-    if (getDraft) {
-      try {
-        draft = await getDraft(project.id)
-      } catch (error) {
-        if (pendingDraftLoadProjectRef.current === project.id) {
-          pendingDraftLoadProjectRef.current = null
-        }
-        if (
-          draftLoadRequestRef.current !== requestId ||
-          activeProjectIdRef.current !== project.id
-        ) return
-        handleError(error, 'getTaskDraft')
-        return
+        draftLoadRequestRef.current === requestId &&
+        activeProjectIdRef.current === project.id
+      ) {
+        createFreshProjectDraft(project)
       }
-    }
-
-    if (
-      draftLoadRequestRef.current !== requestId ||
-      activeProjectIdRef.current !== project.id
-    ) {
-      if (pendingDraftLoadProjectRef.current === project.id) {
-        pendingDraftLoadProjectRef.current = null
-      }
-      return
-    }
-
-    if (pendingDraftLoadProjectRef.current === project.id) {
-      pendingDraftLoadProjectRef.current = null
-    }
-
-    // Treat a mismatched response as an empty draft. The project ID is part of
-    // the persisted record so a stale or misrouted IPC response can never be
-    // applied to the currently selected project.
-    if (draft && draft.projectId !== project.id) draft = null
-
-    if (!draft) {
-      createFreshProjectDraft(project)
-      return
-    }
-
-    const latestWorkflow = availableWorkflowsRef.current.find((item) => item.id === draft.workflow.id)
-      ?? availableWorkflowsRef.current.find((item) => item.id === project.default_workflow_id)
-      ?? availableWorkflowsRef.current[0]
-      ?? emptyWorkflow
-    const restoredVariables = restoreDraftVariables(latestWorkflow, draft.variables)
-    draftRevisionsRef.current.set(project.id, draft.revision)
-    resetTaskWorkspaceWithWorkflow(latestWorkflow, {
-      draftStarted: true,
-      isNewTaskDraft: true,
-      variables: restoredVariables
-    })
-    rememberWorkspace(project.id, null)
-
-    const workflowChanged = JSON.stringify(latestWorkflow) !== JSON.stringify(draft.workflow)
-    const variablesChanged = JSON.stringify(restoredVariables) !== JSON.stringify(draft.variables)
-    if (workflowChanged || variablesChanged) {
-      void persistDraftSnapshot(project.id, latestWorkflow, restoredVariables)
     }
   }
 
@@ -1780,7 +1816,7 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
     const requestId = draftLoadRequestRef.current + 1
     draftLoadRequestRef.current = requestId
     pendingStartupTaskRef.current = null
-    pendingDraftLoadProjectRef.current = null
+    pendingDraftLoadRef.current = null
     await flushActiveDraft()
     if (draftLoadRequestRef.current !== requestId) return
     activeProjectIdRef.current = project.id
@@ -1788,6 +1824,10 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
     setTasks([])
     resetTaskWorkspaceForProject(project, { draftStarted: false })
     rememberWorkspace(project.id, null)
+    // Switching to a project that has a persisted draft restores it directly
+    // so editing resumes without clicking New task again. Without a draft the
+    // neutral workspace prepared above stays in place.
+    await loadPersistedDraft(project, requestId)
   }
 
   async function setDefaultWorkflow(workflowId: string) {
@@ -2790,7 +2830,7 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
   async function loadTask(task: TaskRecord): Promise<void> {
     const navigationRequestId = draftLoadRequestRef.current + 1
     draftLoadRequestRef.current = navigationRequestId
-    pendingDraftLoadProjectRef.current = null
+    pendingDraftLoadRef.current = null
     await flushActiveDraft()
     if (
       draftLoadRequestRef.current !== navigationRequestId ||
