@@ -463,6 +463,17 @@ vi.mock('./components/StatusBadge', () => ({
   StatusBadge: () => null
 }))
 
+vi.mock('./components/ReleaseNotesView', async () => {
+  const React = await import('react')
+  return {
+    ReleaseNotesView: ({ markdown }: { markdown: string }) => React.createElement(
+      'div',
+      { 'data-testid': 'release-notes-view' },
+      markdown
+    )
+  }
+})
+
 vi.mock('./components/TerminalScrollGroup', async () => {
   const React = await import('react')
   return {
@@ -902,6 +913,7 @@ describe('App update flow', () => {
     }))
 
     expect(screen.getByRole('heading', { name: 'CLILoom v0.2.0 is available' })).toBeTruthy()
+    expect(screen.getByTestId('release-notes-view').textContent).toBe('<script>plain release note</script>')
     expect(screen.getByText('<script>plain release note</script>')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'View update' }))
     await waitFor(() => expect(api.openUpdateRelease).toHaveBeenCalledOnce())
