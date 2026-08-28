@@ -1093,6 +1093,12 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
       const initialVariables = getDefaultVariables(initialWorkflow)
       variablesRef.current = initialVariables
       setVariables(initialVariables)
+      // Task restore wins when the last workspace pointed at a persisted
+      // task; otherwise resume the startup project's draft so a restart
+      // lands back in the editor exactly where the user left off.
+      if (initialProject && !pendingStartupTaskRef.current) {
+        restoreStartupDraft(initialProject)
+      }
     }).catch((error: unknown) => handleError(error, 'bootstrap'))
     return () => {
       cancelled = true
@@ -1234,6 +1240,10 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
       const task = records.find((record) => record.id === pendingTask.taskId)
       if (!task) {
         rememberWorkspace(activeProjectId, null)
+        // The remembered task is gone, so fall back to the project's draft
+        // like an explicit switch to this project would.
+        const fallbackProject = projects.find((item) => item.id === activeProjectId)
+        if (fallbackProject) restoreStartupDraft(fallbackProject)
         return
       }
       const taskIndex = records.indexOf(task)
@@ -1241,7 +1251,18 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
         setVisibleTaskCount(Math.ceil((taskIndex + 1) / TASK_BATCH_SIZE) * TASK_BATCH_SIZE)
       }
       loadTask(task)
-    }).catch((error: unknown) => handleError(error, 'listTasks'))
+    }).catch((error: unknown) => {
+      handleError(error, 'listTasks')
+      // A failed startup task lookup must not strand the workspace without
+      // the draft fallback, and the stale marker must not survive to a
+      // later navigation of the same project.
+      if (cancelled) return
+      const pendingTask = pendingStartupTaskRef.current
+      if (!pendingTask || pendingTask.projectId !== activeProjectId) return
+      pendingStartupTaskRef.current = null
+      const fallbackProject = projects.find((item) => item.id === activeProjectId)
+      if (fallbackProject) restoreStartupDraft(fallbackProject)
+    })
     return () => {
       cancelled = true
     }
@@ -1622,10 +1643,16 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
   }
 
   // Loads the persisted draft for a project and applies it to the workspace.
-  // Shared by the explicit New task action and the automatic restore that
-  // follows switching projects. Aborts without touching the workspace when a
-  // newer navigation request has taken over.
-  async function loadPersistedDraft(project: ProjectRecord, requestId: number): Promise<DraftLookupOutcome> {
+  // Shared by the explicit New task action, the automatic restore that follows
+  // switching projects, and the startup restore of the last workspace. Aborts
+  // without touching the workspace when a newer navigation request has taken
+  // over. Startup callers pass silentError so an unavailable draft store never
+  // surfaces an error dialog during launch.
+  async function loadPersistedDraft(
+    project: ProjectRecord,
+    requestId: number,
+    options: { silentError?: boolean } = {}
+  ): Promise<DraftLookupOutcome> {
     const getDraft = window.cliLoom?.getTaskDraft
     if (getDraft) pendingDraftLoadRef.current = { projectId: project.id, requestId }
 
@@ -1656,7 +1683,8 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
       } catch (error) {
         clearPendingLoad()
         if (!isCurrentRequest()) return 'aborted'
-        handleError(error, 'getTaskDraft')
+        if (options.silentError) console.error('[getTaskDraft]', error)
+        else handleError(error, 'getTaskDraft')
         return 'error'
       }
     }
@@ -1693,6 +1721,15 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
       void persistDraftSnapshot(project.id, latestWorkflow, restoredVariables)
     }
     return 'restored'
+  }
+
+  // Resumes the persisted draft of the startup project. Restoring the last
+  // opened task takes precedence, so this only runs when no task restore is
+  // pending. Lookup failures stay silent to avoid blocking application launch.
+  function restoreStartupDraft(project: ProjectRecord): void {
+    const requestId = draftLoadRequestRef.current + 1
+    draftLoadRequestRef.current = requestId
+    void loadPersistedDraft(project, requestId, { silentError: true })
   }
 
   async function startNewTask(): Promise<void> {
