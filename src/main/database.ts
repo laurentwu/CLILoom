@@ -25,6 +25,11 @@ import {
   type WorkflowDefinition
 } from '../shared/workflow'
 import {
+  parseTaskDraftPayload,
+  TASK_DRAFT_VERSION,
+  type TaskDraftRecord
+} from '../shared/taskDraft'
+import {
   MAX_PERSISTED_TERMINAL_TRANSCRIPT_CHARS,
   tailText
 } from '../shared/terminalBuffer'
@@ -61,7 +66,8 @@ export type TaskSummaryRecord = Omit<TaskRecord, 'context_json'>
 
 export const DATABASE_FILENAME = `${APP_SLUG}.db`
 const DATABASE_APPLICATION_ID = 0x434c4c4d
-const CURRENT_SCHEMA_VERSION = 1
+const CURRENT_SCHEMA_VERSION = 2
+const INITIAL_SCHEMA_VERSION = 1
 const SQLITE_HEADER_LENGTH = 72
 const SQLITE_MAGIC = Buffer.from('SQLite format 3\0')
 const PRIVATE_DIRECTORY_MODE = 0o700
@@ -71,9 +77,10 @@ export function openDatabase(userDataPath: string): AppDatabase {
   ensurePrivateDataDirectory(userDataPath)
   const databasePath = path.join(userDataPath, DATABASE_FILENAME)
   const databaseExists = existsSync(databasePath)
+  let existingSchemaVersion: number | null = null
   if (databaseExists) {
     ensurePrivateDataFile(databasePath)
-    assertCurrentDatabaseLineage(databasePath)
+    existingSchemaVersion = readDatabaseSchemaVersion(databasePath)
   } else {
     createCurrentDatabase(databasePath)
     ensurePrivateDataFile(databasePath)
@@ -82,6 +89,9 @@ export function openDatabase(userDataPath: string): AppDatabase {
   const db = new Database(databasePath, { fileMustExist: true })
   try {
     db.pragma('journal_mode = WAL')
+    if (existingSchemaVersion !== null && existingSchemaVersion < CURRENT_SCHEMA_VERSION) {
+      migrateDatabase(db, existingSchemaVersion)
+    }
     ensurePrivateSqliteFiles(databasePath)
     return db
   } catch (error) {
@@ -141,7 +151,7 @@ function removeInitializationFiles(initializationPath: string): void {
   }
 }
 
-function assertCurrentDatabaseLineage(databasePath: string): void {
+function readDatabaseSchemaVersion(databasePath: string): number {
   const file = openSync(databasePath, 'r')
   try {
     const header = Buffer.alloc(SQLITE_HEADER_LENGTH)
@@ -156,9 +166,10 @@ function assertCurrentDatabaseLineage(databasePath: string): void {
         t('errors:database.unsupportedSchemaDetected', { path: databasePath })
       )
     }
-    if (schemaVersion !== CURRENT_SCHEMA_VERSION) {
+    if (schemaVersion < INITIAL_SCHEMA_VERSION || schemaVersion > CURRENT_SCHEMA_VERSION) {
       throw new Error(t('errors:database.unsupportedSchema', { version: schemaVersion }))
     }
+    return schemaVersion
   } finally {
     closeSync(file)
   }
@@ -276,6 +287,16 @@ function initializeCurrentSchema(db: AppDatabase): void {
         updated_at text not null
       );
 
+      create table task_drafts (
+        project_id text primary key,
+        workflow_id text not null,
+        workflow_json text not null,
+        variables_json text not null,
+        revision integer not null default 1,
+        created_at text not null,
+        updated_at text not null
+      );
+
       create index idx_tasks_project_id on tasks(project_id);
       create index idx_terminal_sessions_task_id on terminal_sessions(task_id);
       create index idx_terminal_sessions_node_id on terminal_sessions(node_id);
@@ -288,11 +309,42 @@ function initializeCurrentSchema(db: AppDatabase): void {
         on workflow_runs(workflow_id, workflow_version);
       create index idx_workflow_versions_workflow_id on workflow_versions(workflow_id);
       create index idx_edges_workflow_id on edges(workflow_id);
+      create index idx_task_drafts_updated_at on task_drafts(updated_at);
     `)
     db.pragma(`application_id = ${DATABASE_APPLICATION_ID}`)
     db.pragma(`user_version = ${CURRENT_SCHEMA_VERSION}`)
   })
   initialize()
+}
+
+function migrateDatabase(db: AppDatabase, fromVersion: number): void {
+  if (fromVersion < INITIAL_SCHEMA_VERSION || fromVersion > CURRENT_SCHEMA_VERSION) {
+    throw new Error(t('errors:database.unsupportedSchema', { version: fromVersion }))
+  }
+
+  if (fromVersion === 1) {
+    const migrateV2 = db.transaction(() => {
+      db.exec(`
+        create table if not exists task_drafts (
+          project_id text primary key,
+          workflow_id text not null,
+          workflow_json text not null,
+          variables_json text not null,
+          revision integer not null default 1,
+          created_at text not null,
+          updated_at text not null
+        );
+        create index if not exists idx_task_drafts_updated_at on task_drafts(updated_at);
+      `)
+      db.pragma(`user_version = ${CURRENT_SCHEMA_VERSION}`)
+    })
+    migrateV2()
+    return
+  }
+
+  if (fromVersion !== CURRENT_SCHEMA_VERSION) {
+    throw new Error(t('errors:database.unsupportedSchema', { version: fromVersion }))
+  }
 }
 
 export type WorkflowRecord = {
@@ -634,6 +686,7 @@ export function deleteProject(db: AppDatabase, projectId: string): void {
       db.prepare('delete from node_runs where run_id in (select id from workflow_runs where task_id = ?)').run(taskId)
       db.prepare('delete from workflow_runs where task_id = ?').run(taskId)
     }
+    db.prepare('delete from task_drafts where project_id = ?').run(projectId)
     db.prepare('delete from tasks where project_id = ?').run(projectId)
     db.prepare('delete from projects where id = ?').run(projectId)
   })
@@ -696,6 +749,134 @@ export function getTaskContext(db: AppDatabase, taskId: string): string | null {
   const row = db.prepare('select context_json from tasks where id = ?').get(taskId) as
     { context_json: string } | undefined
   return row?.context_json ?? null
+}
+
+type TaskDraftRow = {
+  project_id: string
+  workflow_id: string
+  workflow_json: string
+  variables_json: string
+  revision: number
+  created_at: string
+  updated_at: string
+}
+
+export function getTaskDraft(db: AppDatabase, projectId: string): TaskDraftRecord | null {
+  const row = db.prepare(
+    `select project_id, workflow_id, workflow_json, variables_json, revision, created_at, updated_at
+     from task_drafts
+     where project_id = ? and exists (
+       select 1 from projects where projects.id = task_drafts.project_id
+     )`
+  ).get(projectId) as TaskDraftRow | undefined
+  if (!row) return null
+
+  try {
+    const workflow = JSON.parse(row.workflow_json) as unknown
+    const variables = JSON.parse(row.variables_json) as unknown
+    const payload = parseTaskDraftPayload({
+      version: TASK_DRAFT_VERSION,
+      workflow,
+      variables,
+      revision: row.revision
+    })
+    if (payload.workflow.id !== row.workflow_id) return null
+    return {
+      ...payload,
+      projectId: row.project_id,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    }
+  } catch (error) {
+    console.warn(`[CLILoom task draft] skipped unreadable draft for project ${projectId}:`, error)
+    return null
+  }
+}
+
+export function saveTaskDraft(
+  db: AppDatabase,
+  projectId: unknown,
+  value: unknown,
+  options: { overwrite?: boolean } = {}
+): TaskDraftRecord {
+  assertTaskDraftProjectId(projectId)
+  const project = db.prepare('select id from projects where id = ?').get(projectId)
+  if (!project) throw new NotFoundError(t('errors:database.projectNotFound'))
+
+  const payload = parseTaskDraftPayload(value)
+  const now = new Date().toISOString()
+  const existing = db.prepare(
+    'select revision, created_at from task_drafts where project_id = ?'
+  ).get(projectId) as { revision: number; created_at: string } | undefined
+
+  const persist = db.transaction(() => {
+    if (!options.overwrite && existing && existing.revision > payload.revision) return
+    const revision = options.overwrite && existing &&
+      Number.isSafeInteger(existing.revision) &&
+      existing.revision >= 1 &&
+      existing.revision < Number.MAX_SAFE_INTEGER
+      ? Math.max(payload.revision, existing.revision + 1)
+      : payload.revision
+    if (existing) {
+      if (options.overwrite) {
+        db.prepare(
+          `update task_drafts
+           set workflow_id = ?, workflow_json = ?, variables_json = ?, revision = ?, updated_at = ?
+           where project_id = ?`
+        ).run(
+          payload.workflow.id,
+          JSON.stringify(payload.workflow),
+          JSON.stringify(payload.variables),
+          revision,
+          now,
+          projectId
+        )
+      } else {
+        db.prepare(
+          `update task_drafts
+           set workflow_id = ?, workflow_json = ?, variables_json = ?, revision = ?, updated_at = ?
+           where project_id = ? and revision <= ?`
+        ).run(
+          payload.workflow.id,
+          JSON.stringify(payload.workflow),
+          JSON.stringify(payload.variables),
+          revision,
+          now,
+          projectId,
+          revision
+        )
+      }
+      return
+    }
+    db.prepare(
+      `insert into task_drafts
+        (project_id, workflow_id, workflow_json, variables_json, revision, created_at, updated_at)
+       values (?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      projectId,
+      payload.workflow.id,
+      JSON.stringify(payload.workflow),
+      JSON.stringify(payload.variables),
+      revision,
+      now,
+      now
+    )
+  })
+  persist()
+
+  const saved = getTaskDraft(db, projectId)
+  if (!saved) throw new Error(t('errors:database.taskDraftInvalid'))
+  return saved
+}
+
+export function deleteTaskDraft(db: AppDatabase, projectId: string): void {
+  db.prepare('delete from task_drafts where project_id = ?').run(projectId)
+}
+
+function assertTaskDraftProjectId(value: unknown): asserts value is string {
+  if (typeof value !== 'string' || !value || value.length > 512 || value.includes('\0')) {
+    throw new Error(t('errors:database.projectNotFound'))
+  }
 }
 
 export type TerminalSessionRecord = {

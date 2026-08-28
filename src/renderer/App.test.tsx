@@ -12,7 +12,7 @@ import {
   DEFAULT_SHELL_PREFERENCES
 } from '../shared/appSettings'
 import { DEFAULT_SKIN } from './theme'
-import type { WorkflowDefinition, WorkflowNode } from '../shared/workflow'
+import type { VariableDefinition, WorkflowDefinition, WorkflowNode } from '../shared/workflow'
 import type {
   WorkflowRuntimeBranchRun,
   WorkflowRuntimeStartOptions,
@@ -21,6 +21,7 @@ import type {
 import type { ShellSnapshot } from '../shared/shell'
 import type { TerminalDataEvent, TerminalTranscriptSnapshot } from '../shared/terminalBuffer'
 import type { UpdateState } from '../shared/update'
+import { TASK_DRAFT_VERSION, type TaskDraftPayload, type TaskDraftRecord } from '../shared/taskDraft'
 import type {
   Bootstrap,
   ProjectRecord,
@@ -646,7 +647,25 @@ function runtimeState(
   }
 }
 
+function taskDraft(
+  projectId: string,
+  definition: WorkflowDefinition,
+  variables: Record<string, string | number | boolean | null>,
+  revision = 1
+): TaskDraftRecord {
+  return {
+    projectId,
+    version: TASK_DRAFT_VERSION,
+    workflow: definition,
+    variables,
+    revision,
+    createdAt: '2026-08-05T00:00:00.000Z',
+    updatedAt: '2026-08-05T00:00:00.000Z'
+  }
+}
+
 type Listeners = {
+  prepareToClose?: () => void
   shellsChanged?: (snapshot: ShellSnapshot) => void
   settingsChanged?: (snapshot: Bootstrap['settings']) => void
   workflowState?: (state: WorkflowRuntimeState) => void
@@ -657,6 +676,7 @@ type Listeners = {
 
 function setupApi(options: {
   data?: ReturnType<typeof bootstrap>
+  drafts?: Record<string, TaskDraftRecord | null>
   restore?: {
     state: WorkflowRuntimeState
     workflow: WorkflowDefinition
@@ -667,6 +687,9 @@ function setupApi(options: {
   const data = options.data ?? bootstrap()
   const listeners: Listeners = {}
   let workflowRecords = data.workflowRecords
+  const draftStore = new Map<string, TaskDraftRecord>(
+    Object.entries(options.drafts ?? {}).filter((entry): entry is [string, TaskDraftRecord] => Boolean(entry[1]))
+  )
   const unsubscribe = () => {}
   const initialUpdateState: UpdateState = options.updateState ?? {
     status: 'idle',
@@ -680,6 +703,26 @@ function setupApi(options: {
     listWorkflows: vi.fn(() => Promise.resolve(workflowRecords)),
     restoreWorkflowState: vi.fn().mockResolvedValue(options.restore ?? null),
     getTaskContext: vi.fn().mockResolvedValue('{}'),
+    getTaskDraft: vi.fn((projectId: string) => Promise.resolve(draftStore.get(projectId) ?? null)),
+    saveTaskDraft: vi.fn((projectId: string, draft: TaskDraftPayload, overwrite = false) => {
+      const existing = draftStore.get(projectId)
+      const now = '2026-08-05T00:00:00.000Z'
+      const saved: TaskDraftRecord = {
+        ...draft,
+        projectId,
+        revision: overwrite && existing
+          ? Math.max(draft.revision, existing.revision + 1)
+          : draft.revision,
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now
+      }
+      draftStore.set(projectId, saved)
+      return Promise.resolve(saved)
+    }),
+    deleteTaskDraft: vi.fn((projectId: string) => {
+      draftStore.delete(projectId)
+      return Promise.resolve()
+    }),
     listTaskSessions: vi.fn().mockResolvedValue([]),
     getTaskSessionTranscript: vi.fn().mockResolvedValue({
       transcript: 'loaded transcript',
@@ -730,6 +773,11 @@ function setupApi(options: {
       listeners.workflowState = callback
       return unsubscribe
     }),
+    onPrepareToClose: vi.fn((callback: () => void) => {
+      listeners.prepareToClose = callback
+      return unsubscribe
+    }),
+    rendererReadyToClose: vi.fn(),
     onTerminalCreated: vi.fn(() => unsubscribe),
     onTerminalRestarted: vi.fn(() => unsubscribe),
     onTerminalData: vi.fn((callback: (event: TerminalDataEvent) => void) => {
@@ -737,6 +785,11 @@ function setupApi(options: {
       return unsubscribe
     }),
     onTerminalClosed: vi.fn(() => unsubscribe)
+  }
+  if (options.drafts === undefined) {
+    Reflect.deleteProperty(api, 'getTaskDraft')
+    Reflect.deleteProperty(api, 'saveTaskDraft')
+    Reflect.deleteProperty(api, 'deleteTaskDraft')
   }
   Object.defineProperty(window, 'cliLoom', {
     configurable: true,
@@ -748,7 +801,8 @@ function setupApi(options: {
     listeners,
     setWorkflowRecords: (records: WorkflowRecord[]) => {
       workflowRecords = records
-    }
+    },
+    draftStore
   }
 }
 
@@ -997,8 +1051,178 @@ describe('App task workflow selection', () => {
     expect((await screen.findByLabelText('Select workflow')).getAttribute('title')).toBe('流程 A')
   })
 
+  it('restores a project draft only when New task is clicked', async () => {
+    const cachedDraft = taskDraft(project.id, workflowA, { prompt: 'cached prompt' }, 7)
+    const { api } = setupApi({ drafts: { [project.id]: cachedDraft } })
+    const newTaskButton = await renderBootstrappedApp()
+
+    expect(screen.getByTestId('variables').textContent).toContain('default a')
+    expect(api.getTaskDraft).not.toHaveBeenCalled()
+
+    fireEvent.click(newTaskButton)
+
+    await waitFor(() => expect(api.getTaskDraft).toHaveBeenCalledWith(project.id))
+    await waitFor(() => expect(screen.getByTestId('variables').textContent).toContain('cached prompt'))
+  })
+
+  it('keeps drafts scoped to a project while switching projects', async () => {
+    const data = bootstrap()
+    data.projects = [project, otherProject]
+    const { api } = setupApi({
+      data,
+      drafts: { [project.id]: taskDraft(project.id, workflowA, { prompt: 'project one' }) }
+    })
+
+    await renderBootstrappedApp()
+    fireEvent.click(screen.getByRole('button', { name: '新建任务' }))
+    await waitFor(() => expect(screen.getByTestId('variables').textContent).toContain('project one'))
+
+    fireEvent.click(screen.getByRole('button', { name: '切换项目 Other Project' }))
+    await waitFor(() => expect(api.listTasks).toHaveBeenCalledWith(otherProject.id))
+    expect(api.getTaskDraft).toHaveBeenCalledTimes(1)
+
+    fireEvent.click(screen.getByRole('button', { name: '切换项目 Project' }))
+    await waitFor(() => expect(api.listTasks).toHaveBeenCalledWith(project.id))
+    expect(api.getTaskDraft).toHaveBeenCalledTimes(1)
+
+    fireEvent.click(screen.getByRole('button', { name: '新建任务' }))
+    await waitFor(() => expect(api.getTaskDraft).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.getByTestId('variables').textContent).toContain('project one'))
+  })
+
+  it('flushes a debounced draft edit before switching projects', async () => {
+    const data = bootstrap()
+    data.projects = [project, otherProject]
+    const { api, draftStore } = setupApi({ data, drafts: {} })
+    const newTaskButton = await renderBootstrappedApp()
+    fireEvent.click(newTaskButton)
+    await waitFor(() => expect(draftStore.get(project.id)?.variables).toEqual({ prompt: 'default a' }))
+    const callsBeforeEdit = api.saveTaskDraft.mock.calls.length
+
+    fireEvent.click(screen.getByRole('button', { name: '修改变量' }))
+    expect(api.saveTaskDraft).toHaveBeenCalledTimes(callsBeforeEdit)
+    fireEvent.click(screen.getByRole('button', { name: '切换项目 Other Project' }))
+
+    await waitFor(() => expect(api.listTasks).toHaveBeenCalledWith(otherProject.id))
+    expect(draftStore.get(project.id)?.variables).toEqual({ prompt: 'edited prompt' })
+  })
+
+  it('replaces an existing draft with fresh defaults when New task is clicked again', async () => {
+    const cachedDraft = taskDraft(project.id, workflowA, { prompt: 'old draft' }, 3)
+    const { draftStore } = setupApi({ drafts: { [project.id]: cachedDraft } })
+    const newTaskButton = await renderBootstrappedApp()
+
+    fireEvent.click(newTaskButton)
+    await waitFor(() => expect(screen.getByTestId('variables').textContent).toContain('old draft'))
+
+    fireEvent.click(newTaskButton)
+
+    await waitFor(() => expect(screen.getByTestId('variables').textContent).toContain('default a'))
+    await waitFor(() => expect(draftStore.get(project.id)?.variables).toEqual({ prompt: 'default a' }))
+  })
+
+  it('overwrites an existing draft when New task is clicked again before the first lookup finishes', async () => {
+    const cachedDraft = taskDraft(project.id, workflowA, { prompt: 'old draft' }, 9)
+    const { api, draftStore } = setupApi({ drafts: { [project.id]: cachedDraft } })
+    const pendingLookup = deferred<TaskDraftRecord | null>()
+    api.getTaskDraft.mockReturnValueOnce(pendingLookup.promise)
+    const newTaskButton = await renderBootstrappedApp()
+
+    fireEvent.click(newTaskButton)
+    fireEvent.click(newTaskButton)
+
+    await waitFor(() => expect(screen.getByTestId('variables').textContent).toContain('default a'))
+    await waitFor(() => expect(draftStore.get(project.id)?.variables).toEqual({ prompt: 'default a' }))
+
+    await act(async () => {
+      pendingLookup.resolve(cachedDraft)
+      await pendingLookup.promise
+    })
+    expect(screen.getByTestId('variables').textContent).toContain('default a')
+    expect(draftStore.get(project.id)?.variables).toEqual({ prompt: 'default a' })
+  })
+
+  it('restores matching draft fields from the latest workflow definition', async () => {
+    const latestWorkflow: WorkflowDefinition = {
+      ...workflowA,
+      nodes: workflowA.nodes.map((node) => {
+        if (node.type !== 'start') return node
+        const variables = (node.config as { variables: VariableDefinition[] }).variables
+        return {
+          ...node,
+          config: {
+            variables: [
+              ...variables,
+              {
+                key: 'count',
+                label: 'Count',
+                type: 'number' as const,
+                required: false,
+                defaultValue: 9
+              }
+            ]
+          }
+        }
+      })
+    }
+    const data = bootstrap()
+    data.workflows = [latestWorkflow, workflowB]
+    data.workflowRecords = [record(latestWorkflow), record(workflowB)]
+    const { draftStore } = setupApi({
+      data,
+      drafts: {
+        [project.id]: taskDraft(project.id, workflowA, {
+          prompt: 'keep this',
+          count: 'wrong type'
+        })
+      }
+    })
+
+    const newTaskButton = await renderBootstrappedApp()
+    fireEvent.click(newTaskButton)
+
+    await waitFor(() => expect(screen.getByTestId('variables').textContent).toContain('keep this'))
+    expect(screen.getByTestId('variables').textContent).toContain('9')
+    await waitFor(() => expect(draftStore.get(project.id)?.variables).toEqual({ prompt: 'keep this', count: 9 }))
+  })
+
+  it('flushes the active draft before the main process closes the window', async () => {
+    const { api, draftStore, listeners } = setupApi({ drafts: {} })
+    const newTaskButton = await renderBootstrappedApp()
+    fireEvent.click(newTaskButton)
+    await waitFor(() => expect(draftStore.get(project.id)?.variables).toEqual({ prompt: 'default a' }))
+    const callsBeforeEdit = api.saveTaskDraft.mock.calls.length
+    fireEvent.click(screen.getByRole('button', { name: '修改变量' }))
+
+    expect(api.saveTaskDraft).toHaveBeenCalledTimes(callsBeforeEdit)
+
+    act(() => listeners.prepareToClose?.())
+
+    await waitFor(() => expect(api.rendererReadyToClose).toHaveBeenCalledOnce())
+    expect(api.saveTaskDraft.mock.calls.at(-1)?.[0]).toBe(project.id)
+    expect(api.saveTaskDraft.mock.calls.at(-1)?.[1].variables).toEqual({ prompt: 'edited prompt' })
+    expect(draftStore.get(project.id)?.variables).toEqual({ prompt: 'edited prompt' })
+  })
+
+  it('debounces consecutive variable edits into one draft save', async () => {
+    const { api } = setupApi({ drafts: {} })
+    const newTaskButton = await renderBootstrappedApp()
+    fireEvent.click(newTaskButton)
+    await waitFor(() => expect(api.saveTaskDraft).toHaveBeenCalled())
+    const callsBeforeEdit = api.saveTaskDraft.mock.calls.length
+
+    fireEvent.click(screen.getByRole('button', { name: '修改变量' }))
+    fireEvent.click(screen.getByRole('button', { name: '修改变量' }))
+    fireEvent.click(screen.getByRole('button', { name: '修改变量' }))
+
+    expect(api.saveTaskDraft).toHaveBeenCalledTimes(callsBeforeEdit)
+    await new Promise((resolve) => setTimeout(resolve, 350))
+    await waitFor(() => expect(api.saveTaskDraft).toHaveBeenCalledTimes(callsBeforeEdit + 1))
+    expect(api.saveTaskDraft.mock.calls.at(-1)?.[1].variables).toEqual({ prompt: 'edited prompt' })
+  })
+
   it('keeps an unstarted draft out of the task list and adds it after a successful launch', async () => {
-    const { api, listeners } = setupApi()
+    const { api, listeners } = setupApi({ drafts: {} })
     let startedTask: TaskRecord | null = null
     api.startWorkflow.mockImplementation((request: WorkflowRuntimeStartOptions) => {
       const now = '2026-08-05T00:00:00.000Z'
@@ -1019,11 +1243,13 @@ describe('App task workflow selection', () => {
 
     expect(screen.queryByTestId('draft-task')).toBeNull()
     expect(screen.queryByRole('button', { name: '加载 已发起任务' })).toBeNull()
+    await waitFor(() => expect(api.saveTaskDraft).toHaveBeenCalled())
 
     fireEvent.click(screen.getByRole('button', { name: '运行' }))
 
     const startedTaskButton = await screen.findByRole('button', { name: '加载 已发起任务' })
     expect(startedTaskButton.getAttribute('data-task-status')).toBe('running')
+    await waitFor(() => expect(api.deleteTaskDraft).toHaveBeenCalledWith(project.id))
 
     const waitingTask: TaskRecord = { ...startedTask!, status: 'waiting-input' }
     act(() => listeners.workflowState?.({
@@ -1039,6 +1265,72 @@ describe('App task workflow selection', () => {
     fireEvent.click(screen.getByRole('button', { name: '重命名 已发起任务' }))
     await waitFor(() => expect(screen.getByTitle('手动名称')).toBeTruthy())
     expect(api.updateTaskTitle).toHaveBeenCalledWith(waitingTask.id, '手动名称')
+  })
+
+  it('deletes a launched draft even when its runtime state arrives after task navigation', async () => {
+    const existingTask = taskRecords(project, 1, 'Existing')[0]
+    const data = bootstrap([existingTask])
+    const { api } = setupApi({ data, drafts: {} })
+    const pendingStart = deferred<WorkflowRuntimeState>()
+    api.startWorkflow.mockReturnValueOnce(pendingStart.promise)
+    const newTaskButton = await renderBootstrappedApp()
+    fireEvent.click(newTaskButton)
+    await waitFor(() => expect(api.saveTaskDraft).toHaveBeenCalled())
+
+    fireEvent.click(screen.getByRole('button', { name: '运行' }))
+    await waitFor(() => expect(api.startWorkflow).toHaveBeenCalledOnce())
+    const request = api.startWorkflow.mock.calls[0][0]
+    fireEvent.click(screen.getByRole('button', { name: `加载 ${existingTask.title}` }))
+    await waitFor(() => expect(api.restoreWorkflowState).toHaveBeenCalledWith(existingTask.id))
+
+    const now = '2026-08-05T00:00:00.000Z'
+    const launchedTask: TaskRecord = {
+      id: request.taskId,
+      project_id: request.projectId,
+      title: '后台启动任务',
+      status: 'running',
+      created_at: now,
+      updated_at: now
+    }
+    await act(async () => {
+      pendingStart.resolve(runtimeState(request.taskId, request.workflow, launchedTask))
+      await pendingStart.promise
+    })
+
+    await waitFor(() => expect(api.deleteTaskDraft).toHaveBeenCalledWith(project.id))
+    expect(screen.getByRole('button', { name: `加载 ${existingTask.title}` })).toBeTruthy()
+  })
+
+  it('keeps a newer draft when an earlier launch finishes late', async () => {
+    const { api, draftStore } = setupApi({ drafts: {} })
+    const pendingStart = deferred<WorkflowRuntimeState>()
+    api.startWorkflow.mockReturnValueOnce(pendingStart.promise)
+    const newTaskButton = await renderBootstrappedApp()
+    fireEvent.click(newTaskButton)
+    await waitFor(() => expect(api.saveTaskDraft).toHaveBeenCalled())
+
+    fireEvent.click(screen.getByRole('button', { name: '运行' }))
+    await waitFor(() => expect(api.startWorkflow).toHaveBeenCalledOnce())
+    const request = api.startWorkflow.mock.calls[0][0]
+    fireEvent.click(newTaskButton)
+    await waitFor(() => expect(api.saveTaskDraft.mock.calls.at(-1)?.[2]).toBe(true))
+
+    const now = '2026-08-05T00:00:00.000Z'
+    const launchedTask: TaskRecord = {
+      id: request.taskId,
+      project_id: request.projectId,
+      title: '迟到的任务',
+      status: 'running',
+      created_at: now,
+      updated_at: now
+    }
+    await act(async () => {
+      pendingStart.resolve(runtimeState(request.taskId, request.workflow, launchedTask))
+      await pendingStart.promise
+    })
+
+    expect(api.deleteTaskDraft).not.toHaveBeenCalled()
+    expect(draftStore.get(project.id)?.variables).toEqual({ prompt: 'default a' })
   })
 
   it('keeps Stop workflow available while running and waiting for input', async () => {

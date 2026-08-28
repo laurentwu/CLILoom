@@ -195,7 +195,8 @@ export default {
       invalidWorkspace: 'The recently opened project and task are invalid',
       taskNotFound: 'Task not found or does not belong to this project',
       taskTitleInvalid: 'Task name must be a string',
-      taskTitleEmpty: 'Task name must not be empty'
+      taskTitleEmpty: 'Task name must not be empty',
+      taskDraftInvalid: 'The task draft is invalid'
     },
     workflowConfig: {
       cancelled: 'The operation was cancelled by the user',

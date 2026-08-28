@@ -24,6 +24,7 @@ import {
   deleteWorkflowWithRevision,
   ensureWorkflowVersion,
   getLastOpenedWorkspace,
+  getTaskDraft,
   getTerminalSessionTranscript,
   listProjects,
   listTerminalSessionMetadataByTask,
@@ -31,11 +32,13 @@ import {
   loadWorkflowVersion,
   openDatabase,
   saveWorkflowWithRevision,
+  saveTaskDraft,
   setLastOpenedWorkspace,
   setProjectDefaultWorkflow,
   updateProjectName,
   type AppDatabase
 } from './database'
+import { TASK_DRAFT_VERSION, type TaskDraftPayload } from '../shared/taskDraft'
 
 const databases: Array<{ db: AppDatabase; dir: string }> = []
 const assumeProjectDirectory = () => true
@@ -87,7 +90,7 @@ function listStoredWorkflows(db: AppDatabase): WorkflowDefinition[] {
   return listWorkflowRecords(db).map((record) => record.workflow)
 }
 
-describe('database schema v1', () => {
+describe('database schema v2', () => {
   it('creates and repairs private local data permissions on POSIX systems', () => {
     if (process.platform === 'win32') return
 
@@ -102,7 +105,7 @@ describe('database schema v1', () => {
 
     tracked.db.close()
     chmodSync(dir, 0o777)
-    chmodSync(databasePath, 0o666)
+    chmodSync(databasePath, 0o000)
     tracked.db = openDatabase(dir)
 
     expect(statSync(dir).mode & 0o777).toBe(0o700)
@@ -160,6 +163,7 @@ describe('database schema v1', () => {
       'process_logs',
       'projects',
       'settings',
+      'task_drafts',
       'tasks',
       'terminal_sessions',
       'workflow_runs',
@@ -167,7 +171,7 @@ describe('database schema v1', () => {
       'workflows'
     ])
     expect(db.pragma('application_id', { simple: true })).toBe(0x434c4c4d)
-    expect(db.pragma('user_version', { simple: true })).toBe(1)
+    expect(db.pragma('user_version', { simple: true })).toBe(2)
 
     const expectedColumns: Record<string, string[]> = {
       projects: ['id', 'name', 'path', 'sort_order', 'default_workflow_id', 'created_at'],
@@ -212,7 +216,16 @@ describe('database schema v1', () => {
         'created_at'
       ],
       workflow_versions: ['workflow_id', 'version', 'definition_json', 'created_at'],
-      settings: ['key', 'value_json', 'updated_at']
+      settings: ['key', 'value_json', 'updated_at'],
+      task_drafts: [
+        'project_id',
+        'workflow_id',
+        'workflow_json',
+        'variables_json',
+        'revision',
+        'created_at',
+        'updated_at'
+      ]
     }
     for (const [table, columns] of Object.entries(expectedColumns)) {
       const actual = (db.prepare(`pragma table_info(${table})`).all() as Array<{ name: string }>)
@@ -237,6 +250,7 @@ describe('database schema v1', () => {
       'idx_hook_runs_task_id',
       'idx_process_logs_task_id',
       'idx_process_logs_task_node_created',
+      'idx_task_drafts_updated_at',
       'idx_tasks_project_id',
       'idx_terminal_sessions_node_id',
       'idx_terminal_sessions_task_id',
@@ -260,7 +274,7 @@ describe('database schema v1', () => {
 
     expect(listProjects(tracked.db)).toEqual([project])
     expect(tracked.db.pragma('application_id', { simple: true })).toBe(0x434c4c4d)
-    expect(tracked.db.pragma('user_version', { simple: true })).toBe(1)
+    expect(tracked.db.pragma('user_version', { simple: true })).toBe(2)
   })
 
   it('can retry after schema initialization fails without publishing a partial database', () => {
@@ -287,7 +301,7 @@ describe('database schema v1', () => {
     const db = openDatabase(dir)
     databases.push({ db, dir })
     expect(db.pragma('application_id', { simple: true })).toBe(0x434c4c4d)
-    expect(db.pragma('user_version', { simple: true })).toBe(1)
+    expect(db.pragma('user_version', { simple: true })).toBe(2)
   })
 
   it.each([1, 16])(
@@ -347,17 +361,35 @@ describe('database schema v1', () => {
       const futureDb = new Database(databasePath)
       futureDb.exec('create table future_data (value text not null)')
       futureDb.pragma('application_id = 1129073741')
-      futureDb.pragma('user_version = 2')
+      futureDb.pragma('user_version = 3')
       futureDb.close()
       const bytesBefore = readFileSync(databasePath)
       const filesBefore = readdirSync(dir).sort()
 
-      expect(() => openDatabase(dir)).toThrow('Unsupported database schema version: 2')
+      expect(() => openDatabase(dir)).toThrow('Unsupported database schema version: 3')
       expect(readFileSync(databasePath).equals(bytesBefore)).toBe(true)
       expect(readdirSync(dir).sort()).toEqual(filesBefore)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+
+  it('migrates an existing schema v1 database to the draft schema', () => {
+    const tracked = createTrackedDatabase('cliloom-schema-migration-')
+    const project = addProject(tracked.db, '/repo/schema-migration', assumeProjectDirectory)
+    tracked.db.exec('drop index idx_task_drafts_updated_at; drop table task_drafts;')
+    tracked.db.pragma('user_version = 1')
+    tracked.db.close()
+
+    tracked.db = openDatabase(tracked.dir)
+
+    expect(tracked.db.pragma('user_version', { simple: true })).toBe(2)
+    expect(listProjects(tracked.db)).toEqual([project])
+    expect(
+      tracked.db.prepare(
+        "select name from sqlite_master where type = 'table' and name = 'task_drafts'"
+      ).get()
+    ).toEqual({ name: 'task_drafts' })
   })
 })
 
@@ -475,6 +507,91 @@ describe('last opened workspace', () => {
 
     deleteProject(db, project.id)
     expect(getLastOpenedWorkspace(db)).toBeNull()
+  })
+})
+
+describe('task draft persistence', () => {
+  function draftPayload(revision: number, prompt = 'saved prompt'): TaskDraftPayload {
+    return {
+      version: TASK_DRAFT_VERSION,
+      workflow: {
+        ...databaseWorkflow,
+        nodes: [
+          {
+            id: 'start',
+            type: 'start',
+            name: 'Start',
+            config: {
+              variables: [{
+                key: 'prompt',
+                label: 'Prompt',
+                type: 'text',
+                required: false,
+                defaultValue: 'default'
+              }]
+            }
+          },
+          ...databaseWorkflow.nodes.slice(1)
+        ]
+      },
+      variables: { prompt },
+      revision
+    }
+  }
+
+  it('round-trips one draft per project and ignores stale revisions', () => {
+    const tracked = createTrackedDatabase()
+    const project = addProject(tracked.db, '/repo/task-draft', assumeProjectDirectory)
+
+    const saved = saveTaskDraft(tracked.db, project.id, draftPayload(1))
+    expect(saved).toMatchObject({
+      projectId: project.id,
+      workflow: expect.objectContaining({ id: databaseWorkflow.id }),
+      variables: { prompt: 'saved prompt' },
+      revision: 1
+    })
+
+    const newer = saveTaskDraft(tracked.db, project.id, draftPayload(2, 'newer prompt'))
+    expect(newer.variables).toEqual({ prompt: 'newer prompt' })
+    const stale = saveTaskDraft(tracked.db, project.id, draftPayload(1, 'stale prompt'))
+    expect(stale.variables).toEqual({ prompt: 'newer prompt' })
+    expect(getTaskDraft(tracked.db, project.id)?.variables).toEqual({ prompt: 'newer prompt' })
+
+    const overwritten = saveTaskDraft(
+      tracked.db,
+      project.id,
+      draftPayload(1, 'fresh prompt'),
+      { overwrite: true }
+    )
+    expect(overwritten.variables).toEqual({ prompt: 'fresh prompt' })
+    expect(overwritten.revision).toBeGreaterThan(newer.revision)
+    expect(saveTaskDraft(tracked.db, project.id, draftPayload(2, 'late stale prompt')).variables)
+      .toEqual({ prompt: 'fresh prompt' })
+
+    tracked.db.close()
+    tracked.db = openDatabase(tracked.dir)
+    expect(getTaskDraft(tracked.db, project.id)?.variables).toEqual({ prompt: 'fresh prompt' })
+  })
+
+  it('removes a project draft when the project is deleted', () => {
+    const { db } = createTrackedDatabase()
+    const project = addProject(db, '/repo/task-draft-delete', assumeProjectDirectory)
+    saveTaskDraft(db, project.id, draftPayload(1))
+
+    deleteProject(db, project.id)
+
+    expect(getTaskDraft(db, project.id)).toBeNull()
+  })
+
+  it('rejects malformed drafts and drafts for unknown projects', () => {
+    const { db } = createTrackedDatabase()
+    const project = addProject(db, '/repo/task-draft-validation', assumeProjectDirectory)
+
+    expect(() => saveTaskDraft(db, 'missing-project', draftPayload(1))).toThrow()
+    expect(() => saveTaskDraft(db, project.id, {
+      ...draftPayload(1),
+      variables: { prompt: { nested: true } }
+    })).toThrow()
   })
 })
 

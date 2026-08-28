@@ -4,6 +4,7 @@ import type { ShellSnapshot } from '../shared/shell'
 import type { TerminalDataEvent, TerminalTranscriptSnapshot } from '../shared/terminalBuffer'
 import type { UpdateState } from '../shared/update'
 import type { TerminalClosedEvent, TerminalRetryMode } from '../shared/terminalSession'
+import type { TaskDraftPayload, TaskDraftRecord } from '../shared/taskDraft'
 
 const api = {
   rendererNoSandboxSwitch: process.argv.includes('--no-sandbox'),
@@ -47,6 +48,12 @@ const api = {
   setProjectDefaultWorkflow: (projectId: string, workflowId: string) => ipcRenderer.invoke('projects:setDefaultWorkflow', projectId, workflowId),
   listTasks: (projectId: string) => ipcRenderer.invoke('tasks:list', projectId),
   getTaskContext: (taskId: string) => ipcRenderer.invoke('tasks:context', taskId) as Promise<string | null>,
+  getTaskDraft: (projectId: string) => ipcRenderer.invoke('tasks:draft:get', projectId) as Promise<TaskDraftRecord | null>,
+  saveTaskDraft: (projectId: string, draft: TaskDraftPayload, overwrite = false) =>
+    (overwrite
+      ? ipcRenderer.invoke('tasks:draft:save', projectId, draft, true)
+      : ipcRenderer.invoke('tasks:draft:save', projectId, draft)) as Promise<TaskDraftRecord>,
+  deleteTaskDraft: (projectId: string) => ipcRenderer.invoke('tasks:draft:delete', projectId) as Promise<void>,
   listTaskSessions: (taskId: string) => ipcRenderer.invoke('tasks:sessions', taskId),
   getTaskSessionTranscript: (taskId: string, sessionId: string) =>
     ipcRenderer.invoke('tasks:session-transcript', taskId, sessionId) as Promise<TerminalTranscriptSnapshot>,
@@ -77,6 +84,12 @@ const api = {
       ipcRenderer.removeListener('workflow:state', listener)
     }
   },
+  onPrepareToClose: (callback: () => void) => {
+    const listener = () => callback()
+    ipcRenderer.on('app:prepare-to-close', listener)
+    return () => ipcRenderer.removeListener('app:prepare-to-close', listener)
+  },
+  rendererReadyToClose: () => ipcRenderer.send('app:renderer-ready-to-close'),
   onTerminalCreated: (callback: (event: unknown) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, payload: unknown) => callback(payload)
     ipcRenderer.on('terminal:created', listener)
