@@ -373,6 +373,50 @@ describe('runtime persistence', () => {
     expect(workflowRun.status).toBe('interrupted')
   })
 
+  it('preserves in-flight running node runs without a persisted session id when reconciliation is disabled', () => {
+    const db = createDb()
+    persistState(db, state({
+      nodeRuns: {
+        start: { nodeId: 'start', status: 'completed' },
+        terminal: { nodeId: 'terminal', status: 'running' }
+      }
+    }), 'running')
+    db.prepare(
+      'insert into terminal_sessions (id, task_id, node_id, kind, command, cwd, status, transcript, created_at, updated_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    ).run(
+      'session-1',
+      'task-1',
+      'terminal',
+      'non-interactive',
+      'sleep 60',
+      '/repo',
+      'running',
+      '',
+      '2026-06-17T00:00:00.000Z',
+      '2026-06-17T00:00:00.000Z'
+    )
+
+    const restored = restoreWorkflowRuntimeState(db, 'task-1', {
+      isTerminalSessionLive: () => true,
+      reconcileRunning: false
+    })
+
+    expect(restored.state?.status).toBe('running')
+    expect(restored.state?.nodeRuns.terminal).toMatchObject({ status: 'running' })
+    expect(restored.terminalSessions[0]).toMatchObject({
+      id: 'session-1',
+      status: 'running'
+    })
+    const task = db.prepare('select status from tasks where id = ?').get('task-1') as { status: string }
+    const workflowRun = db.prepare('select status from workflow_runs where task_id = ?').get('task-1') as { status: string }
+    const nodeRun = db.prepare(
+      'select status from node_runs where run_id = ? and node_id = ?'
+    ).get('task-1', 'terminal') as { status: string }
+    expect(task.status).toBe('running')
+    expect(workflowRun.status).toBe('running')
+    expect(nodeRun.status).toBe('running')
+  })
+
   it('restores stale and just-completed parallel terminal branches as interrupted', () => {
     const db = createDb()
     const parallelWorkflow: WorkflowDefinition = {

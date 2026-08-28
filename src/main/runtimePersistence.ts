@@ -34,6 +34,7 @@ export type RestoreRuntimeOptions = {
   getLiveTerminalTranscript?: (
     session: TerminalSessionRecord
   ) => TerminalTranscriptSnapshot | null
+  reconcileRunning?: boolean
 }
 
 export type RuntimeRestoreResult = {
@@ -186,7 +187,7 @@ export function restoreWorkflowRuntimeState(
 ): RuntimeRestoreResult {
   const terminalSessions = listTerminalSessionMetadataByTask(db, taskId)
   const normalizedSessions = normalizeTerminalSessions(db, terminalSessions, options)
-  reconcileTaskRuntimeState(db, taskId)
+  if (options.reconcileRunning !== false) reconcileTaskRuntimeState(db, taskId)
   const run = db
     .prepare('select * from workflow_runs where task_id = ? order by updated_at desc limit 1')
     .get(taskId) as WorkflowRunRow | undefined
