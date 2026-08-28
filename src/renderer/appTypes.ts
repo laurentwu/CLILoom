@@ -4,6 +4,7 @@ import type { AppSettingsSnapshot } from '../shared/appSettings'
 import type { TerminalSession } from './utils'
 import type { ShellSnapshot } from '../shared/shell'
 import type { WorkflowRuntimeStatus } from '../shared/workflowRuntime'
+export type { TaskDraftPayload, TaskDraftRecord } from '../shared/taskDraft'
 
 export type ProjectRecord = {
   id: string

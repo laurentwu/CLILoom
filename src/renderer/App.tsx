@@ -50,6 +50,7 @@ import {
   type WorkflowDefinition,
   type WorkflowNode,
   duplicateWorkflowDefinition,
+  validateUserVariableKey,
   validateWorkflow
 } from '../shared/workflow'
 import type {
@@ -57,6 +58,7 @@ import type {
   WorkflowRuntimeNodeRun,
   WorkflowRuntimeState
 } from '../shared/workflowRuntime'
+import { TASK_DRAFT_VERSION } from '../shared/taskDraft'
 import type { TerminalRetryMode } from '../shared/terminalSession'
 import {
   DEFAULT_ASSISTANT_CONFIG,
@@ -115,6 +117,8 @@ import { TerminalScrollGroup } from './components/TerminalScrollGroup'
 import type {
   Bootstrap,
   ProjectRecord,
+  TaskDraftPayload,
+  TaskDraftRecord,
   TaskRecord,
   WorkflowRecord,
   WorkflowSaveResult
@@ -270,6 +274,17 @@ const DESIGNER_NODE_GROUPS: Array<{ labelKey: TranslationKey; types: WorkflowNod
 ]
 
 const TASK_BATCH_SIZE = 10
+const DRAFT_SAVE_DEBOUNCE_MS = 300
+
+type ScheduledDraftSave = {
+  payload: TaskDraftPayload
+  timer: ReturnType<typeof setTimeout>
+}
+
+type PendingDraftLaunch = {
+  contentVersion: number
+  projectId: string
+}
 
 export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
   const { t } = useTranslation()
@@ -335,6 +350,9 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
   const [parallelZoomNodeId, setParallelZoomNodeId] = useState<string | null>(null)
   const [executionOrder, setExecutionOrder] = useState<string[]>([])
   const activeTaskIdRef = useRef(activeTaskId)
+  const activeProjectIdRef = useRef(activeProjectId)
+  const workflowRef = useRef(workflow)
+  const variablesRef = useRef(variables)
   const draftStartedRef = useRef(draftStarted)
   const isNewTaskDraftRef = useRef(isNewTaskDraft)
   const runtimeStateRef = useRef(runtimeState)
@@ -347,6 +365,15 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
   const terminalTranscriptLoadsRef = useRef(new Map<string, Promise<void>>())
   const pendingStartupTaskRef = useRef<{ projectId: string; taskId: string } | null>(null)
   const rememberedWorkspaceKeyRef = useRef('')
+  const draftContentVersionsRef = useRef(new Map<string, number>())
+  const draftRevisionsRef = useRef(new Map<string, number>())
+  const draftSaveQueuesRef = useRef(new Map<string, Promise<void>>())
+  const scheduledDraftSavesRef = useRef(new Map<string, ScheduledDraftSave>())
+  const pendingDraftLaunchesRef = useRef(new Map<string, PendingDraftLaunch>())
+  const draftLoadRequestRef = useRef(0)
+  const pendingDraftLoadProjectRef = useRef<string | null>(null)
+  const draftFlushPromiseRef = useRef<Promise<void> | null>(null)
+  const rendererPreparingToCloseRef = useRef(false)
   const manualFocusRef = useRef(false)
   const designerDirtyRef = useRef(designerDirty)
   const designerOpenRef = useRef(designerOpen)
@@ -358,6 +385,9 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
   designerOpenRef.current = designerOpen
   editingWorkflowIdRef.current = editingWorkflow?.id ?? null
   workflowIdRef.current = workflow.id
+  activeProjectIdRef.current = activeProjectId
+  workflowRef.current = workflow
+  variablesRef.current = variables
   draftStartedRef.current = draftStarted
   isNewTaskDraftRef.current = isNewTaskDraft
   runtimeStateRef.current = runtimeState
@@ -463,6 +493,7 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
         : t('project:addFolderPrompt')
   function updateWorkspaceWorkflow(nextWorkflow: WorkflowDefinition) {
     workflowIdRef.current = nextWorkflow.id
+    workflowRef.current = nextWorkflow
     setWorkflow(nextWorkflow)
   }
 
@@ -473,6 +504,12 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
         ? current
         : (nextWorkflow.nodes[0]?.id ?? '')
     ))
+    if (isNewTaskDraftRef.current && activeProjectIdRef.current) {
+      const nextVariables = restoreDraftVariables(nextWorkflow, variablesRef.current)
+      variablesRef.current = nextVariables
+      setVariables(nextVariables)
+      void persistDraftSnapshot(activeProjectIdRef.current, nextWorkflow, nextVariables)
+    }
   }
 
   function applyWorkflowCatalog(records: WorkflowRecord[]): WorkflowDefinition[] {
@@ -514,6 +551,168 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
     pendingWorkflowIdRef.current = workflowId
     setPendingWorkflowId(workflowId)
     if (workflowId === null) setIsConfirmingWorkflowChange(false)
+  }
+
+  function createDraftPayload(
+    projectId: string,
+    nextWorkflow: WorkflowDefinition,
+    nextVariables: Record<string, VariableValue>
+  ): TaskDraftPayload {
+    const revision = (draftRevisionsRef.current.get(projectId) ?? 0) + 1
+    draftRevisionsRef.current.set(projectId, revision)
+    return {
+      version: TASK_DRAFT_VERSION,
+      workflow: nextWorkflow,
+      variables: { ...nextVariables },
+      revision
+    }
+  }
+
+  function markDraftContentChanged(projectId: string): number {
+    const version = (draftContentVersionsRef.current.get(projectId) ?? 0) + 1
+    draftContentVersionsRef.current.set(projectId, version)
+    return version
+  }
+
+  function enqueueDraftSnapshot(
+    projectId: string,
+    payload: TaskDraftPayload,
+    overwrite = false
+  ): Promise<void> {
+    const saveDraft = window.cliLoom?.saveTaskDraft
+    if (!saveDraft) return Promise.resolve()
+
+    const previous = draftSaveQueuesRef.current.get(projectId) ?? Promise.resolve()
+    const operation = previous.catch(() => undefined).then(async () => {
+      try {
+        const saved = overwrite
+          ? await saveDraft(projectId, payload, true) as TaskDraftRecord | undefined
+          : await saveDraft(projectId, payload) as TaskDraftRecord | undefined
+        if (saved && saved.projectId === projectId) {
+          const currentRevision = draftRevisionsRef.current.get(projectId) ?? 0
+          draftRevisionsRef.current.set(projectId, Math.max(currentRevision, saved.revision))
+        }
+      } catch (error) {
+        handleError(error, 'saveTaskDraft')
+      }
+    })
+    const tracked = operation.finally(() => {
+      if (draftSaveQueuesRef.current.get(projectId) === tracked) {
+        draftSaveQueuesRef.current.delete(projectId)
+      }
+    })
+    draftSaveQueuesRef.current.set(projectId, tracked)
+    return tracked
+  }
+
+  function cancelScheduledDraftSave(projectId: string): TaskDraftPayload | null {
+    const scheduled = scheduledDraftSavesRef.current.get(projectId)
+    if (!scheduled) return null
+    clearTimeout(scheduled.timer)
+    scheduledDraftSavesRef.current.delete(projectId)
+    return scheduled.payload
+  }
+
+  function scheduleDraftSnapshot(
+    projectId: string,
+    nextWorkflow: WorkflowDefinition,
+    nextVariables: Record<string, VariableValue>
+  ): void {
+    if (!window.cliLoom?.saveTaskDraft) return
+
+    markDraftContentChanged(projectId)
+    const payload = createDraftPayload(projectId, nextWorkflow, nextVariables)
+    cancelScheduledDraftSave(projectId)
+    let scheduled!: ScheduledDraftSave
+    const timer = setTimeout(() => {
+      if (scheduledDraftSavesRef.current.get(projectId) !== scheduled) return
+      scheduledDraftSavesRef.current.delete(projectId)
+      void enqueueDraftSnapshot(projectId, payload)
+    }, DRAFT_SAVE_DEBOUNCE_MS)
+    scheduled = { payload, timer }
+    scheduledDraftSavesRef.current.set(projectId, scheduled)
+  }
+
+  function flushScheduledDraftSaves(): Promise<void> {
+    const scheduled = [...scheduledDraftSavesRef.current.entries()]
+    scheduledDraftSavesRef.current.clear()
+    for (const [, item] of scheduled) clearTimeout(item.timer)
+    return Promise.all(scheduled.map(([projectId, item]) => (
+      enqueueDraftSnapshot(projectId, item.payload)
+    ))).then(() => undefined)
+  }
+
+  function persistDraftSnapshot(
+    projectId: string,
+    nextWorkflow: WorkflowDefinition,
+    nextVariables: Record<string, VariableValue>,
+    options: { contentChanged?: boolean; overwrite?: boolean } = {}
+  ): Promise<void> {
+    if (options.contentChanged !== false) markDraftContentChanged(projectId)
+    if (!window.cliLoom?.saveTaskDraft) return Promise.resolve()
+    cancelScheduledDraftSave(projectId)
+    return enqueueDraftSnapshot(
+      projectId,
+      createDraftPayload(projectId, nextWorkflow, nextVariables),
+      options.overwrite
+    )
+  }
+
+  function deletePersistedDraft(projectId: string): Promise<void> {
+    cancelScheduledDraftSave(projectId)
+    const deleteDraft = window.cliLoom?.deleteTaskDraft
+    if (!deleteDraft) {
+      draftRevisionsRef.current.delete(projectId)
+      return Promise.resolve()
+    }
+
+    const previous = draftSaveQueuesRef.current.get(projectId) ?? Promise.resolve()
+    const operation = previous.catch(() => undefined).then(async () => {
+      try {
+        await deleteDraft(projectId)
+        draftRevisionsRef.current.delete(projectId)
+      } catch (error) {
+        handleError(error, 'deleteTaskDraft')
+      }
+    })
+    const tracked = operation.finally(() => {
+      if (draftSaveQueuesRef.current.get(projectId) === tracked) {
+        draftSaveQueuesRef.current.delete(projectId)
+      }
+    })
+    draftSaveQueuesRef.current.set(projectId, tracked)
+    return tracked
+  }
+
+  function flushActiveDraft(): Promise<void> {
+    const projectId = activeProjectIdRef.current
+    if (!projectId || !isNewTaskDraftRef.current) return Promise.resolve()
+    return persistDraftSnapshot(projectId, workflowRef.current, variablesRef.current, {
+      contentChanged: false
+    })
+  }
+
+  async function flushDraftOperations(): Promise<void> {
+    const pendingFlush = draftFlushPromiseRef.current
+    if (pendingFlush) return pendingFlush
+
+    const operation = (async () => {
+      await flushActiveDraft()
+      while (
+        scheduledDraftSavesRef.current.size > 0 ||
+        draftSaveQueuesRef.current.size > 0
+      ) {
+        await flushScheduledDraftSaves()
+        const pending = [...draftSaveQueuesRef.current.values()]
+        await Promise.all(pending.map((item) => item.catch(() => undefined)))
+      }
+    })()
+    draftFlushPromiseRef.current = operation
+    const clearPendingFlush = () => {
+      if (draftFlushPromiseRef.current === operation) draftFlushPromiseRef.current = null
+    }
+    void operation.then(clearPendingFlush, clearPendingFlush)
+    return operation
   }
 
   function currentWorkspaceUsesTaskSnapshot(): boolean {
@@ -567,6 +766,17 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
         options.moveTaskToFront ?? true
       ))
     }
+    const pendingDraftLaunch = pendingDraftLaunchesRef.current.get(state.taskId)
+    if (
+      state.task &&
+      pendingDraftLaunch?.projectId === state.projectId
+    ) {
+      pendingDraftLaunchesRef.current.delete(state.taskId)
+      const currentContentVersion = draftContentVersionsRef.current.get(state.projectId) ?? 0
+      if (currentContentVersion === pendingDraftLaunch.contentVersion) {
+        void deletePersistedDraft(state.projectId)
+      }
+    }
     if (state.taskId !== activeTaskIdRef.current) return
     activeTaskPersistedRef.current = true
     updateRuntimeState(state)
@@ -586,6 +796,7 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
       setFocusedParallelSplitNodeId(nextActiveSplitNodeId)
       setNodeDetailZoomTarget(null)
     }
+    variablesRef.current = state.variables
     setVariables(state.variables)
     setNodeRuns(state.nodeRuns)
     setExecutionOrder(state.executionOrder)
@@ -652,19 +863,35 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
       startingWorkflowTaskIdRef.current === activeTaskId
     ) return
     const taskId = activeTaskId
+    const projectId = activeProject.id
+    const workflowToStart = workflow
+    const variablesToStart = { ...variablesRef.current }
+    const startNodeId = selectedNode.id
+    const startsNewTaskDraft = isNewTaskDraftRef.current
     updateStartingWorkflowTaskId(taskId)
     updatePendingWorkflowId(null)
     manualFocusRef.current = false
+    let pendingDraftLaunchRegistered = false
     try {
+      if (startsNewTaskDraft) {
+        const draftFlush = flushActiveDraft()
+        const contentVersion = draftContentVersionsRef.current.get(projectId) ?? 0
+        await draftFlush
+        pendingDraftLaunchesRef.current.set(taskId, { contentVersion, projectId })
+        pendingDraftLaunchRegistered = true
+      }
       const state = (await window.cliLoom?.startWorkflow({
         taskId,
-        projectId: activeProject.id,
-        workflow,
-        variables,
-        startNodeId: selectedNode.id
+        projectId,
+        workflow: workflowToStart,
+        variables: variablesToStart,
+        startNodeId
       })) as WorkflowRuntimeState | undefined
-      if (state) applyRuntimeState(state)
+      if (state) {
+        applyRuntimeState(state)
+      }
     } catch (error) {
+      if (pendingDraftLaunchRegistered) pendingDraftLaunchesRef.current.delete(taskId)
       handleError(error, 'startWorkflow')
     } finally {
       if (startingWorkflowTaskIdRef.current === taskId) {
@@ -839,17 +1066,26 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
       pendingStartupTaskRef.current = rememberedProject && data.lastOpenedWorkspace?.taskId
         ? { projectId: rememberedProject.id, taskId: data.lastOpenedWorkspace.taskId }
         : null
+      draftContentVersionsRef.current.clear()
+      draftRevisionsRef.current.clear()
+      for (const item of scheduledDraftSavesRef.current.values()) clearTimeout(item.timer)
+      scheduledDraftSavesRef.current.clear()
+      pendingDraftLaunchesRef.current.clear()
+      pendingDraftLoadProjectRef.current = null
       activeTaskPersistedRef.current = false
       updateNewTaskDraft(false)
       updatePendingWorkflowId(null)
       updateRuntimeState(null)
+      activeProjectIdRef.current = initialProject?.id ?? null
       setActiveProjectId(initialProject?.id ?? null)
       const initialWorkflow = data.workflows.find((item) => item.id === initialProject?.default_workflow_id)
         ?? data.workflows[0]
         ?? emptyWorkflow
       updateWorkspaceWorkflow(initialWorkflow)
       setSelectedNodeId(initialWorkflow.nodes[0]?.id ?? '')
-      setVariables(getDefaultVariables(initialWorkflow))
+      const initialVariables = getDefaultVariables(initialWorkflow)
+      variablesRef.current = initialVariables
+      setVariables(initialVariables)
     }).catch((error: unknown) => handleError(error, 'bootstrap'))
     return () => {
       cancelled = true
@@ -1133,12 +1369,60 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
     return () => removeState?.()
   }, [])
 
+  useEffect(() => {
+    const flushDraftBeforeUnload = () => {
+      if (rendererPreparingToCloseRef.current) return
+      void flushDraftOperations()
+    }
+    window.addEventListener('beforeunload', flushDraftBeforeUnload)
+    const removePrepareToClose = window.cliLoom?.onPrepareToClose?.(() => {
+      rendererPreparingToCloseRef.current = true
+      void flushDraftOperations().then(() => {
+        try {
+          window.cliLoom?.rendererReadyToClose?.()
+        } catch {
+          // The main process will use its bounded timeout if the renderer is
+          // already shutting down and cannot send the acknowledgement.
+        }
+      }, () => {
+        // A failed persistence operation must not block a normal application
+        // close; the main process also has a bounded acknowledgement timeout.
+        try {
+          window.cliLoom?.rendererReadyToClose?.()
+        } catch {
+          // See the timeout comment above.
+        }
+      })
+    })
+    return () => {
+      window.removeEventListener('beforeunload', flushDraftBeforeUnload)
+      removePrepareToClose?.()
+      for (const item of scheduledDraftSavesRef.current.values()) {
+        clearTimeout(item.timer)
+      }
+      scheduledDraftSavesRef.current.clear()
+    }
+  }, [])
+
   async function chooseFolder() {
     try {
       const project = (await window.cliLoom?.chooseAndAddProject()) as ProjectRecord | null
       if (!project) return
+      const requestId = draftLoadRequestRef.current + 1
+      draftLoadRequestRef.current = requestId
+      pendingStartupTaskRef.current = null
+      pendingDraftLoadProjectRef.current = null
+      await flushActiveDraft()
+      if (draftLoadRequestRef.current !== requestId) return
       const nextProjects = (await window.cliLoom?.listProjects()) as ProjectRecord[]
+      if (draftLoadRequestRef.current !== requestId) return
       setProjects(nextProjects)
+      // The folder picker also returns an existing project when the selected
+      // path is already registered. Keep the current editor in place in that
+      // case; switching away and back is the explicit navigation action that
+      // should reset the transient workspace.
+      if (project.id === activeProjectIdRef.current) return
+      activeProjectIdRef.current = project.id
       setActiveProjectId(project.id)
       setTasks([])
       resetTaskWorkspaceForProject(project, { draftStarted: false })
@@ -1150,11 +1434,17 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
 
   async function deleteActiveProject(project: ProjectRecord) {
     try {
+      if (project.id === activeProjectIdRef.current) {
+        draftLoadRequestRef.current += 1
+        pendingDraftLoadProjectRef.current = null
+        await flushActiveDraft()
+      }
       await window.cliLoom?.deleteProject(project.id)
       const nextProjects = (await window.cliLoom?.listProjects()) as ProjectRecord[]
       const nextActiveProjectId = getNextActiveProjectIdAfterDelete({ projects: nextProjects, deletedProjectId: project.id })
       const nextProject = nextProjects.find((item) => item.id === nextActiveProjectId) ?? null
       setProjects(nextProjects)
+      activeProjectIdRef.current = nextActiveProjectId
       setActiveProjectId(nextActiveProjectId)
       setTasks([])
       resetTaskWorkspaceForProject(nextProject, { draftStarted: false })
@@ -1222,20 +1512,63 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
     }
   }
 
+  function restoreDraftVariables(
+    nextWorkflow: WorkflowDefinition,
+    cachedVariables: Record<string, VariableValue>
+  ): Record<string, VariableValue> {
+    const defaults = getDefaultVariables(nextWorkflow)
+    const startNode = nextWorkflow.nodes.find((node) => node.type === 'start')
+    const definitions = startNode ? getCurrentInputVariables(startNode) : []
+    const definitionByKey = new Map(definitions.map((definition) => [definition.key, definition]))
+    const restored: Record<string, VariableValue> = {}
+
+    for (const [key, defaultValue] of Object.entries(defaults)) {
+      if (validateUserVariableKey(key)) continue
+      const definition = definitionByKey.get(key)
+      const cachedValue = cachedVariables[key]
+      if (!definition || !Object.prototype.hasOwnProperty.call(cachedVariables, key)) {
+        Object.defineProperty(restored, key, {
+          configurable: true,
+          enumerable: true,
+          value: defaultValue,
+          writable: true
+        })
+        continue
+      }
+
+      const compatible = definition.type === 'number'
+        ? typeof cachedValue === 'number' && Number.isFinite(cachedValue)
+        : typeof cachedValue === 'string'
+      Object.defineProperty(restored, key, {
+        configurable: true,
+        enumerable: true,
+        value: compatible ? cachedValue : defaultValue,
+        writable: true
+      })
+    }
+    return restored
+  }
+
   function resetTaskWorkspaceWithWorkflow(
     nextWorkflow: WorkflowDefinition,
-    options: { draftStarted: boolean; isNewTaskDraft?: boolean }
+    options: {
+      draftStarted: boolean
+      isNewTaskDraft?: boolean
+      variables?: Record<string, VariableValue>
+    }
   ) {
     taskLoadRequestRef.current += 1
     updateWorkspaceWorkflow(nextWorkflow)
     setSelectedNodeId(nextWorkflow.nodes[0]?.id ?? '')
-    setVariables(getDefaultVariables(nextWorkflow))
+    const nextVariables = options.variables ?? getDefaultVariables(nextWorkflow)
+    variablesRef.current = nextVariables
+    setVariables(nextVariables)
     setNodeRuns({})
     setBranchRuns({})
     setSessions([])
     setExecutionOrder([])
     updateRuntimeState(null)
-    const nextTaskId = `draft-${Date.now()}`
+    const nextTaskId = `draft-${Date.now()}-${crypto.randomUUID()}`
     setActiveTaskId(nextTaskId)
     activeTaskIdRef.current = nextTaskId
     activeTaskPersistedRef.current = false
@@ -1253,7 +1586,11 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
 
   function resetTaskWorkspaceForProject(
     project: ProjectRecord | null,
-    options: { draftStarted: boolean; isNewTaskDraft?: boolean }
+    options: {
+      draftStarted: boolean
+      isNewTaskDraft?: boolean
+      variables?: Record<string, VariableValue>
+    }
   ) {
     const nextWorkflow = project
       ? (availableWorkflows.find((item) => item.id === project.default_workflow_id) ?? availableWorkflows[0] ?? emptyWorkflow)
@@ -1261,11 +1598,109 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
     resetTaskWorkspaceWithWorkflow(nextWorkflow, options)
   }
 
-  function startNewTask() {
+  function createFreshProjectDraft(project: ProjectRecord): void {
+    resetTaskWorkspaceForProject(project, { draftStarted: true, isNewTaskDraft: true })
+    rememberWorkspace(project.id, null)
+    void persistDraftSnapshot(project.id, workflowRef.current, variablesRef.current, { overwrite: true })
+  }
+
+  async function startNewTask(): Promise<void> {
     if (!canStartNewTask({ hasActiveProject: Boolean(activeProject) }) || availableWorkflows.length === 0) return
     if (!activeProject) return
-    resetTaskWorkspaceForProject(activeProject, { draftStarted: true, isNewTaskDraft: true })
-    rememberWorkspace(activeProject.id, null)
+
+    const project = activeProject
+    // An explicit New task action takes precedence over the deferred restore
+    // of the last persisted task during application bootstrap.
+    pendingStartupTaskRef.current = null
+    const requestId = draftLoadRequestRef.current + 1
+    draftLoadRequestRef.current = requestId
+
+    // Clicking New task while already editing a draft explicitly replaces it
+    // with a fresh project-default draft, as requested by the product rule.
+    if (isNewTaskDraftRef.current && activeProjectIdRef.current === project.id) {
+      createFreshProjectDraft(project)
+      return
+    }
+
+    // Treat a second click while the first draft lookup is still pending as an
+    // explicit request for a fresh draft as well.
+    if (pendingDraftLoadProjectRef.current === project.id) {
+      pendingDraftLoadProjectRef.current = null
+      createFreshProjectDraft(project)
+      return
+    }
+
+    const getDraft = window.cliLoom?.getTaskDraft
+    if (getDraft) pendingDraftLoadProjectRef.current = project.id
+
+    const pendingDraftOperation = draftSaveQueuesRef.current.get(project.id)
+    if (pendingDraftOperation) {
+      await pendingDraftOperation.catch(() => undefined)
+      if (
+        draftLoadRequestRef.current !== requestId ||
+        activeProjectIdRef.current !== project.id
+      ) return
+    }
+
+    let draft: TaskDraftRecord | null = null
+    if (getDraft) {
+      try {
+        draft = await getDraft(project.id)
+      } catch (error) {
+        if (pendingDraftLoadProjectRef.current === project.id) {
+          pendingDraftLoadProjectRef.current = null
+        }
+        if (
+          draftLoadRequestRef.current !== requestId ||
+          activeProjectIdRef.current !== project.id
+        ) return
+        handleError(error, 'getTaskDraft')
+        return
+      }
+    }
+
+    if (
+      draftLoadRequestRef.current !== requestId ||
+      activeProjectIdRef.current !== project.id
+    ) {
+      if (pendingDraftLoadProjectRef.current === project.id) {
+        pendingDraftLoadProjectRef.current = null
+      }
+      return
+    }
+
+    if (pendingDraftLoadProjectRef.current === project.id) {
+      pendingDraftLoadProjectRef.current = null
+    }
+
+    // Treat a mismatched response as an empty draft. The project ID is part of
+    // the persisted record so a stale or misrouted IPC response can never be
+    // applied to the currently selected project.
+    if (draft && draft.projectId !== project.id) draft = null
+
+    if (!draft) {
+      createFreshProjectDraft(project)
+      return
+    }
+
+    const latestWorkflow = availableWorkflowsRef.current.find((item) => item.id === draft.workflow.id)
+      ?? availableWorkflowsRef.current.find((item) => item.id === project.default_workflow_id)
+      ?? availableWorkflowsRef.current[0]
+      ?? emptyWorkflow
+    const restoredVariables = restoreDraftVariables(latestWorkflow, draft.variables)
+    draftRevisionsRef.current.set(project.id, draft.revision)
+    resetTaskWorkspaceWithWorkflow(latestWorkflow, {
+      draftStarted: true,
+      isNewTaskDraft: true,
+      variables: restoredVariables
+    })
+    rememberWorkspace(project.id, null)
+
+    const workflowChanged = JSON.stringify(latestWorkflow) !== JSON.stringify(draft.workflow)
+    const variablesChanged = JSON.stringify(restoredVariables) !== JSON.stringify(draft.variables)
+    if (workflowChanged || variablesChanged) {
+      void persistDraftSnapshot(project.id, latestWorkflow, restoredVariables)
+    }
   }
 
   function applyDraftWorkflow(nextWorkflow: WorkflowDefinition) {
@@ -1275,6 +1710,7 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
       isNewTaskDraft: true
     })
     rememberWorkspace(activeProject.id, null)
+    void persistDraftSnapshot(activeProject.id, nextWorkflow, variablesRef.current)
   }
 
   function requestDraftWorkflowChange(workflowId: string) {
@@ -1340,6 +1776,14 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
   }
 
   async function selectProject(project: ProjectRecord) {
+    if (project.id === activeProjectIdRef.current) return
+    const requestId = draftLoadRequestRef.current + 1
+    draftLoadRequestRef.current = requestId
+    pendingStartupTaskRef.current = null
+    pendingDraftLoadProjectRef.current = null
+    await flushActiveDraft()
+    if (draftLoadRequestRef.current !== requestId) return
+    activeProjectIdRef.current = project.id
     setActiveProjectId(project.id)
     setTasks([])
     resetTaskWorkspaceForProject(project, { draftStarted: false })
@@ -2316,8 +2760,13 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
   )
 
   function setVariable(key: string, value: VariableValue) {
-    setVariables((current) => ({ ...current, [key]: value }))
+    const nextVariables = { ...variablesRef.current, [key]: value }
+    variablesRef.current = nextVariables
+    setVariables(nextVariables)
     updateDraftStarted(true)
+    if (isNewTaskDraftRef.current && activeProjectIdRef.current) {
+      scheduleDraftSnapshot(activeProjectIdRef.current, workflowRef.current, nextVariables)
+    }
   }
 
   function setBranchVariable(branchId: string, key: string, value: VariableValue) {
@@ -2338,7 +2787,16 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
     window.cliLoom?.writeProcess(sessionId, input)
   }
 
-  function loadTask(task: TaskRecord) {
+  async function loadTask(task: TaskRecord): Promise<void> {
+    const navigationRequestId = draftLoadRequestRef.current + 1
+    draftLoadRequestRef.current = navigationRequestId
+    pendingDraftLoadProjectRef.current = null
+    await flushActiveDraft()
+    if (
+      draftLoadRequestRef.current !== navigationRequestId ||
+      activeProjectIdRef.current !== task.project_id
+    ) return
+
     const requestId = taskLoadRequestRef.current + 1
     taskLoadRequestRef.current = requestId
     setActiveTaskId(task.id)
@@ -2370,7 +2828,9 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
           workflowId?: string
           executionOrder?: string[]
         }
-        setVariables(context.variables ?? {})
+        const restoredVariables = context.variables ?? {}
+        variablesRef.current = restoredVariables
+        setVariables(restoredVariables)
         const restoredRuns = context.nodeRuns ?? {}
         setNodeRuns(restoredRuns)
         setBranchRuns(context.branchRuns ?? {})
@@ -2383,6 +2843,7 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
         setViewMode('focus')
       } catch {
         if (!isCurrentTaskLoad()) return
+        variablesRef.current = {}
         setVariables({})
         setNodeRuns({})
         setBranchRuns({})

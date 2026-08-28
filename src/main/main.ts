@@ -17,13 +17,16 @@ import { MAX_IMPORT_BYTES } from '../shared/skin'
 import { initMainI18n, setMainI18nLanguage, t } from './i18n'
 import {
   addProject,
+  deleteTaskDraft,
   getLastOpenedWorkspace,
+  getTaskDraft,
   getTaskContext,
   listProjects,
   listTasks,
   openDatabase,
   reorderProjects,
   setLastOpenedWorkspace,
+  saveTaskDraft,
   updateProjectName,
   updateTaskTitle,
   type AppDatabase
@@ -73,6 +76,7 @@ import { InstalledFontService } from './installedFonts'
 import { createElectronUpdaterAdapter } from './electronUpdaterAdapter'
 import { coordinateUpdateInstall } from './updateInstallCoordinator'
 import { readUpdatePackageTypeMarker, UpdateService } from './updateService'
+import { waitForRendererDraftFlush } from './rendererDraftFlush'
 import {
   createSecureWebPreferences,
   installDevToolsShortcut,
@@ -166,7 +170,10 @@ function startDesktopApplication(): void {
     resolveExecutablePath: (candidate) => resolvePortableExecutablePath({
       PORTABLE_EXECUTABLE_FILE: candidate
     }, process.platform),
-    cleanupCurrent: beginSafeApplicationCleanup,
+    cleanupCurrent: async () => {
+      await flushRendererDraftBeforeQuit()
+      await beginSafeApplicationCleanup()
+    },
     onCleanupFailed: (error) => {
       quitCleanup = null
       showUnsafeExitError(error)
@@ -359,9 +366,9 @@ function showReplacementLaunchFailed(error: unknown): void {
 }
 
 function quitAfterInstanceHandoff(): void {
-  allowMainWindowDestroy = true
-  allowApplicationQuit = true
-  app.quit()
+  // The replacement may take a moment to launch. Flush once more here so any
+  // edits made while that handoff was in progress are included as well.
+  void completeNormalApplicationQuit()
 }
 
 async function showHandoffUnavailableDialog(incoming: DesktopInstanceLaunchData): Promise<void> {
@@ -434,6 +441,7 @@ function beginSafeApplicationCleanup(): Promise<void> {
 
 async function completeNormalApplicationQuit(): Promise<void> {
   try {
+    await flushRendererDraftBeforeQuit()
     await beginSafeApplicationCleanup()
     allowMainWindowDestroy = true
     allowApplicationQuit = true
@@ -443,6 +451,14 @@ async function completeNormalApplicationQuit(): Promise<void> {
     quitCleanup = null
     showUnsafeExitError(error)
     if (!mainWindow && app.isReady() && desktopInitialized) createWindow()
+  }
+}
+
+async function flushRendererDraftBeforeQuit(): Promise<void> {
+  if (mainWindowClosing) {
+    await mainWindowClosing
+  } else if (mainWindow && !mainWindow.isDestroyed()) {
+    await waitForRendererDraftFlush(mainWindow, ipcMain, isMainSender)
   }
 }
 
@@ -521,6 +537,7 @@ function installMainWindowListeners(window: BrowserWindow): void {
     if (mainWindowClosing) return
     mainWindowClosing = (async () => {
       saveMainWindowState(window)
+      await waitForRendererDraftFlush(window, ipcMain, isMainSender)
       allowMainWindowDestroy = true
       if (!window.isDestroyed()) window.destroy()
     })().finally(() => {
@@ -725,7 +742,10 @@ function registerIpc(): void {
     }
     try {
       await coordinateUpdateInstall({
-        cleanup: beginSafeApplicationCleanup,
+        cleanup: async () => {
+          await flushRendererDraftBeforeQuit()
+          await beginSafeApplicationCleanup()
+        },
         allowQuit: () => {
           allowMainWindowDestroy = true
           allowApplicationQuit = true
@@ -794,6 +814,27 @@ function registerIpc(): void {
   ipcMain.handle('tasks:context', (event, taskId: string) => {
     assertMainSender(event)
     return getTaskContext(db, taskId)
+  })
+  ipcMain.handle('tasks:draft:get', (event, projectId: string) => {
+    assertMainSender(event)
+    if (typeof projectId !== 'string' || !projectId) {
+      throw new Error(t('errors:database.projectNotFound'))
+    }
+    return getTaskDraft(db, projectId)
+  })
+  ipcMain.handle('tasks:draft:save', (event, projectId: unknown, draft: unknown, overwrite?: unknown) => {
+    assertMainSender(event)
+    if (overwrite !== undefined && typeof overwrite !== 'boolean') {
+      throw new Error(t('errors:database.taskDraftInvalid'))
+    }
+    return saveTaskDraft(db, projectId, draft, { overwrite: overwrite === true })
+  })
+  ipcMain.handle('tasks:draft:delete', (event, projectId: string) => {
+    assertMainSender(event)
+    if (typeof projectId !== 'string' || !projectId) {
+      throw new Error(t('errors:database.projectNotFound'))
+    }
+    return deleteTaskDraft(db, projectId)
   })
   ipcMain.handle('tasks:delete', async (event, taskId: string) => {
     assertMainSender(event)

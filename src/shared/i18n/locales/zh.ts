@@ -195,7 +195,8 @@ export default {
       invalidWorkspace: '最近打开的项目和任务无效',
       taskNotFound: '任务不存在或不属于该项目',
       taskTitleInvalid: '任务名称必须是字符串',
-      taskTitleEmpty: '任务名称不能为空'
+      taskTitleEmpty: '任务名称不能为空',
+      taskDraftInvalid: '新建任务草稿无效'
     },
     workflowConfig: {
       cancelled: '用户取消了操作',
