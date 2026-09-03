@@ -177,6 +177,8 @@ export class WorkflowRuntimeEngine {
   private state: WorkflowRuntimeState
   private nodeExecutionCount = 0
   private operationQueue: Promise<unknown> = Promise.resolve()
+  private readonly branchOperationQueues = new Map<string, Promise<unknown>>()
+  private readonly parallelTerminalRetryBranches = new Map<string, string>()
 
   constructor(options: WorkflowRuntimeStartOptions, adapter: WorkflowRuntimeAdapter) {
     this.workflow = options.workflow
@@ -239,6 +241,22 @@ export class WorkflowRuntimeEngine {
     return next
   }
 
+  private serializeBranch<T>(branchId: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.branchOperationQueues.get(branchId) ?? Promise.resolve()
+    const next = previous.then(operation, operation)
+    const tail = next.then(
+      () => undefined,
+      () => undefined
+    )
+    this.branchOperationQueues.set(branchId, tail)
+    void tail.then(() => {
+      if (this.branchOperationQueues.get(branchId) === tail) {
+        this.branchOperationQueues.delete(branchId)
+      }
+    })
+    return next
+  }
+
   async start(): Promise<WorkflowRuntimeState> {
     return this.serialize(() => this.startInternal())
   }
@@ -283,8 +301,8 @@ export class WorkflowRuntimeEngine {
     if (branch) {
       if (branch.status !== 'running') return this.getState()
       await this.runBranch(branch)
-      await this.updateAfterSplit(branch.splitNodeId)
-      if (this.state.status === 'running' && this.state.activeBranches.length === 0) {
+      const shouldContinueWorkflow = await this.updateAfterSplit(branch.splitNodeId)
+      if (shouldContinueWorkflow) {
         await this.runLoop()
       }
     } else if (this.state.currentNodeId === nodeId && this.state.status === 'running') {
@@ -300,12 +318,28 @@ export class WorkflowRuntimeEngine {
   }
 
   async beginTerminalRetry(nodeId: string, sessionId: string): Promise<boolean> {
-    return this.serialize(() => this.beginTerminalRetryInternal(nodeId, sessionId))
+    const branch = this.findBranchForNode(nodeId)
+    if (!branch || !isRetryableRunStatus(branch.status)) {
+      return this.serialize(() => this.beginTerminalRetryInternal(nodeId, sessionId))
+    }
+
+    // The workflow queue remains occupied while sibling branches run. Waiting
+    // only for this branch lets its failed terminal restart immediately.
+    return this.serializeBranch(branch.branchId, async () => {
+      const started = await this.beginTerminalRetryInternal(nodeId, sessionId, branch.branchId)
+      if (started) this.parallelTerminalRetryBranches.set(sessionId, branch.branchId)
+      return started
+    })
   }
 
-  private async beginTerminalRetryInternal(nodeId: string, sessionId: string): Promise<boolean> {
-    if (!this.canRetryTerminalNode(nodeId)) return false
-    return this.beginNodeRetryInternal(nodeId, undefined, sessionId)
+  private async beginTerminalRetryInternal(
+    nodeId: string,
+    sessionId: string,
+    branchId?: string
+  ): Promise<boolean> {
+    const node = this.findNode(nodeId)
+    if (!node?.type.includes('terminal') || !this.canRetryNode(nodeId, branchId)) return false
+    return this.beginNodeRetryInternal(nodeId, branchId, sessionId)
   }
 
   private async beginNodeRetryInternal(
@@ -349,13 +383,27 @@ export class WorkflowRuntimeEngine {
     sessionId: string,
     result: WorkflowRuntimeProcessResult
   ): Promise<WorkflowRuntimeState> {
-    return this.serialize(() => this.completeTerminalRetryInternal(nodeId, sessionId, result))
+    const branchId = this.parallelTerminalRetryBranches.get(sessionId)
+    if (!branchId) {
+      return this.serialize(() => this.completeTerminalRetryInternal(nodeId, sessionId, result))
+    }
+
+    return this.serializeBranch(branchId, async () => {
+      try {
+        return await this.completeTerminalRetryInternal(nodeId, sessionId, result, branchId)
+      } finally {
+        if (this.parallelTerminalRetryBranches.get(sessionId) === branchId) {
+          this.parallelTerminalRetryBranches.delete(sessionId)
+        }
+      }
+    })
   }
 
   private async completeTerminalRetryInternal(
     nodeId: string,
     sessionId: string,
-    result: WorkflowRuntimeProcessResult
+    result: WorkflowRuntimeProcessResult,
+    branchId?: string
   ): Promise<WorkflowRuntimeState> {
     const run = this.state.nodeRuns[nodeId]
     if (this.stopped || run?.status !== 'running' || run.sessionId !== sessionId) {
@@ -365,9 +413,11 @@ export class WorkflowRuntimeEngine {
     const node = this.findNode(nodeId)
     if (!node?.type.includes('terminal')) return this.getState()
 
-    const branch = Object.values(this.state.branchRuns).find(
-      (item) => item.currentNodeId === nodeId && item.status === 'running'
-    )
+    const branch = branchId
+      ? this.findBranchForNode(nodeId, branchId)
+      : Object.values(this.state.branchRuns).find(
+          (item) => item.currentNodeId === nodeId && item.status === 'running'
+        )
     const completed = await this.completeTerminalNode(node, result, {
       moveNext: !branch,
       runHooks: true,
@@ -378,8 +428,8 @@ export class WorkflowRuntimeEngine {
       if (completed && this.advanceBranch(branch, this.getOutgoingEdges(node.id)[0])) {
         await this.runBranch(branch)
       }
-      await this.updateAfterSplit(branch.splitNodeId)
-      if (this.state.status === 'running' && this.state.activeBranches.length === 0) {
+      const shouldContinueWorkflow = await this.updateAfterSplit(branch.splitNodeId)
+      if (shouldContinueWorkflow) {
         await this.runLoop()
       }
     } else if (completed && this.state.status === 'running') {
@@ -405,8 +455,8 @@ export class WorkflowRuntimeEngine {
         branch.status = 'running'
         this.state.status = 'running'
         await this.runBranch(branch)
-        await this.updateAfterSplit(branch.splitNodeId)
-        if (this.state.status === 'running' && this.state.activeBranches.length === 0) {
+        const shouldContinueWorkflow = await this.updateAfterSplit(branch.splitNodeId)
+        if (shouldContinueWorkflow) {
           await this.runLoop()
         }
       } else {
@@ -482,7 +532,8 @@ export class WorkflowRuntimeEngine {
       }
 
       if (node.type === 'parallel-gateway') {
-        await this.runParallelGateway(node)
+        const shouldContinueWorkflow = await this.runParallelGateway(node)
+        if (!shouldContinueWorkflow) return
         continue
       }
 
@@ -570,20 +621,23 @@ export class WorkflowRuntimeEngine {
     await this.persistAndEmit('running')
   }
 
-  private async runParallelGateway(node: WorkflowNode): Promise<void> {
+  private async runParallelGateway(node: WorkflowNode): Promise<boolean> {
     const config = node.config as ParallelGatewayConfig
     this.state.nodeRuns[node.id] = { nodeId: node.id, status: 'completed' }
 
     if (node.endHook?.enabled) {
       const outcome = await this.runHook(node, node.endHook, 'end')
-      if (this.stopped) return
+      if (this.stopped) return false
       if (!outcome.ok) {
         await this.failCurrentNode(outcome.error ?? this.tr('errors:runtime.endHookFailed', {}, 'endHook failed'))
-        return
+        return false
       }
     }
 
     if (config.mode === 'split') {
+      if (this.state.lastJoinResultSplitNodeId === node.id) {
+        delete this.state.lastJoinResultSplitNodeId
+      }
       const outgoing = this.getOutgoingEdges(node.id)
       const branches = outgoing.map((edge) => {
         const branch: WorkflowRuntimeBranchRun = {
@@ -603,16 +657,18 @@ export class WorkflowRuntimeEngine {
       this.state.activeBranches = branches.map((branch) => branch.branchId)
       await this.persistAndEmit('running')
       await this.runSplitBranches(branches)
-      await this.updateAfterSplit(node.id)
-      return
+      return this.updateAfterSplit(node.id)
     }
 
     this.selectNextNode(node.id)
     await this.persistAndEmit('running')
+    return true
   }
 
   private async runSplitBranches(branches: WorkflowRuntimeBranchRun[]): Promise<void> {
-    await Promise.allSettled(branches.map((branch) => this.runBranch(branch)))
+    await Promise.allSettled(branches.map((branch) => (
+      this.serializeBranch(branch.branchId, () => this.runBranch(branch))
+    )))
   }
 
   private async runBranch(branch: WorkflowRuntimeBranchRun): Promise<void> {
@@ -739,8 +795,8 @@ export class WorkflowRuntimeEngine {
     return true
   }
 
-  private async updateAfterSplit(splitNodeId: string): Promise<void> {
-    if (this.stopped) return
+  private async updateAfterSplit(splitNodeId: string): Promise<boolean> {
+    if (this.stopped) return false
     const branches = Object.values(this.state.branchRuns).filter((branch) => branch.splitNodeId === splitNodeId)
     const waitingBranches = branches.filter((branch) => branch.status === 'waiting-input')
     const runningBranches = branches.filter((branch) => branch.status === 'running')
@@ -764,12 +820,15 @@ export class WorkflowRuntimeEngine {
       const arrivedEdgeIds = new Set(branches.map((branch) => branch.reachedJoinEdgeId).filter(Boolean))
       const allRequiredArrived = requiredIncomingEdgeIds.every((edgeId) => arrivedEdgeIds.has(edgeId))
       if (allRequiredArrived && failedBranches.length === 0 && interruptedBranches.length === 0) {
+        // A retried branch and an original sibling can finish together. Only
+        // the first completion that reaches the join may continue the workflow.
+        if (this.state.lastJoinResultSplitNodeId === splitNodeId) return false
         this.state.lastJoinResultSplitNodeId = splitNodeId
         this.state.activeBranches = []
         this.state.currentNodeId = joinNode.id
         this.state.status = 'running'
         await this.persistAndEmit('running')
-        return
+        return true
       }
     }
 
@@ -778,7 +837,7 @@ export class WorkflowRuntimeEngine {
       this.state.currentNodeId = focusBranch.currentNodeId
       this.state.status = waitingBranches.length > 0 ? 'waiting-input' : 'running'
       await this.persistAndEmit(this.state.status)
-      return
+      return false
     }
 
     if (failedBranches.length > 0) {
@@ -786,7 +845,7 @@ export class WorkflowRuntimeEngine {
       this.state.error = failedBranches.map((branch) => branch.error).filter(Boolean).join('\n') || this.tr('errors:runtime.parallelBranchFailed', {}, 'Parallel branch failed')
       this.state.activeBranches = []
       await this.persistAndEmit('failed')
-      return
+      return false
     }
 
     if (interruptedBranches.length > 0) {
@@ -795,7 +854,7 @@ export class WorkflowRuntimeEngine {
       delete this.state.error
       this.state.activeBranches = []
       await this.persistAndEmit('interrupted')
-      return
+      return false
     }
 
     if (joinNode?.type === 'parallel-gateway') {
@@ -803,13 +862,14 @@ export class WorkflowRuntimeEngine {
       this.state.error = this.tr('errors:runtime.parallelJoinUnmet', {}, 'Parallel join unmet: required incoming edges have not all arrived')
       this.state.activeBranches = []
       await this.persistAndEmit('failed')
-      return
+      return false
     }
 
     this.state.activeBranches = []
     this.state.status = 'completed'
     this.state.workflowCompleted = true
     await this.persistAndEmit('completed')
+    return false
   }
 
   private getBranchResult(branch: WorkflowRuntimeBranchRun): WorkflowRuntimeParallelBranchResult {

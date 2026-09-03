@@ -725,6 +725,68 @@ describe('WorkflowRuntimeEngine', () => {
     expect(engine.getState().nodeRuns.b.status).toBe('completed')
   })
 
+  it('re-enters the same parallel split after a completed join', async () => {
+    const workflow: WorkflowDefinition = {
+      id: 'wf-parallel-loop',
+      name: 'Parallel loop',
+      nodes: [
+        { id: 'start', type: 'start', name: 'Start', config: { variables: [] } },
+        { id: 'split', type: 'parallel-gateway', name: 'Split', config: { mode: 'split' } },
+        { id: 'a', type: 'non-interactive-terminal', name: 'A', config: { command: 'a', cwd: '${sys_project_dir}', successExitCodes: [0] } },
+        { id: 'b', type: 'non-interactive-terminal', name: 'B', config: { command: 'b', cwd: '${sys_project_dir}', successExitCodes: [0] } },
+        { id: 'join', type: 'parallel-gateway', name: 'Join', config: { mode: 'join', joinIncomingEdgeIds: ['e-a-join', 'e-b-join'] } },
+        { id: 'gate', type: 'exclusive-gateway', name: 'Repeat?', config: {} },
+        { id: 'end', type: 'end', name: 'End', config: {} }
+      ],
+      edges: [
+        { id: 'e-start-split', from: 'start', to: 'split' },
+        { id: 'e-split-a', from: 'split', to: 'a' },
+        { id: 'e-split-b', from: 'split', to: 'b' },
+        { id: 'e-a-join', from: 'a', to: 'join' },
+        { id: 'e-b-join', from: 'b', to: 'join' },
+        { id: 'e-join-gate', from: 'join', to: 'gate' },
+        {
+          id: 'e-gate-split',
+          from: 'gate',
+          to: 'split',
+          condition: 'contains(sys_join_results_json, "again")'
+        },
+        { id: 'e-gate-end', from: 'gate', to: 'end', isDefault: true }
+      ]
+    }
+    let aRuns = 0
+    const runProcess = vi.fn(async (request: Parameters<WorkflowRuntimeAdapter['runProcess']>[0]) => {
+      if (request.nodeId === 'a') aRuns += 1
+      return {
+        sessionId: `session-${request.nodeId}-${request.nodeId === 'a' ? aRuns : 'run'}`,
+        stdout: request.nodeId === 'a' && aRuns === 1 ? 'again' : 'done',
+        stderr: '',
+        exitCode: 0
+      }
+    })
+    const { adapter } = createAdapter({ runProcess })
+    const engine = new WorkflowRuntimeEngine({
+      taskId: 'task-parallel-loop',
+      projectId: 'project-1',
+      projectDir: '/repo',
+      workflow,
+      variables: {},
+      startNodeId: 'start'
+    }, adapter)
+
+    await engine.start()
+
+    expect(engine.getState()).toMatchObject({
+      status: 'completed',
+      workflowCompleted: true,
+      nodeRuns: { end: { status: 'completed' } }
+    })
+    expect(runProcess.mock.calls.filter(([request]) => request.nodeId === 'a')).toHaveLength(2)
+    expect(runProcess.mock.calls.filter(([request]) => request.nodeId === 'b')).toHaveLength(2)
+    expect(engine.getState().parallelResults.split.branches['e-split-a'].nodeRuns.a.stdout)
+      .toBe('done')
+  })
+
   it('converges a branch that enters a join directly without running the join Hook twice', async () => {
     const workflow: WorkflowDefinition = {
       id: 'wf-direct-join',
@@ -1480,7 +1542,7 @@ describe('WorkflowRuntimeEngine', () => {
     expect(engine.getState().currentNodeId).toBe('target')
   })
 
-  it('lets sibling branches finish and continues through join after a failed terminal retry succeeds', async () => {
+  it('retries a failed terminal branch immediately while its sibling is still running', async () => {
     const workflow = {
       id: 'wf-isolated-branch-failure',
       name: 'Isolated branch failure',
@@ -1538,20 +1600,7 @@ describe('WorkflowRuntimeEngine', () => {
     expect(killCalls).toEqual([])
     expect(engine.getState().branchRuns['split:e-split-slow'].status).toBe('running')
 
-    releaseSlow()
-    await startPromise
-
-    expect(engine.getState().status).toBe('failed')
-    expect(engine.getState().nodeRuns.fail.status).toBe('failed')
-    expect(engine.getState().nodeRuns.slow.status).toBe('completed')
-    expect(engine.getState().nodeRuns.join).toBeUndefined()
-    expect(engine.getState().nodeRuns.end).toBeUndefined()
-    expect(engine.getState().parallelResults.split.branches).toMatchObject({
-      'e-split-fail': { status: 'failed' },
-      'e-split-slow': { status: 'completed' }
-    })
-
-    await engine.beginTerminalRetry('fail', 'session-fail-retry-1')
+    await expect(engine.beginTerminalRetry('fail', 'session-fail-retry-1')).resolves.toBe(true)
     await engine.completeTerminalRetry('fail', 'session-fail-retry-1', {
       sessionId: 'session-fail-retry-1',
       stdout: '',
@@ -1560,11 +1609,11 @@ describe('WorkflowRuntimeEngine', () => {
       status: 'closed'
     })
 
-    expect(engine.getState().status).toBe('failed')
-    expect(engine.getState().nodeRuns.slow.status).toBe('completed')
+    expect(engine.getState().branchRuns['split:e-split-fail'].status).toBe('failed')
+    expect(engine.getState().nodeRuns.slow.status).toBe('running')
     expect(processCounts.get('slow')).toBe(1)
 
-    await engine.beginTerminalRetry('fail', 'session-fail-retry-2')
+    await expect(engine.beginTerminalRetry('fail', 'session-fail-retry-2')).resolves.toBe(true)
     await engine.completeTerminalRetry('fail', 'session-fail-retry-2', {
       sessionId: 'session-fail-retry-2',
       stdout: 'retry succeeded',
@@ -1572,6 +1621,17 @@ describe('WorkflowRuntimeEngine', () => {
       exitCode: 0,
       status: 'closed'
     })
+
+    expect(engine.getState().branchRuns['split:e-split-fail']).toMatchObject({
+      status: 'completed',
+      reachedJoinEdgeId: 'e-fail-join'
+    })
+    expect(engine.getState().nodeRuns.slow.status).toBe('running')
+    expect(engine.getState().nodeRuns.join).toBeUndefined()
+    expect(engine.getState().nodeRuns.end).toBeUndefined()
+
+    releaseSlow()
+    await startPromise
 
     const retried = engine.getState()
     expect(retried.status).toBe('completed')
