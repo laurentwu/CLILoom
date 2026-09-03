@@ -1079,7 +1079,7 @@ describe('WorkflowRuntimeService restore', () => {
     }
   )
 
-  it('queues a parallel branch retry before spawning and rejects duplicate retry requests', async () => {
+  it('starts a parallel terminal retry while a sibling is still running and rejects duplicates', async () => {
     const db = createDb()
     const workflow: WorkflowDefinition = {
       id: 'active-parallel-retry-workflow',
@@ -1114,17 +1114,15 @@ describe('WorkflowRuntimeService restore', () => {
       taskId: 'active-parallel-retry-task',
       nodeId: 'fail'
     }))
+    let resolveRetry!: (result: WorkflowRuntimeProcessResult) => void
+    const retryResult = new Promise<WorkflowRuntimeProcessResult>((resolve) => {
+      resolveRetry = resolve
+    })
     const retry = vi.fn(() => ({
       sessionId: 'session-fail',
       taskId: 'active-parallel-retry-task',
       nodeId: 'fail',
-      result: Promise.resolve({
-        sessionId: 'session-fail',
-        stdout: 'retry ok',
-        stderr: '',
-        exitCode: 0,
-        status: 'closed' as const
-      })
+      result: retryResult
     }))
     const runner = {
       getRetryTarget,
@@ -1162,8 +1160,14 @@ describe('WorkflowRuntimeService restore', () => {
       exitCode: 1,
       status: 'closed'
     })
-    const queuedRetry = service.retryTerminal('session-fail')
-    expect(retry).not.toHaveBeenCalled()
+    await vi.waitFor(() => {
+      const current = service.getState('active-parallel-retry-task')
+      expect(current?.nodeRuns.fail?.status).toBe('failed')
+      expect(current?.nodeRuns.slow?.status).toBe('running')
+    })
+
+    await expect(service.retryTerminal('session-fail')).resolves.toBe('session-fail')
+    expect(retry).toHaveBeenCalledTimes(1)
     await expect(service.retryTerminal('session-fail')).rejects.toThrow('A terminal retry is already queued or running')
     expect(getRetryTarget).toHaveBeenCalledTimes(1)
 
@@ -1174,8 +1178,19 @@ describe('WorkflowRuntimeService restore', () => {
       exitCode: 0,
       status: 'closed'
     })
-    await expect(queuedRetry).resolves.toBe('session-fail')
-    expect(retry).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => {
+      const current = service.getState('active-parallel-retry-task')
+      expect(current?.nodeRuns.fail?.status).toBe('running')
+      expect(current?.nodeRuns.slow?.status).toBe('completed')
+    })
+
+    resolveRetry({
+      sessionId: 'session-fail',
+      stdout: 'retry ok',
+      stderr: '',
+      exitCode: 0,
+      status: 'closed'
+    })
 
     await vi.waitFor(() => {
       const task = db.prepare('select status from tasks where id = ?')
