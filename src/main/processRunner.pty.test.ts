@@ -771,7 +771,7 @@ describe('ProcessRunner interactive PTY lifecycle', () => {
     db.close()
   })
 
-  it('kills only in-memory PTYs belonging to the requested task', async () => {
+  it('interrupts only in-memory PTYs belonging to the requested task', async () => {
     const sends: Array<{ channel: string; payload: { id: string; task_id: string } }> = []
     const kills: Array<ReturnType<typeof vi.fn>> = []
     mocks.ptySpawn.mockImplementation(() => {
@@ -800,14 +800,90 @@ describe('ProcessRunner interactive PTY lifecycle', () => {
     const created = sends.filter((event) => event.channel === 'terminal:created')
     const otherId = created.find((event) => event.payload.task_id === 'task-2')!.payload.id
 
-    await expect(runner.killByTask('task-1')).resolves.toBe(2)
+    await expect(runner.killByTask('task-1', 'interrupted')).resolves.toBe(2)
     expect(kills[0]).toHaveBeenCalledOnce()
     expect(kills[1]).toHaveBeenCalledOnce()
     expect(kills[2]).not.toHaveBeenCalled()
     expect(runner.hasLiveSession(otherId)).toBe(true)
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      expect.objectContaining({ status: 'interrupted', exitCode: null }),
+      expect.objectContaining({ status: 'interrupted', exitCode: null })
+    ])
+    expect(db.prepare(
+      'select distinct status from terminal_sessions where task_id = ?'
+    ).all('task-1')).toEqual([{ status: 'interrupted' }])
 
     await expect(runner.kill(otherId)).resolves.toBe(true)
-    await Promise.all([first, second, other])
+    await other
+    db.close()
+  })
+
+  it('interrupts active and pending terminals during global cleanup', async () => {
+    const target = {
+      id: 'posix:%2Fbin%2Fbash',
+      displayName: 'bash',
+      family: 'posix' as const,
+      executablePath: '/bin/bash',
+      source: 'system' as const
+    }
+    let completeResolution: (value: typeof target) => void = () => undefined
+    const resolution = new Promise<typeof target>((resolve) => {
+      completeResolution = resolve
+    })
+    const shellResolver: EffectiveShellResolver = {
+      resolveEffectiveShell: () => target,
+      resolveTarget: async () => resolution
+    }
+    const childKill = vi.fn()
+    mocks.ptySpawn.mockReturnValue({
+      pid: 4242,
+      onData: vi.fn(),
+      onExit: vi.fn((callback: (event: { exitCode: number }) => void) => {
+        mocks.ptyExitHandlers.push(callback)
+      }),
+      write: vi.fn(),
+      kill: childKill
+    })
+    const { db, runner } = createRunner(() => null, shellResolver)
+    const active = runner.run({
+      taskId: 'active-task',
+      nodeId: 'active-terminal',
+      kind: 'non-interactive',
+      command: 'sleep 60',
+      cwd: '/repo'
+    })
+    const pending = runner.run({
+      taskId: 'pending-task',
+      nodeId: 'pending-terminal',
+      kind: 'non-interactive',
+      command: 'sleep 60',
+      cwd: '/repo',
+      executionTarget: {
+        kind: 'native',
+        id: target.id,
+        displayName: target.displayName,
+        family: target.family,
+        executablePath: target.executablePath
+      }
+    })
+
+    const cleanup = runner.killAll('interrupted')
+    completeResolution(target)
+
+    await expect(cleanup).resolves.toBe(2)
+    await expect(Promise.all([active, pending])).resolves.toEqual([
+      expect.objectContaining({ status: 'interrupted', exitCode: null }),
+      expect.objectContaining({ status: 'interrupted', exitCode: null })
+    ])
+    expect(childKill).toHaveBeenCalledOnce()
+    expect(mocks.ptySpawn).toHaveBeenCalledOnce()
+    expect(db.prepare(
+      'select task_id, status from terminal_sessions order by task_id'
+    ).all()).toEqual([
+      { task_id: 'active-task', status: 'interrupted' },
+      { task_id: 'pending-task', status: 'interrupted' }
+    ])
+    expect(runner.hasActiveProcesses()).toBe(false)
     db.close()
   })
 
@@ -1035,7 +1111,7 @@ describe('ProcessRunner shell resolution and legacy retries', () => {
     db.close()
   })
 
-  it('cancels terminals and hooks still waiting for native target validation', async () => {
+  it('interrupts terminals still waiting for native target validation', async () => {
     const target = {
       id: 'posix:%2Fbin%2Fbash',
       displayName: 'bash',
@@ -1076,15 +1152,15 @@ describe('ProcessRunner shell resolution and legacy retries', () => {
       executionTarget: descriptor
     })
 
-    const cleanup = runner.killByTask('pending-target-task')
+    const cleanup = runner.killByTask('pending-target-task', 'interrupted')
     completeResolution(target)
 
     await expect(cleanup).resolves.toBe(2)
-    await expect(terminal).resolves.toMatchObject({ status: 'killed', exitCode: null })
+    await expect(terminal).resolves.toMatchObject({ status: 'interrupted', exitCode: null })
     await expect(hook).resolves.toMatchObject({ status: 'killed', exitCode: null })
     expect(mocks.ptySpawn).not.toHaveBeenCalled()
     expect(mocks.spawn).not.toHaveBeenCalled()
-    expect(db.prepare('select status from terminal_sessions limit 1').get()).toEqual({ status: 'killed' })
+    expect(db.prepare('select status from terminal_sessions limit 1').get()).toEqual({ status: 'interrupted' })
     expect(db.prepare('select status from hook_runs limit 1').get()).toEqual({ status: 'killed' })
     db.close()
   })

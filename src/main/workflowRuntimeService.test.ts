@@ -1279,7 +1279,8 @@ describe('WorkflowRuntimeService restore', () => {
 
     await rejectedStart
     await expect(shutdown).resolves.toBeUndefined()
-    expect(killAll).toHaveBeenCalledOnce()
+    expect(killByTask).toHaveBeenCalledWith('shutdown-race-task', 'interrupted')
+    expect(killAll).toHaveBeenCalledWith('interrupted')
     expect(db.prepare('select count(*) as count from tasks where id = ?')
       .get('shutdown-race-task')).toEqual({ count: 0 })
     await expect(service.start({
@@ -1291,7 +1292,7 @@ describe('WorkflowRuntimeService restore', () => {
     })).rejects.toThrow('The application is exiting')
   })
 
-  it('stops active engines before residual cleanup and never launches the next node', async () => {
+  it('interrupts active engines before residual cleanup and never launches the next node', async () => {
     const db = createDb()
     const workflow: WorkflowDefinition = {
       id: 'shutdown-active-workflow',
@@ -1343,9 +1344,15 @@ describe('WorkflowRuntimeService restore', () => {
 
     await new Promise<void>((resolve) => setImmediate(resolve))
     expect(run).toHaveBeenCalledTimes(1)
-    expect(killAll).toHaveBeenCalledOnce()
+    expect(killByTask).toHaveBeenCalledWith('shutdown-active-task', 'interrupted')
+    expect(killAll).toHaveBeenCalledWith('interrupted')
     expect((db.prepare('select status from tasks where id = ?')
-      .get('shutdown-active-task') as { status: string }).status).toBe('stopped')
+      .get('shutdown-active-task') as { status: string }).status).toBe('interrupted')
+    const nodeRun = db.prepare(
+      'select status, output_json from node_runs where run_id = ? and node_id = ?'
+    ).get('shutdown-active-task', 'first') as { status: string; output_json: string }
+    expect(nodeRun.status).toBe('interrupted')
+    expect(JSON.parse(nodeRun.output_json)).not.toHaveProperty('stderr')
   })
 })
 

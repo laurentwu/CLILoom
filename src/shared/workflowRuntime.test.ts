@@ -617,6 +617,119 @@ describe('WorkflowRuntimeEngine', () => {
     expect(engine.getState().nodeRuns.end).toBeUndefined()
   })
 
+  it('interrupts a waiting workflow without attributing it to the user', async () => {
+    const workflow: WorkflowDefinition = {
+      id: 'wf-interrupt-action',
+      name: 'Interrupted workflow',
+      nodes: [
+        { id: 'input', type: 'input', name: 'Input', config: { variables: [] } },
+        { id: 'end', type: 'end', name: 'End', config: {} }
+      ],
+      edges: [{ id: 'e-input-end', from: 'input', to: 'end' }]
+    }
+    const killTask = vi.fn(async () => 0)
+    const { adapter } = createAdapter({ killTask })
+    const engine = new WorkflowRuntimeEngine({
+      taskId: 'task-interrupt-action',
+      projectId: 'project-1',
+      projectDir: '/repo',
+      workflow,
+      variables: {},
+      startNodeId: 'input'
+    }, adapter)
+
+    await engine.start()
+    await engine.interrupt()
+
+    expect(killTask).toHaveBeenCalledWith('task-interrupt-action', 'interrupted')
+    expect(engine.getState().status).toBe('interrupted')
+    expect(engine.getState().workflowCompleted).toBe(false)
+    expect(engine.getState().nodeRuns.input).toEqual({
+      nodeId: 'input',
+      status: 'interrupted'
+    })
+    expect(engine.getState().nodeRuns.end).toBeUndefined()
+  })
+
+  it('interrupts every active parallel branch without adding user-stop errors', async () => {
+    const workflow: WorkflowDefinition = {
+      id: 'wf-interrupt-parallel',
+      name: 'Interrupted parallel workflow',
+      nodes: [
+        { id: 'split', type: 'parallel-gateway', name: 'Split', config: { mode: 'split' } },
+        { id: 'a', type: 'non-interactive-terminal', name: 'A', config: { command: 'a', cwd: '/repo', successExitCodes: [0] } },
+        { id: 'b', type: 'input', name: 'B', config: { variables: [] } },
+        { id: 'join', type: 'parallel-gateway', name: 'Join', config: { mode: 'join', joinIncomingEdgeIds: ['a-join', 'b-join'] } }
+      ],
+      edges: [
+        { id: 'split-a', from: 'split', to: 'a' },
+        { id: 'split-b', from: 'split', to: 'b' },
+        { id: 'a-join', from: 'a', to: 'join' },
+        { id: 'b-join', from: 'b', to: 'join' }
+      ]
+    }
+    const { adapter } = createAdapter()
+    const engine = new WorkflowRuntimeEngine({
+      taskId: 'task-interrupt-parallel',
+      projectId: 'project-1',
+      projectDir: '/repo',
+      workflow,
+      variables: {},
+      initialState: {
+        taskId: 'task-interrupt-parallel',
+        projectId: 'project-1',
+        projectDir: '/repo',
+        workflowId: workflow.id,
+        status: 'running',
+        currentNodeId: 'split',
+        variables: {},
+        nodeRuns: {
+          split: { nodeId: 'split', status: 'completed' },
+          a: { nodeId: 'a', status: 'running' },
+          b: { nodeId: 'b', status: 'waiting-input' }
+        },
+        executionOrder: ['split', 'a', 'b'],
+        activeBranches: ['split:split-a', 'split:split-b'],
+        branchRuns: {
+          'split:split-a': {
+            branchId: 'split:split-a',
+            splitNodeId: 'split',
+            entryEdgeId: 'split-a',
+            entryNodeId: 'a',
+            currentNodeId: 'a',
+            status: 'running',
+            nodeIds: ['a'],
+            variables: {}
+          },
+          'split:split-b': {
+            branchId: 'split:split-b',
+            splitNodeId: 'split',
+            entryEdgeId: 'split-b',
+            entryNodeId: 'b',
+            currentNodeId: 'b',
+            status: 'waiting-input',
+            nodeIds: ['b'],
+            variables: {}
+          }
+        },
+        parallelResults: {},
+        workflowCompleted: false
+      }
+    }, adapter)
+
+    await engine.interrupt()
+
+    const state = engine.getState()
+    expect(state.status).toBe('interrupted')
+    expect(state.activeBranches).toEqual([])
+    expect(state.nodeRuns.a).toEqual({ nodeId: 'a', status: 'interrupted' })
+    expect(state.nodeRuns.b).toEqual({ nodeId: 'b', status: 'interrupted' })
+    expect(state.branchRuns['split:split-a']).toMatchObject({ status: 'interrupted' })
+    expect(state.branchRuns['split:split-b']).toMatchObject({ status: 'interrupted' })
+    expect(state.branchRuns['split:split-a'].error).toBeUndefined()
+    expect(state.branchRuns['split:split-b'].error).toBeUndefined()
+  })
+
   it('keeps the workflow stopped when an active hook is killed during stop', async () => {
     const workflow: WorkflowDefinition = {
       id: 'wf-stop-hook',

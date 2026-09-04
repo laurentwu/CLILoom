@@ -168,6 +168,21 @@ export class WorkflowRuntimeService {
     }
   }
 
+  private async interruptInternal(taskId: string): Promise<WorkflowRuntimeState | null> {
+    this.cancelledTaskLaunches.add(taskId)
+    const engine = this.engines.get(taskId)
+    if (!engine) {
+      await this.processRunner.killByTask(taskId, 'interrupted')
+      return null
+    }
+    try {
+      await engine.interrupt()
+      return engine.getState()
+    } finally {
+      this.releaseEngineIfTerminal(taskId, engine)
+    }
+  }
+
   getState(taskId: string): WorkflowRuntimeState | null {
     return this.engines.get(taskId)?.getState() ?? null
   }
@@ -359,18 +374,18 @@ export class WorkflowRuntimeService {
     ])
     this.shutdownPromise = (async () => {
       const failures: string[] = []
-      const stopped = await Promise.allSettled(
+      const interrupted = await Promise.allSettled(
         [...taskIds].map((taskId) => (
-          this.serializeTask(taskId, () => this.stopInternal(taskId))
+          this.serializeTask(taskId, () => this.interruptInternal(taskId))
         ))
       )
-      for (const result of stopped) {
+      for (const result of interrupted) {
         if (result.status === 'rejected') {
           failures.push(result.reason instanceof Error ? result.reason.message : String(result.reason))
         }
       }
       try {
-        await this.processRunner.killAll()
+        await this.processRunner.killAll('interrupted')
       } catch (error) {
         failures.push(error instanceof Error ? error.message : String(error))
       }
@@ -539,7 +554,9 @@ export class WorkflowRuntimeService {
           })
         }
       },
-      killTask: async (taskId: string) => this.processRunner.killByTask(taskId)
+      killTask: async (taskId: string, terminalStatus) => (
+        this.processRunner.killByTask(taskId, terminalStatus)
+      )
     }
   }
 

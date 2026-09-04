@@ -121,7 +121,7 @@ export type WorkflowRuntimeProcessResult = {
   stdout: string
   stderr: string
   exitCode: number | null
-  status?: 'closed' | 'killed' | 'failed'
+  status?: 'closed' | 'killed' | 'failed' | 'interrupted'
 }
 
 type WorkflowRuntimeHookRequest = {
@@ -152,7 +152,7 @@ export type WorkflowRuntimeAdapter = {
   ) => Promise<WorkflowRuntimeTaskSnapshot | undefined>
   runProcess: (request: WorkflowRuntimeProcessRequest) => Promise<WorkflowRuntimeProcessResult>
   runHook: (request: WorkflowRuntimeHookRequest) => Promise<WorkflowRuntimeHookResult>
-  killTask: (taskId: string) => Promise<number>
+  killTask: (taskId: string, terminalStatus?: 'killed' | 'interrupted') => Promise<number>
 }
 
 export type WorkflowRuntimeStartOptions = {
@@ -477,23 +477,41 @@ export class WorkflowRuntimeEngine {
   }
 
   async stop(): Promise<WorkflowRuntimeState> {
+    return this.terminate('stopped')
+  }
+
+  async interrupt(): Promise<WorkflowRuntimeState> {
+    return this.terminate('interrupted')
+  }
+
+  private async terminate(
+    status: Extract<WorkflowRuntimeStatus, 'stopped' | 'interrupted'>
+  ): Promise<WorkflowRuntimeState> {
     this.stopped = true
-    await this.adapter.killTask(this.state.taskId)
+    if (status === 'interrupted') {
+      await this.adapter.killTask(this.state.taskId, 'interrupted')
+    } else {
+      await this.adapter.killTask(this.state.taskId)
+    }
     for (const run of Object.values(this.state.nodeRuns)) {
       if (run.status === 'running' || run.status === 'waiting-input') {
-        run.status = 'stopped'
-        run.stderr = run.stderr ?? this.tr('status:runtime.userStopped', {}, 'User stopped')
+        run.status = status
+        if (status === 'stopped') {
+          run.stderr = run.stderr ?? this.tr('status:runtime.userStopped', {}, 'User stopped')
+        }
       }
     }
     for (const branch of Object.values(this.state.branchRuns)) {
       if (branch.status === 'running' || branch.status === 'waiting-input') {
-        branch.status = 'stopped'
-        branch.error = branch.error ?? this.tr('status:runtime.userStopped', {}, 'User stopped')
+        branch.status = status
+        if (status === 'stopped') {
+          branch.error = branch.error ?? this.tr('status:runtime.userStopped', {}, 'User stopped')
+        }
       }
     }
     this.state.activeBranches = []
-    this.state.status = 'stopped'
-    await this.persistAndEmit('stopped')
+    this.state.status = status
+    await this.persistAndEmit(status)
     return this.getState()
   }
 
@@ -976,7 +994,7 @@ export class WorkflowRuntimeEngine {
     const isInteractive = node.type === 'interactive-terminal'
     const config = node.config as InteractiveTerminalConfig | NonInteractiveTerminalConfig
     const successCodes = 'successExitCodes' in config ? config.successExitCodes : [0]
-    const completed = result.status !== 'failed' && (
+    const completed = result.status !== 'failed' && result.status !== 'interrupted' && (
       result.status === 'killed' || isInteractive || successCodes.includes(result.exitCode ?? -1)
     )
     this.state.nodeRuns[node.id] = {
