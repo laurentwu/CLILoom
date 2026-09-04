@@ -162,8 +162,10 @@ export type RunProcessResult = {
   stdout: string
   stderr: string
   exitCode: number | null
-  status?: Extract<TerminalSessionStatus, 'closed' | 'killed' | 'failed'>
+  status?: Extract<TerminalSessionStatus, 'closed' | 'killed' | 'failed' | 'interrupted'>
 }
+
+type TerminalTerminationStatus = Extract<TerminalSessionStatus, 'killed' | 'interrupted'>
 
 export type RetriedProcess = {
   sessionId: string
@@ -209,7 +211,7 @@ type Session = {
   inputReady?: boolean
   flushDisplay?: () => void
   finish: (
-    status: Extract<TerminalSessionStatus, 'closed' | 'killed' | 'failed'>,
+    status: Extract<TerminalSessionStatus, 'closed' | 'killed' | 'failed' | 'interrupted'>,
     exitCode: number | null,
     terminate: boolean
   ) => Promise<boolean>
@@ -234,6 +236,7 @@ type PendingLaunch = {
   id: string
   taskId: string
   cancelled: boolean
+  cancellationStatus: TerminalTerminationStatus
   completion: Promise<void>
   complete: () => void
 }
@@ -848,7 +851,7 @@ export class ProcessRunner {
           sessionId,
           stdout,
           stderr,
-          exitCode: status === 'killed' ? null : (exitCode ?? -1),
+          exitCode: status === 'killed' || status === 'interrupted' ? null : (exitCode ?? -1),
           status
         })
         return terminationSucceeded
@@ -1128,16 +1131,19 @@ export class ProcessRunner {
     return pending ? this.cancelPendingLaunch(pending) : false
   }
 
-  async killByTask(taskId: string): Promise<number> {
+  async killByTask(
+    taskId: string,
+    terminalStatus: TerminalTerminationStatus = 'killed'
+  ): Promise<number> {
     const terminalKills = [...this.sessions.values()]
       .filter((session) => session.taskId === taskId)
-      .map((session) => session.finish('killed', null, true))
+      .map((session) => session.finish(terminalStatus, null, true))
     const hookKills = [...this.hookSessions.values()]
       .filter((session) => session.taskId === taskId)
       .map((session) => session.finish('killed', null, true))
     const pendingTerminalKills = [...this.pendingSessions.values()]
       .filter((pending) => pending.taskId === taskId)
-      .map((pending) => this.cancelPendingLaunch(pending))
+      .map((pending) => this.cancelPendingLaunch(pending, terminalStatus))
     const pendingHookKills = [...this.pendingHooks.values()]
       .filter((pending) => pending.taskId === taskId)
       .map((pending) => this.cancelPendingLaunch(pending))
@@ -1152,13 +1158,13 @@ export class ProcessRunner {
     return results.length
   }
 
-  async killAll(): Promise<number> {
+  async killAll(terminalStatus: TerminalTerminationStatus = 'killed'): Promise<number> {
     const terminalKills = [...this.sessions.values()]
-      .map((session) => session.finish('killed', null, true))
+      .map((session) => session.finish(terminalStatus, null, true))
     const hookKills = [...this.hookSessions.values()]
       .map((session) => session.finish('killed', null, true))
     const pendingTerminalKills = [...this.pendingSessions.values()]
-      .map((pending) => this.cancelPendingLaunch(pending))
+      .map((pending) => this.cancelPendingLaunch(pending, terminalStatus))
     const pendingHookKills = [...this.pendingHooks.values()]
       .map((pending) => this.cancelPendingLaunch(pending))
     const results = await Promise.all([
@@ -1310,20 +1316,21 @@ export class ProcessRunner {
     sessionId: string,
     initialTranscript: string
   ): RunProcessResult {
-    this.persistSession(sessionId, initialTranscript, 'killed')
+    const status = this.pendingSessions.get(sessionId)?.cancellationStatus ?? 'killed'
+    this.persistSession(sessionId, initialTranscript, status)
     this.getWindow()?.webContents.send('terminal:closed', {
       sessionId,
       taskId: request.taskId,
       nodeId: request.nodeId,
       exitCode: null,
-      status: 'killed'
+      status
     })
     return {
       sessionId,
       stdout: '',
       stderr: '',
       exitCode: null,
-      status: 'killed'
+      status
     }
   }
 
@@ -1478,8 +1485,12 @@ export class ProcessRunner {
     pending.complete()
   }
 
-  private async cancelPendingLaunch(pending: PendingLaunch): Promise<boolean> {
+  private async cancelPendingLaunch(
+    pending: PendingLaunch,
+    status: TerminalTerminationStatus = 'killed'
+  ): Promise<boolean> {
     pending.cancelled = true
+    pending.cancellationStatus = status
     await pending.completion
     return true
   }
@@ -1500,6 +1511,7 @@ function createPendingLaunch(id: string, taskId: string): PendingLaunch {
     id,
     taskId,
     cancelled: false,
+    cancellationStatus: 'killed',
     completion,
     complete: () => {
       if (settled) return

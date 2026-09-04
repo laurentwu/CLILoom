@@ -14,7 +14,7 @@ export type TerminalClosedEvent = {
   taskId: string
   nodeId: string
   exitCode: number | null
-  status: Extract<TerminalSessionStatus, 'closed' | 'failed' | 'killed'>
+  status: Extract<TerminalSessionStatus, 'closed' | 'failed' | 'killed' | 'interrupted'>
 }
 
 export function isTerminalSessionRunning(status: TerminalSessionStatus): boolean {
