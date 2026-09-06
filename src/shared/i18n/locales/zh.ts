@@ -432,11 +432,13 @@ export default {
   project: {
     action: {
       openProject: '打开项目 {{name}}',
+      openProjectWithUnread: '打开项目 {{name}}，有未读任务状态更新',
       deleteProject: '删除项目 {{name}}',
       addFolder: '添加项目文件夹'
     },
     tooltip: {
-      deleteProject: '删除项目'
+      deleteProject: '删除项目',
+      unreadTaskUpdates: '有未读任务状态更新'
     },
     rename: {
       title: '重命名项目',

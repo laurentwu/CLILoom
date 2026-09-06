@@ -432,11 +432,13 @@ export default {
   project: {
     action: {
       openProject: 'Open project {{name}}',
+      openProjectWithUnread: 'Open project {{name}}, unread task status updates',
       deleteProject: 'Delete project {{name}}',
       addFolder: 'Add project folder'
     },
     tooltip: {
-      deleteProject: 'Delete project'
+      deleteProject: 'Delete project',
+      unreadTaskUpdates: 'Unread task status updates'
     },
     rename: {
       title: 'Rename project',

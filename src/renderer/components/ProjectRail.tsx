@@ -70,6 +70,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 type ProjectRailProps = {
   projects: ProjectRecord[]
   activeProjectId: string | null
+  unreadProjectIds: ReadonlySet<string>
   onSelectProject: (project: ProjectRecord) => void
   onReorderProject: (dragId: string, dropId: string) => void
   onAddProject: () => void
@@ -95,6 +96,7 @@ type ProjectRailProps = {
 export function ProjectRail({
   projects,
   activeProjectId,
+  unreadProjectIds,
   onSelectProject,
   onReorderProject,
   onAddProject,
@@ -211,6 +213,7 @@ export function ProjectRail({
         <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col items-center gap-2 overflow-x-hidden overflow-y-auto">
           {projects.map((project) => {
             const isActive = project.id === activeProjectId
+            const isUnread = unreadProjectIds.has(project.id)
             return (
               <div className="flex w-full justify-center" key={project.id}>
                 <ContextMenu>
@@ -218,8 +221,13 @@ export function ProjectRail({
                     <TooltipTrigger asChild>
                       <ContextMenuTrigger asChild>
                         <Button
-                          aria-label={t('project:action.openProject', { name: project.name })}
-                          className="size-10 shrink-0 rounded-xl font-heading text-sm"
+                          aria-label={t(
+                            isUnread
+                              ? 'project:action.openProjectWithUnread'
+                              : 'project:action.openProject',
+                            { name: project.name }
+                          )}
+                          className="relative size-10 shrink-0 rounded-xl font-heading text-sm"
                           draggable
                           variant={isActive ? 'default' : 'ghost'}
                           onClick={() => onSelectProject(project)}
@@ -228,6 +236,14 @@ export function ProjectRail({
                           onDrop={(event) => onReorderProject(event.dataTransfer.getData('text/project-id'), project.id)}
                         >
                           {project.name.slice(0, 1).toUpperCase()}
+                          {isUnread && (
+                            <span
+                              aria-hidden="true"
+                              className="pointer-events-none absolute right-1 top-1 size-2 rounded-full bg-red-500 ring-2 ring-sidebar"
+                              data-project-id={project.id}
+                              data-project-unread-indicator="true"
+                            />
+                          )}
                         </Button>
                       </ContextMenuTrigger>
                     </TooltipTrigger>
@@ -235,6 +251,11 @@ export function ProjectRail({
                       <div className="flex max-w-64 flex-col gap-0.5">
                         <strong>{project.name}</strong>
                         <span className="truncate text-xs text-muted-foreground">{project.path}</span>
+                        {isUnread && (
+                          <span className="text-xs text-muted-foreground">
+                            {t('project:tooltip.unreadTaskUpdates')}
+                          </span>
+                        )}
                       </div>
                     </TooltipContent>
                   </Tooltip>
