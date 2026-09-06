@@ -307,6 +307,111 @@ describe.runIf(Boolean(posixTestShell))('ProcessRunner PTY execution', () => {
     db.close()
   })
 
+  it('overrides only the retry command and persists the actual retried request', async () => {
+    const { db, runner, send } = createRunner(true)
+    const first = await runner.run({
+      taskId: 'task-custom-retry',
+      nodeId: 'node-custom-retry',
+      kind: 'non-interactive',
+      command: 'printf old-command',
+      displayCommand: 'old display command',
+      cwd: process.cwd(),
+      sourceCwd: '/source/original',
+      env: { RETRY_CONTEXT: 'preserved' },
+      timeoutMs: 5000,
+      cols: 101,
+      rows: 37
+    })
+    const value = 'safe $(printf injected); `printf bad`'
+    const template = 'printf \'%s:%s\' "${value}" "$RETRY_CONTEXT"'
+    const command = bindShellCommand(template, { value })
+    const displayCommand = interpolate(template, { value })
+
+    const retried = runner.retry(first.sessionId, { command, displayCommand })
+
+    expect(send).toHaveBeenCalledWith('terminal:restarted', expect.objectContaining({
+      id: first.sessionId,
+      command: displayCommand,
+      cwd: process.cwd(),
+      transcript: `$ ${displayCommand}\n`
+    }))
+    await expect(retried.result).resolves.toMatchObject({
+      sessionId: first.sessionId,
+      stdout: expect.stringContaining(`${value}:preserved`),
+      exitCode: 0
+    })
+
+    const stored = db.prepare(
+      'select command, cwd, request_json from terminal_sessions where id = ?'
+    ).get(first.sessionId) as { command: string; cwd: string; request_json: string }
+    expect(stored.cwd).toBe(process.cwd())
+    expect(JSON.parse(stored.request_json)).toMatchObject({
+      version: 3,
+      retry: {
+        command,
+        displayCommand,
+        sourceCwd: '/source/original',
+        targetCwd: process.cwd(),
+        env: { RETRY_CONTEXT: 'preserved' },
+        timeoutMs: 5000,
+        cols: 101,
+        rows: 37
+      }
+    })
+
+    const standalone = runner.retry(first.sessionId)
+    await expect(standalone.result).resolves.toMatchObject({
+      stdout: expect.stringContaining(`${value}:preserved`),
+      exitCode: 0
+    })
+    db.close()
+  })
+
+  it('clears a stored preparation error when a valid retry override is supplied', async () => {
+    const { db, runner } = createRunner()
+    const first = await runner.run({
+      taskId: 'task-retry-preparation',
+      nodeId: 'node-retry-preparation',
+      kind: 'non-interactive',
+      command: '',
+      displayCommand: 'invalid original command',
+      cwd: process.cwd(),
+      preparationError: 'original preparation failed'
+    })
+    expect(first.status).toBe('failed')
+
+    const retried = runner.retry(first.sessionId, {
+      command: 'printf override-ok',
+      displayCommand: 'printf override-ok'
+    })
+    await expect(retried.result).resolves.toMatchObject({
+      stdout: expect.stringContaining('override-ok'),
+      exitCode: 0
+    })
+    const row = db.prepare('select request_json from terminal_sessions where id = ?')
+      .get(first.sessionId) as { request_json: string }
+    expect(JSON.parse(row.request_json).retry).not.toHaveProperty('preparationError')
+    db.close()
+  })
+
+  it('rejects an invalid shell-neutral retry override before changing the session', async () => {
+    const { db, runner } = createRunner()
+    const first = await runner.run({
+      taskId: 'task-invalid-retry-override',
+      nodeId: 'node-invalid-retry-override',
+      kind: 'non-interactive',
+      command: 'exit 1',
+      cwd: process.cwd()
+    })
+
+    expect(() => runner.retry(first.sessionId, {
+      command: { version: 1, segments: [{ type: 'binding', name: 'MISSING' }], bindings: {} }
+    })).toThrow('Invalid shell-neutral command format')
+    expect(db.prepare('select status from terminal_sessions where id = ?').get(first.sessionId))
+      .toEqual({ status: 'closed' })
+    db.close()
+  })
+
   it('rejects retrying the same live terminal session', async () => {
     const { db, runner } = createRunner()
     const running = runner.run({

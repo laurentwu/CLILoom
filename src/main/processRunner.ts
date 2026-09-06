@@ -174,6 +174,12 @@ export type RetriedProcess = {
   result: Promise<RunProcessResult>
 }
 
+export type RetryCommandOverride = {
+  command: string | ShellNeutralCommand
+  displayCommand?: string
+  preparationError?: string
+}
+
 export type RetryProcessTarget = Omit<RetriedProcess, 'result'>
 
 export type RunHookRequest = {
@@ -402,10 +408,10 @@ export class ProcessRunner {
     }
   }
 
-  retry(sessionId: string): RetriedProcess {
+  retry(sessionId: string, commandOverride?: RetryCommandOverride): RetriedProcess {
     const row = this.getRetriableSession(sessionId)
     const storedRequest = this.parseStoredRunRequest(row.command, row.request_json)
-    const request: NormalizedRunRequest = {
+    const baselineRequest: RunProcessRequest = {
       taskId: row.task_id,
       nodeId: row.node_id,
       kind: row.kind,
@@ -421,6 +427,14 @@ export class ProcessRunner {
       rows: storedRequest.rows,
       preparationError: storedRequest.preparationError
     }
+    const request = normalizeRunRequest(commandOverride
+      ? {
+          ...baselineRequest,
+          command: commandOverride.command,
+          displayCommand: commandOverride.displayCommand,
+          preparationError: commandOverride.preparationError
+        }
+      : baselineRequest)
     const now = new Date().toISOString()
     const displayCommand = getRequestDisplayCommand(request)
     const initialTranscript = tailText(

@@ -265,8 +265,8 @@ export class WorkflowRuntimeService {
       return this.retryStandaloneTerminal(sessionId)
     }
 
-    const started = await engine.beginTerminalRetry(target.nodeId, target.sessionId)
-    if (!started) {
+    const retryStart = await engine.beginTerminalRetry(target.nodeId, target.sessionId)
+    if (retryStart === false) {
       this.releaseEngineIfTerminal(target.taskId, engine)
       throw new Error(t('errors:workflowRuntime.nodeStateChanged'))
     }
@@ -275,7 +275,9 @@ export class WorkflowRuntimeService {
 
     let retried: ReturnType<ProcessRunner['retry']>
     try {
-      retried = this.processRunner.retry(sessionId)
+      retried = retryStart.commandOverride
+        ? this.processRunner.retry(sessionId, retryStart.commandOverride)
+        : this.processRunner.retry(sessionId)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       await engine.completeTerminalRetry(target.nodeId, target.sessionId, {

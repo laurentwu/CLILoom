@@ -188,7 +188,7 @@ describe('WorkflowRuntimeEngine', () => {
       name: 'Terminal workflow',
       nodes: [
         { id: 'start', type: 'start', name: 'Start', config: { variables: [{ key: 'prompt', label: 'Prompt', type: 'text', required: true }] } },
-        { id: 'cmd', type: 'non-interactive-terminal', name: 'Command', config: { command: 'echo ${prompt} in ${sys_project_dir}', cwd: '${sys_project_dir}', successExitCodes: [0] } },
+        { id: 'cmd', type: 'non-interactive-terminal', name: 'Command', config: { command: 'echo ${prompt} in ${sys_project_dir}', retryCommand: 'echo retry', cwd: '${sys_project_dir}', successExitCodes: [0] } },
         { id: 'end', type: 'end', name: 'End', config: {} }
       ],
       edges: [
@@ -1307,7 +1307,7 @@ describe('WorkflowRuntimeEngine', () => {
     }, adapter)
 
     expect(engine.canRetryTerminalNode('terminal')).toBe(true)
-    await expect(engine.beginTerminalRetry('terminal', 'session-terminal')).resolves.toBe(true)
+    await expect(engine.beginTerminalRetry('terminal', 'session-terminal')).resolves.toEqual({ started: true })
     expect(engine.getState()).toMatchObject({
       status: 'running',
       nodeRuns: { terminal: { status: 'running', sessionId: 'session-terminal' } }
@@ -1328,6 +1328,222 @@ describe('WorkflowRuntimeEngine', () => {
       exitCode: 0
     })
     expect(engine.getState().nodeRuns.end.status).toBe('completed')
+  })
+
+  it('binds a custom terminal retry command from the latest failed result at retry time', async () => {
+    const prompt = '`printf injected` $(printf injected) ; "quoted"\nnext line'
+    const workflow: WorkflowDefinition = {
+      id: 'wf-custom-retry-terminal',
+      name: 'Custom retry terminal',
+      nodes: [
+        {
+          id: 'terminal',
+          type: 'non-interactive-terminal',
+          name: 'Terminal',
+          config: {
+            command: 'echo first',
+            retryCommand: 'retry "${prompt}" "${sys_last_command_stdout}" "${sys_last_command_stderr}" ${sys_last_command_exit_code}',
+            cwd: '${sys_project_dir}',
+            env: { CLILOOM_INTERNAL_VALUE_0: 'reserved' },
+            successExitCodes: [0]
+          }
+        }
+      ],
+      edges: []
+    }
+    const { adapter } = createAdapter()
+    const engine = new WorkflowRuntimeEngine({
+      taskId: 'task-custom-retry-terminal',
+      projectId: 'project-1',
+      projectDir: '/repo',
+      workflow,
+      variables: { prompt },
+      initialState: {
+        taskId: 'task-custom-retry-terminal',
+        projectId: 'project-1',
+        projectDir: '/repo',
+        workflowId: workflow.id,
+        status: 'failed',
+        currentNodeId: 'terminal',
+        variables: { prompt },
+        nodeRuns: {
+          terminal: {
+            nodeId: 'terminal',
+            status: 'failed',
+            sessionId: 'session-terminal',
+            stdout: 'first stdout',
+            stderr: 'first stderr',
+            exitCode: 7
+          }
+        },
+        executionOrder: ['terminal'],
+        activeBranches: [],
+        branchRuns: {},
+        parallelResults: {},
+        workflowCompleted: false
+      }
+    }, adapter)
+
+    const firstRetry = await engine.beginTerminalRetry('terminal', 'session-terminal')
+    expect(firstRetry).not.toBe(false)
+    if (firstRetry === false) throw new Error('retry did not start')
+    expect(firstRetry.commandOverride?.displayCommand).toBe(
+      `retry "${prompt}" "first stdout" "first stderr" 7`
+    )
+    expect(firstRetry.commandOverride?.command.bindings).toEqual({
+      CLILOOM_INTERNAL_VALUE_1: prompt,
+      CLILOOM_INTERNAL_VALUE_2: 'first stdout',
+      CLILOOM_INTERNAL_VALUE_3: 'first stderr',
+      CLILOOM_INTERNAL_VALUE_4: '7'
+    })
+    expect(JSON.stringify(firstRetry.commandOverride?.command.segments)).not.toContain(prompt)
+
+    await engine.completeTerminalRetry('terminal', 'session-terminal', {
+      sessionId: 'session-terminal',
+      stdout: 'second stdout',
+      stderr: 'second stderr',
+      exitCode: 8,
+      status: 'closed'
+    })
+
+    const secondRetry = await engine.beginTerminalRetry('terminal', 'session-terminal')
+    expect(secondRetry).not.toBe(false)
+    if (secondRetry === false) throw new Error('second retry did not start')
+    expect(secondRetry.commandOverride?.displayCommand).toBe(
+      `retry "${prompt}" "second stdout" "second stderr" 8`
+    )
+  })
+
+  it('turns a retry command preparation error into a safe failed retry attempt', async () => {
+    const workflow: WorkflowDefinition = {
+      id: 'wf-invalid-custom-retry',
+      name: 'Invalid custom retry',
+      nodes: [{
+        id: 'terminal',
+        type: 'interactive-terminal',
+        name: 'Terminal',
+        config: {
+          command: 'echo first',
+          retryCommand: 'echo "${prompt}"',
+          cwd: '/repo',
+          autoStart: true
+        }
+      }],
+      edges: []
+    }
+    const { adapter } = createAdapter()
+    const engine = new WorkflowRuntimeEngine({
+      taskId: 'task-invalid-custom-retry',
+      projectId: 'project-1',
+      projectDir: '/repo',
+      workflow,
+      variables: { prompt: 'before\0after' },
+      initialState: {
+        taskId: 'task-invalid-custom-retry',
+        projectId: 'project-1',
+        projectDir: '/repo',
+        workflowId: workflow.id,
+        status: 'failed',
+        currentNodeId: 'terminal',
+        variables: { prompt: 'before\0after' },
+        nodeRuns: {
+          terminal: { nodeId: 'terminal', status: 'failed', sessionId: 'session-terminal', exitCode: 1 }
+        },
+        executionOrder: ['terminal'],
+        activeBranches: [],
+        branchRuns: {},
+        parallelResults: {},
+        workflowCompleted: false
+      }
+    }, adapter)
+
+    const retry = await engine.beginTerminalRetry('terminal', 'session-terminal')
+    expect(retry).not.toBe(false)
+    if (retry === false) throw new Error('retry did not start')
+    expect(retry.commandOverride).toMatchObject({
+      command: { version: 1, segments: [{ type: 'literal', value: '' }], bindings: {} },
+      displayCommand: 'echo "${prompt}"',
+      preparationError: 'Workflow variables must not contain a NUL character'
+    })
+    expect(engine.getState().nodeRuns.terminal.status).toBe('running')
+
+    await engine.completeTerminalRetry('terminal', 'session-terminal', {
+      sessionId: 'session-terminal',
+      stdout: '',
+      stderr: retry.commandOverride?.preparationError ?? '',
+      exitCode: -1,
+      status: 'failed'
+    })
+    expect(engine.getState()).toMatchObject({
+      status: 'failed',
+      nodeRuns: { terminal: { status: 'failed', exitCode: -1 } }
+    })
+  })
+
+  it('binds the latest interrupted terminal result into a custom retry command', async () => {
+    const workflow: WorkflowDefinition = {
+      id: 'wf-interrupted-custom-retry',
+      name: 'Interrupted custom retry',
+      nodes: [{
+        id: 'terminal',
+        type: 'non-interactive-terminal',
+        name: 'Terminal',
+        config: {
+          command: 'echo first',
+          retryCommand: 'retry ${sys_last_command_stdout} ${sys_last_command_stderr} ${sys_last_command_exit_code}',
+          cwd: '/repo',
+          successExitCodes: [0]
+        }
+      }],
+      edges: []
+    }
+    const { adapter } = createAdapter()
+    const engine = new WorkflowRuntimeEngine({
+      taskId: 'task-interrupted-custom-retry',
+      projectId: 'project-1',
+      projectDir: '/repo',
+      workflow,
+      variables: {},
+      initialState: {
+        taskId: 'task-interrupted-custom-retry',
+        projectId: 'project-1',
+        projectDir: '/repo',
+        workflowId: workflow.id,
+        status: 'interrupted',
+        currentNodeId: 'terminal',
+        variables: {},
+        nodeRuns: {
+          terminal: {
+            nodeId: 'terminal',
+            status: 'interrupted',
+            sessionId: 'session-interrupted',
+            stdout: 'partial stdout',
+            stderr: 'interrupted stderr',
+            exitCode: 130
+          }
+        },
+        executionOrder: ['terminal'],
+        activeBranches: [],
+        branchRuns: {},
+        parallelResults: {},
+        workflowCompleted: false
+      }
+    }, adapter)
+
+    const retry = await engine.beginTerminalRetry('terminal', 'session-interrupted')
+
+    expect(retry).not.toBe(false)
+    if (retry === false) throw new Error('interrupted retry did not start')
+    expect(retry.commandOverride).toMatchObject({
+      displayCommand: 'retry partial stdout interrupted stderr 130',
+      command: {
+        bindings: {
+          CLILOOM_INTERNAL_VALUE_0: 'partial stdout',
+          CLILOOM_INTERNAL_VALUE_1: 'interrupted stderr',
+          CLILOOM_INTERNAL_VALUE_2: '130'
+        }
+      }
+    })
   })
 
   it('retries a failed non-terminal node without replacing the workflow state', async () => {
@@ -1530,8 +1746,8 @@ describe('WorkflowRuntimeEngine', () => {
       name: 'Retry parallel',
       nodes: [
         { id: 'split', type: 'parallel-gateway', name: 'Split', config: { mode: 'split' } },
-        { id: 'a', type: 'non-interactive-terminal', name: 'A', config: { command: 'a', cwd: '${sys_project_dir}', successExitCodes: [0] } },
-        { id: 'b', type: 'non-interactive-terminal', name: 'B', config: { command: 'b', cwd: '${sys_project_dir}', successExitCodes: [0] } },
+        { id: 'a', type: 'non-interactive-terminal', name: 'A', config: { command: 'a', retryCommand: 'retry ${sys_last_command_stderr} ${sys_last_command_exit_code}', cwd: '${sys_project_dir}', successExitCodes: [0] } },
+        { id: 'b', type: 'non-interactive-terminal', name: 'B', config: { command: 'b', retryCommand: 'retry ${sys_last_command_stderr} ${sys_last_command_exit_code}', cwd: '${sys_project_dir}', successExitCodes: [0] } },
         { id: 'join', type: 'parallel-gateway', name: 'Join', config: { mode: 'join', joinIncomingEdgeIds: ['e-a-join', 'e-b-join'] } },
         { id: 'review', type: 'input', name: 'Review', config: { variables: [] } }
       ],
@@ -1595,7 +1811,18 @@ describe('WorkflowRuntimeEngine', () => {
       }
     }, adapter)
 
-    await engine.beginTerminalRetry('a', 'session-a')
+    const retryA = await engine.beginTerminalRetry('a', 'session-a')
+    expect(retryA).not.toBe(false)
+    if (retryA === false) throw new Error('branch A retry did not start')
+    expect(retryA.commandOverride).toMatchObject({
+      displayCommand: 'retry  1',
+      command: {
+        bindings: {
+          CLILOOM_INTERNAL_VALUE_0: '',
+          CLILOOM_INTERNAL_VALUE_1: '1'
+        }
+      }
+    })
     await engine.completeTerminalRetry('a', 'session-a', {
       sessionId: 'session-a', stdout: 'a ok', stderr: '', exitCode: 0, status: 'closed'
     })
@@ -1606,7 +1833,18 @@ describe('WorkflowRuntimeEngine', () => {
       reachedJoinEdgeId: 'e-a-join'
     })
 
-    await engine.beginTerminalRetry('b', 'session-b')
+    const retryB = await engine.beginTerminalRetry('b', 'session-b')
+    expect(retryB).not.toBe(false)
+    if (retryB === false) throw new Error('branch B retry did not start')
+    expect(retryB.commandOverride).toMatchObject({
+      displayCommand: 'retry 其他并行分支失败 ',
+      command: {
+        bindings: {
+          CLILOOM_INTERNAL_VALUE_0: '其他并行分支失败',
+          CLILOOM_INTERNAL_VALUE_1: ''
+        }
+      }
+    })
     await engine.completeTerminalRetry('b', 'session-b', {
       sessionId: 'session-b', stdout: 'b ok', stderr: '', exitCode: 0, status: 'closed'
     })
@@ -1713,7 +1951,7 @@ describe('WorkflowRuntimeEngine', () => {
     expect(killCalls).toEqual([])
     expect(engine.getState().branchRuns['split:e-split-slow'].status).toBe('running')
 
-    await expect(engine.beginTerminalRetry('fail', 'session-fail-retry-1')).resolves.toBe(true)
+    await expect(engine.beginTerminalRetry('fail', 'session-fail-retry-1')).resolves.toEqual({ started: true })
     await engine.completeTerminalRetry('fail', 'session-fail-retry-1', {
       sessionId: 'session-fail-retry-1',
       stdout: '',
@@ -1726,7 +1964,7 @@ describe('WorkflowRuntimeEngine', () => {
     expect(engine.getState().nodeRuns.slow.status).toBe('running')
     expect(processCounts.get('slow')).toBe(1)
 
-    await expect(engine.beginTerminalRetry('fail', 'session-fail-retry-2')).resolves.toBe(true)
+    await expect(engine.beginTerminalRetry('fail', 'session-fail-retry-2')).resolves.toEqual({ started: true })
     await engine.completeTerminalRetry('fail', 'session-fail-retry-2', {
       sessionId: 'session-fail-retry-2',
       stdout: 'retry succeeded',
