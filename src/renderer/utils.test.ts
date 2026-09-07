@@ -7,6 +7,7 @@ import {
   canSwitchTaskWorkflow,
   getBranchRouteNodeIds,
   getCurrentInputVariables,
+  getDefaultNodeConfig,
   getNodeDetailZoomTarget,
   getNodeOperationState,
   getNextActiveProjectIdAfterDelete,
@@ -19,6 +20,11 @@ import {
 import type { WorkflowRuntimeBranchRun } from '../shared/workflowRuntime'
 
 describe('renderer runtime helpers', () => {
+  it('keeps retry commands absent from new terminal node defaults', () => {
+    expect(getDefaultNodeConfig('interactive-terminal')).not.toHaveProperty('retryCommand')
+    expect(getDefaultNodeConfig('non-interactive-terminal')).not.toHaveProperty('retryCommand')
+  })
+
   it('returns input variables in their configured order', () => {
     const node: WorkflowNode = {
       id: 'start',

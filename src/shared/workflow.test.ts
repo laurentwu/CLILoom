@@ -7,6 +7,7 @@ import {
   getSystemVariables,
   interpolate,
   parseWorkflowDefinition,
+  parseWorkflowDefinitionStructure,
   sortVariableDefinitions,
   SYSTEM_VARIABLES,
   SYSTEM_VARIABLE_DESCRIPTIONS,
@@ -234,6 +235,67 @@ describe('workflow duplication', () => {
       expect(sourceStart.config.variables[0].label).not.toBe('Changed only in duplicate')
     }
     expect(validateWorkflow(duplicate)).toEqual([])
+  })
+})
+
+describe('terminal retry command parsing', () => {
+  const definition = (type: 'interactive-terminal' | 'non-interactive-terminal', retryCommand?: unknown) => ({
+    id: `wf-${type}`,
+    name: 'Retry command',
+    nodes: [
+      { id: 'start', type: 'start', name: 'Start', config: { variables: [] } },
+      {
+        id: 'terminal',
+        type,
+        name: 'Terminal',
+        config: {
+          command: 'echo first',
+          ...(retryCommand === undefined ? {} : { retryCommand }),
+          cwd: '/repo',
+          ...(type === 'interactive-terminal' ? { autoStart: true } : { successExitCodes: [0] })
+        }
+      },
+      { id: 'end', type: 'end', name: 'End', config: {} }
+    ],
+    edges: [
+      { id: 'start-terminal', from: 'start', to: 'terminal' },
+      { id: 'terminal-end', from: 'terminal', to: 'end' }
+    ]
+  })
+
+  it.each(['interactive-terminal', 'non-interactive-terminal'] as const)(
+    'preserves a non-empty retry command for %s nodes without adding a legacy default',
+    (type) => {
+      const retryCommand = '  echo retry ${sys_last_command_stderr}  '
+      const parsed = parseWorkflowDefinitionStructure(definition(type, retryCommand))
+      expect(parsed.nodes[1].config).toMatchObject({ retryCommand })
+
+      const legacy = parseWorkflowDefinitionStructure(definition(type))
+      expect(legacy.nodes[1].config).not.toHaveProperty('retryCommand')
+    }
+  )
+
+  it.each(['', '   \n\t'])(
+    'normalizes an empty or whitespace-only retry command to an omitted field',
+    (retryCommand) => {
+      const parsed = parseWorkflowDefinitionStructure(definition('non-interactive-terminal', retryCommand))
+      expect(parsed.nodes[1].config).not.toHaveProperty('retryCommand')
+    }
+  )
+
+  it.each([null, {}, [], 'x'.repeat(100_001)])(
+    'rejects an invalid retry command value',
+    (retryCommand) => {
+      expect(() => parseWorkflowDefinitionStructure(definition('interactive-terminal', retryCommand))).toThrow()
+    }
+  )
+
+  it('reports a localized validation issue for a retry command containing NUL', () => {
+    const parsed = parseWorkflowDefinitionStructure(definition('non-interactive-terminal', 'echo before\0after'))
+    expect(validateWorkflow(parsed)).toContainEqual({
+      key: 'errors:workflowValidation.terminalRetryCommandNul',
+      params: { name: 'Terminal' }
+    })
   })
 })
 

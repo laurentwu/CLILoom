@@ -40,6 +40,7 @@ export type StartNodeConfig = {
 
 export type InteractiveTerminalConfig = {
   command: string
+  retryCommand?: string
   cwd: string
   env?: Record<string, string>
   shell?: string
@@ -48,6 +49,7 @@ export type InteractiveTerminalConfig = {
 
 export type NonInteractiveTerminalConfig = {
   command: string
+  retryCommand?: string
   cwd: string
   env?: Record<string, string>
   timeoutMs?: number
@@ -240,8 +242,10 @@ function parseNodeConfig(type: NodeType, value: unknown, nodeId: string): Workfl
     return { variables: parseVariableDefinitions(config.variables, `${nodeId}: variables`) }
   }
   if (type === 'interactive-terminal') {
+    const retryCommand = parseOptionalRetryCommand(config.retryCommand, `${nodeId}: retryCommand`)
     return {
       command: requireBoundedString(config.command, `${nodeId}: command`, 1, MAX_WORKFLOW_STRING),
+      ...(retryCommand === undefined ? {} : { retryCommand }),
       cwd: requireBoundedString(config.cwd, `${nodeId}: cwd`, 1, 4_096),
       ...(config.env === undefined ? {} : { env: parseStringRecord(config.env, `${nodeId}: env`) }),
       ...(config.shell === undefined ? {} : {
@@ -251,10 +255,12 @@ function parseNodeConfig(type: NodeType, value: unknown, nodeId: string): Workfl
     }
   }
   if (type === 'non-interactive-terminal') {
+    const retryCommand = parseOptionalRetryCommand(config.retryCommand, `${nodeId}: retryCommand`)
     const successExitCodes = requireArray(config.successExitCodes, `${nodeId}: successExitCodes`, 256)
       .map((code) => requireInteger(code, `${nodeId}: successExitCodes`, -255, 255))
     return {
       command: requireBoundedString(config.command, `${nodeId}: command`, 1, MAX_WORKFLOW_STRING),
+      ...(retryCommand === undefined ? {} : { retryCommand }),
       cwd: requireBoundedString(config.cwd, `${nodeId}: cwd`, 1, 4_096),
       ...(config.env === undefined ? {} : { env: parseStringRecord(config.env, `${nodeId}: env`) }),
       ...(config.timeoutMs === undefined ? {} : {
@@ -287,6 +293,27 @@ function parseNodeConfig(type: NodeType, value: unknown, nodeId: string): Workfl
     }
   }
   return {}
+}
+
+function parseOptionalRetryCommand(value: unknown, label: string): string | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== 'string') {
+    throw new AppError({
+      code: 'WORKFLOW_INVALID',
+      message: `${label} must be a string`,
+      i18nKey: 'errors:workflowValidation.mustBeString',
+      params: { label }
+    })
+  }
+  if (value.length > MAX_WORKFLOW_STRING) {
+    throw new AppError({
+      code: 'WORKFLOW_INVALID',
+      message: `${label} is too long`,
+      i18nKey: 'errors:workflowValidation.tooLong',
+      params: { label }
+    })
+  }
+  return value.trim() ? value : undefined
 }
 
 function parseVariableDefinitions(value: unknown, label: string): VariableDefinition[] {
@@ -935,6 +962,9 @@ export function validateWorkflow(definition: WorkflowDefinition): TranslationIss
       }
       if (!cwd) {
         errors.push({ key: 'errors:workflowValidation.workingDirEmpty', params: { name: node.name } })
+      }
+      if (typeof config.retryCommand === 'string' && config.retryCommand.trim() && config.retryCommand.includes('\0')) {
+        errors.push({ key: 'errors:workflowValidation.terminalRetryCommandNul', params: { name: node.name } })
       }
     }
   }

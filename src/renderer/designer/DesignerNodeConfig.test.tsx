@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { I18nextProvider } from 'react-i18next'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { i18n } from '../i18n'
@@ -53,6 +53,9 @@ describe('DesignerNodeConfig', () => {
     )
 
     expect(screen.getByLabelText('Command')).toBeTruthy()
+    expect(screen.getByLabelText('Retry command (optional)')).toBeTruthy()
+    expect(screen.getByPlaceholderText('Leave blank to replay the original command…')).toBeTruthy()
+    expect(screen.getByText('Used only when retrying the node in its workflow; variables and the latest command result are available.')).toBeTruthy()
     expect(screen.queryByText('Command', { selector: 'legend' })).toBeNull()
     expect(screen.getByLabelText('Working directory')).toBeTruthy()
   })
@@ -77,7 +80,39 @@ describe('DesignerNodeConfig', () => {
     )
 
     expect(screen.getByLabelText('Command')).toBeTruthy()
+    expect(screen.getByLabelText('Retry command (optional)')).toBeTruthy()
     expect(screen.queryByText('Command', { selector: 'legend' })).toBeNull()
     expect(screen.getByLabelText('Working directory')).toBeTruthy()
   })
+
+  it.each(['interactive-terminal', 'non-interactive-terminal'] as const)(
+    'updates and clears the retry command for %s nodes',
+    (type) => {
+      const config = type === 'interactive-terminal'
+        ? { command: 'echo hi', retryCommand: 'echo old', cwd: '/repo', autoStart: false }
+        : { command: 'echo hi', retryCommand: 'echo old', cwd: '/repo', successExitCodes: [0] }
+      const onUpdateNode = vi.fn()
+      render(
+        <I18nextProvider i18n={i18n}>
+          <DesignerNodeConfig
+            node={{ id: type, type, name: 'Terminal', config, x: 0, y: 0 }}
+            nodes={[]}
+            edges={[]}
+            onUpdateNode={onUpdateNode}
+          />
+        </I18nextProvider>
+      )
+
+      const input = screen.getByLabelText('Retry command (optional)')
+      fireEvent.change(input, { target: { value: '  echo new  ' } })
+      expect(onUpdateNode).toHaveBeenLastCalledWith(type, {
+        config: { ...config, retryCommand: '  echo new  ' }
+      })
+
+      fireEvent.change(input, { target: { value: '' } })
+      expect(onUpdateNode).toHaveBeenLastCalledWith(type, {
+        config: { ...config, retryCommand: undefined }
+      })
+    }
+  )
 })

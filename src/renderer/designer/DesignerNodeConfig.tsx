@@ -79,6 +79,16 @@ export function DesignerNodeConfig({
             />
           </Field>
           <Field>
+            <FieldLabel htmlFor={`designer-retry-command-${node.id}`}>{t('designer:nodeConfig.retryCommandLabel')}</FieldLabel>
+            <Textarea
+              id={`designer-retry-command-${node.id}`}
+              value={config.retryCommand ?? ''}
+              onChange={(event) => set({ retryCommand: event.target.value || undefined })}
+              placeholder={t('designer:nodeConfig.retryCommandPlaceholder')}
+            />
+            <FieldDescription>{t('designer:nodeConfig.retryCommandDescription')}</FieldDescription>
+          </Field>
+          <Field>
             <FieldLabel htmlFor={`designer-cwd-${node.id}`}>{t('designer:nodeConfig.workingDir')}</FieldLabel>
             <Textarea
               id={`designer-cwd-${node.id}`}
@@ -118,6 +128,16 @@ export function DesignerNodeConfig({
               onChange={(event) => set({ command: event.target.value })}
               placeholder={t('designer:nodeConfig.commandPlaceholder')}
             />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor={`designer-retry-command-${node.id}`}>{t('designer:nodeConfig.retryCommandLabel')}</FieldLabel>
+            <Textarea
+              id={`designer-retry-command-${node.id}`}
+              value={config.retryCommand ?? ''}
+              onChange={(event) => set({ retryCommand: event.target.value || undefined })}
+              placeholder={t('designer:nodeConfig.retryCommandPlaceholder')}
+            />
+            <FieldDescription>{t('designer:nodeConfig.retryCommandDescription')}</FieldDescription>
           </Field>
           <Field>
             <FieldLabel htmlFor={`designer-cwd-${node.id}`}>{t('designer:nodeConfig.workingDir')}</FieldLabel>

@@ -124,6 +124,15 @@ export type WorkflowRuntimeProcessResult = {
   status?: 'closed' | 'killed' | 'failed' | 'interrupted'
 }
 
+export type WorkflowTerminalRetryStart = {
+  started: true
+  commandOverride?: {
+    command: ShellNeutralCommand
+    displayCommand: string
+    preparationError?: string
+  }
+}
+
 type WorkflowRuntimeHookRequest = {
   taskId: string
   nodeId: string
@@ -317,7 +326,7 @@ export class WorkflowRuntimeEngine {
     return Boolean(node?.type.includes('terminal') && this.canRetryNode(nodeId))
   }
 
-  async beginTerminalRetry(nodeId: string, sessionId: string): Promise<boolean> {
+  async beginTerminalRetry(nodeId: string, sessionId: string): Promise<WorkflowTerminalRetryStart | false> {
     const branch = this.findBranchForNode(nodeId)
     if (!branch || !isRetryableRunStatus(branch.status)) {
       return this.serialize(() => this.beginTerminalRetryInternal(nodeId, sessionId))
@@ -327,7 +336,7 @@ export class WorkflowRuntimeEngine {
     // only for this branch lets its failed terminal restart immediately.
     return this.serializeBranch(branch.branchId, async () => {
       const started = await this.beginTerminalRetryInternal(nodeId, sessionId, branch.branchId)
-      if (started) this.parallelTerminalRetryBranches.set(sessionId, branch.branchId)
+      if (started !== false) this.parallelTerminalRetryBranches.set(sessionId, branch.branchId)
       return started
     })
   }
@@ -336,10 +345,36 @@ export class WorkflowRuntimeEngine {
     nodeId: string,
     sessionId: string,
     branchId?: string
-  ): Promise<boolean> {
+  ): Promise<WorkflowTerminalRetryStart | false> {
     const node = this.findNode(nodeId)
     if (!node?.type.includes('terminal') || !this.canRetryNode(nodeId, branchId)) return false
-    return this.beginNodeRetryInternal(nodeId, branchId, sessionId)
+    const branch = this.findBranchForNode(nodeId, branchId)
+    const config = node.config as InteractiveTerminalConfig | NonInteractiveTerminalConfig
+    const retryCommand = config.retryCommand?.trim() ? config.retryCommand : undefined
+    let commandOverride: WorkflowTerminalRetryStart['commandOverride']
+
+    if (retryCommand !== undefined) {
+      const variables = this.contextVariables(node.id, branch)
+      try {
+        commandOverride = {
+          command: bindShellCommand(retryCommand, variables, Object.keys(config.env ?? {})),
+          displayCommand: interpolate(retryCommand, variables)
+        }
+      } catch (error) {
+        commandOverride = {
+          command: { version: 1, segments: [{ type: 'literal', value: '' }], bindings: {} },
+          displayCommand: retryCommand,
+          preparationError: error instanceof Error ? error.message : String(error)
+        }
+      }
+    }
+
+    const started = await this.beginNodeRetryInternal(nodeId, branchId, sessionId)
+    if (!started) return false
+    return {
+      started: true,
+      ...(commandOverride ? { commandOverride } : {})
+    }
   }
 
   private async beginNodeRetryInternal(
@@ -1154,7 +1189,7 @@ export class WorkflowRuntimeEngine {
     const order = nodeIds ?? this.state.executionOrder
     for (const nodeId of [...order].reverse()) {
       const run = this.state.nodeRuns[nodeId]
-      if (!run || (run.status !== 'completed' && run.status !== 'failed')) continue
+      if (!run || !['completed', 'failed', 'stopped', 'interrupted'].includes(run.status)) continue
       if (run.stdout === undefined && run.stderr === undefined && run.exitCode === undefined) continue
       return {
         nodeId,

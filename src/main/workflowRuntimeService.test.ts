@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { addProject, openDatabase, type AppDatabase } from './database'
+import { addProject, ensureWorkflowVersion, openDatabase, type AppDatabase } from './database'
 import type { ResolvedExecutionTarget } from '../shared/shell'
 import { isUnsupportedProjectPath } from '../shared/projectPath'
 import { persistWorkflowRuntimeState } from './runtimePersistence'
@@ -532,13 +532,221 @@ describe('WorkflowRuntimeService restore', () => {
     await vi.waitFor(() => expect(service.getState('retry-task')).toBeNull())
   })
 
+  it('passes a retry-time command override from the task workflow version', async () => {
+    const db = createDb()
+    const workflow: WorkflowDefinition = {
+      id: 'versioned-retry-workflow',
+      name: 'Versioned retry workflow',
+      nodes: [
+        {
+          id: 'terminal',
+          type: 'non-interactive-terminal',
+          name: 'Terminal',
+          config: {
+            command: 'original',
+            retryCommand: 'historical ${prompt} ${sys_last_command_stderr} ${sys_last_command_exit_code}',
+            cwd: '/repo',
+            successExitCodes: [0]
+          }
+        },
+        { id: 'end', type: 'end', name: 'End', config: {} }
+      ],
+      edges: [{ id: 'terminal-end', from: 'terminal', to: 'end' }]
+    }
+    persistWorkflowRuntimeState(db, {
+      taskId: 'versioned-retry-task',
+      projectId: 'project-1',
+      projectDir: '/repo',
+      workflowId: workflow.id,
+      status: 'failed',
+      currentNodeId: 'terminal',
+      variables: { prompt: 'fix it' },
+      nodeRuns: {
+        terminal: {
+          nodeId: 'terminal',
+          status: 'failed',
+          sessionId: 'versioned-retry-session',
+          stderr: 'old failure',
+          exitCode: 9
+        }
+      },
+      executionOrder: ['terminal'],
+      activeBranches: [],
+      branchRuns: {},
+      parallelResults: {},
+      workflowCompleted: false
+    }, 'failed', workflow)
+    ensureWorkflowVersion(db, {
+      ...workflow,
+      nodes: [
+        {
+          id: 'terminal',
+          type: 'non-interactive-terminal',
+          name: 'Terminal',
+          config: {
+            command: 'original',
+            retryCommand: 'edited current version',
+            cwd: '/repo',
+            successExitCodes: [0]
+          }
+        },
+        workflow.nodes[1]
+      ]
+    })
+    const retry = vi.fn(() => ({
+      sessionId: 'versioned-retry-session',
+      taskId: 'versioned-retry-task',
+      nodeId: 'terminal',
+      result: Promise.resolve({
+        sessionId: 'versioned-retry-session',
+        stdout: 'retry ok',
+        stderr: '',
+        exitCode: 0,
+        status: 'closed' as const
+      })
+    }))
+    const runner = {
+      getRetryTarget: () => ({
+        sessionId: 'versioned-retry-session',
+        taskId: 'versioned-retry-task',
+        nodeId: 'terminal'
+      }),
+      retry,
+      run: async () => ({ sessionId: 'unused', stdout: '', stderr: '', exitCode: 0 }),
+      runHook: async () => ({ hookRunId: 'hook-1', stdout: '', stderr: '', exitCode: 0 }),
+      killByTask: () => 0,
+      hasLiveSession: () => false
+    }
+    const service = new WorkflowRuntimeService(db, runner as never, () => null)
+
+    await expect(service.retryTerminal('versioned-retry-session', 'workflow'))
+      .resolves.toBe('versioned-retry-session')
+    expect(retry).toHaveBeenCalledWith(
+      'versioned-retry-session',
+      expect.objectContaining({
+        displayCommand: 'historical fix it old failure 9',
+        command: expect.objectContaining({
+          version: 1,
+          bindings: {
+            CLILOOM_INTERNAL_VALUE_0: 'fix it',
+            CLILOOM_INTERNAL_VALUE_1: 'old failure',
+            CLILOOM_INTERNAL_VALUE_2: '9'
+          }
+        })
+      })
+    )
+    await vi.waitFor(() => expect(service.getState('versioned-retry-task')).toBeNull())
+  })
+
+  it('cleans up workflow state after a retry override is rejected synchronously', async () => {
+    const db = createDb()
+    const workflow: WorkflowDefinition = {
+      id: 'rejected-retry-workflow',
+      name: 'Rejected retry workflow',
+      nodes: [
+        {
+          id: 'terminal',
+          type: 'non-interactive-terminal',
+          name: 'Terminal',
+          config: {
+            command: 'original',
+            retryCommand: 'retry ${sys_last_command_exit_code}',
+            cwd: '/repo',
+            successExitCodes: [0]
+          }
+        },
+        { id: 'end', type: 'end', name: 'End', config: {} }
+      ],
+      edges: [{ id: 'terminal-end', from: 'terminal', to: 'end' }]
+    }
+    persistWorkflowRuntimeState(db, {
+      taskId: 'rejected-retry-task',
+      projectId: 'project-1',
+      projectDir: '/repo',
+      workflowId: workflow.id,
+      status: 'failed',
+      currentNodeId: 'terminal',
+      variables: {},
+      nodeRuns: {
+        terminal: {
+          nodeId: 'terminal',
+          status: 'failed',
+          sessionId: 'rejected-retry-session',
+          stderr: 'original failure',
+          exitCode: 7
+        }
+      },
+      executionOrder: ['terminal'],
+      activeBranches: [],
+      branchRuns: {},
+      parallelResults: {},
+      workflowCompleted: false
+    }, 'failed', workflow)
+    const retry = vi.fn()
+      .mockImplementationOnce(() => {
+        throw new Error('invalid shell-neutral retry override')
+      })
+      .mockImplementationOnce(() => ({
+        sessionId: 'rejected-retry-session',
+        taskId: 'rejected-retry-task',
+        nodeId: 'terminal',
+        result: Promise.resolve({
+          sessionId: 'rejected-retry-session',
+          stdout: 'retry ok',
+          stderr: '',
+          exitCode: 0,
+          status: 'closed' as const
+        })
+      }))
+    const runner = {
+      getRetryTarget: () => ({
+        sessionId: 'rejected-retry-session',
+        taskId: 'rejected-retry-task',
+        nodeId: 'terminal'
+      }),
+      retry,
+      run: async () => ({ sessionId: 'unused', stdout: '', stderr: '', exitCode: 0 }),
+      runHook: async () => ({ hookRunId: 'hook-1', stdout: '', stderr: '', exitCode: 0 }),
+      killByTask: () => 0,
+      hasLiveSession: () => false
+    }
+    const onTaskTerminal = vi.fn()
+    const service = new WorkflowRuntimeService(db, runner as never, () => null, onTaskTerminal)
+
+    await expect(service.retryTerminal('rejected-retry-session', 'workflow'))
+      .rejects.toThrow('invalid shell-neutral retry override')
+
+    expect(service.getState('rejected-retry-task')).toBeNull()
+    expect(onTaskTerminal).toHaveBeenCalledOnce()
+    expect(db.prepare('select status from tasks where id = ?').get('rejected-retry-task'))
+      .toEqual({ status: 'failed' })
+    const failedNode = db.prepare(
+      'select status, output_json from node_runs where run_id = ? and node_id = ?'
+    ).get('rejected-retry-task', 'terminal') as { status: string; output_json: string }
+    expect(failedNode.status).toBe('failed')
+    expect(JSON.parse(failedNode.output_json)).toMatchObject({
+      sessionId: 'rejected-retry-session',
+      stderr: 'invalid shell-neutral retry override',
+      exitCode: -1
+    })
+
+    await expect(service.retryTerminal('rejected-retry-session', 'workflow'))
+      .resolves.toBe('rejected-retry-session')
+    expect(retry).toHaveBeenCalledTimes(2)
+    await vi.waitFor(() => {
+      expect(db.prepare('select status from tasks where id = ?').get('rejected-retry-task'))
+        .toEqual({ status: 'completed' })
+    })
+    await vi.waitFor(() => expect(service.getState('rejected-retry-task')).toBeNull())
+  })
+
   it('reruns a historical command without changing its failed workflow', async () => {
     const db = createDb()
     const workflow: WorkflowDefinition = {
       id: 'standalone-rerun-workflow',
       name: 'Standalone rerun workflow',
       nodes: [
-        { id: 'terminal', type: 'non-interactive-terminal', name: 'Terminal', config: { command: 'retry', cwd: '/repo', successExitCodes: [0] } },
+        { id: 'terminal', type: 'non-interactive-terminal', name: 'Terminal', config: { command: 'retry', retryCommand: 'workflow-only retry', cwd: '/repo', successExitCodes: [0] } },
         { id: 'end', type: 'end', name: 'End', config: {} }
       ],
       edges: [{ id: 'terminal-end', from: 'terminal', to: 'end' }]
@@ -615,6 +823,35 @@ describe('WorkflowRuntimeService restore', () => {
 
     expect(retry).not.toHaveBeenCalled()
     expect(service.getState('missing-task')).toBeNull()
+  })
+
+  it('falls back to standalone replay in auto mode when no workflow can be restored', async () => {
+    const db = createDb()
+    const retry = vi.fn(() => ({
+      sessionId: 'orphan-auto-session',
+      taskId: 'missing-task',
+      nodeId: 'terminal',
+      result: Promise.resolve({
+        sessionId: 'orphan-auto-session',
+        stdout: 'standalone',
+        stderr: '',
+        exitCode: 0,
+        status: 'closed' as const
+      })
+    }))
+    const runner = {
+      getRetryTarget: () => ({
+        sessionId: 'orphan-auto-session',
+        taskId: 'missing-task',
+        nodeId: 'terminal'
+      }),
+      retry,
+      hasLiveSession: () => false
+    }
+    const service = new WorkflowRuntimeService(db, runner as never, () => null)
+
+    await expect(service.retryTerminal('orphan-auto-session')).resolves.toBe('orphan-auto-session')
+    expect(retry).toHaveBeenCalledWith('orphan-auto-session')
   })
 
   it('retries a failed non-terminal node from the persisted workflow context', async () => {
