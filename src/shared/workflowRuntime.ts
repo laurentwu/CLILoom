@@ -2,6 +2,8 @@ import { evaluateExpression } from './expression'
 import { MAX_PROCESS_RESULT_CHARS, tailText } from './terminalBuffer'
 import {
   bindShellCommand,
+  bindWorkflowRetryCommand,
+  createWorkflowCommandTemplateSnapshot,
   getSystemVariables,
   interpolate,
   sortVariableDefinitions,
@@ -19,6 +21,7 @@ import {
   type WorkflowEdge,
   type WorkflowNode
 } from './workflow'
+import type { TerminalCommandTemplateSnapshot } from './terminalRetry'
 import type {
   ExecutionTargetDescriptor,
   ShellNeutralCommand,
@@ -114,6 +117,7 @@ type WorkflowRuntimeProcessRequest = {
   env?: Record<string, string>
   timeoutMs?: number
   preparationError?: string
+  commandTemplate?: TerminalCommandTemplateSnapshot
 }
 
 export type WorkflowRuntimeProcessResult = {
@@ -130,7 +134,13 @@ export type WorkflowTerminalRetryStart = {
     command: ShellNeutralCommand
     displayCommand: string
     preparationError?: string
+    commandTemplate?: TerminalCommandTemplateSnapshot
   }
+}
+
+export type WorkflowTerminalRetryEditInput = {
+  command: string
+  replaySnapshot?: TerminalCommandTemplateSnapshot
 }
 
 type WorkflowRuntimeHookRequest = {
@@ -326,16 +336,27 @@ export class WorkflowRuntimeEngine {
     return Boolean(node?.type.includes('terminal') && this.canRetryNode(nodeId))
   }
 
-  async beginTerminalRetry(nodeId: string, sessionId: string): Promise<WorkflowTerminalRetryStart | false> {
+  getTerminalRetryCommand(nodeId: string): string | undefined {
+    const node = this.findNode(nodeId)
+    if (!node?.type.includes('terminal') || !this.canRetryTerminalNode(nodeId)) return undefined
+    const config = node.config as InteractiveTerminalConfig | NonInteractiveTerminalConfig
+    return config.retryCommand?.trim() ? config.retryCommand : undefined
+  }
+
+  async beginTerminalRetry(
+    nodeId: string,
+    sessionId: string,
+    edit?: WorkflowTerminalRetryEditInput
+  ): Promise<WorkflowTerminalRetryStart | false> {
     const branch = this.findBranchForNode(nodeId)
     if (!branch || !isRetryableRunStatus(branch.status)) {
-      return this.serialize(() => this.beginTerminalRetryInternal(nodeId, sessionId))
+      return this.serialize(() => this.beginTerminalRetryInternal(nodeId, sessionId, undefined, edit))
     }
 
     // The workflow queue remains occupied while sibling branches run. Waiting
     // only for this branch lets its failed terminal restart immediately.
     return this.serializeBranch(branch.branchId, async () => {
-      const started = await this.beginTerminalRetryInternal(nodeId, sessionId, branch.branchId)
+      const started = await this.beginTerminalRetryInternal(nodeId, sessionId, branch.branchId, edit)
       if (started !== false) this.parallelTerminalRetryBranches.set(sessionId, branch.branchId)
       return started
     })
@@ -344,7 +365,8 @@ export class WorkflowRuntimeEngine {
   private async beginTerminalRetryInternal(
     nodeId: string,
     sessionId: string,
-    branchId?: string
+    branchId?: string,
+    edit?: WorkflowTerminalRetryEditInput
   ): Promise<WorkflowTerminalRetryStart | false> {
     const node = this.findNode(nodeId)
     if (!node?.type.includes('terminal') || !this.canRetryNode(nodeId, branchId)) return false
@@ -353,17 +375,26 @@ export class WorkflowRuntimeEngine {
     const retryCommand = config.retryCommand?.trim() ? config.retryCommand : undefined
     let commandOverride: WorkflowTerminalRetryStart['commandOverride']
 
-    if (retryCommand !== undefined) {
+    const retryTemplate = edit?.command ?? retryCommand
+    if (retryTemplate !== undefined) {
       const variables = this.contextVariables(node.id, branch)
       try {
+        const bound = bindWorkflowRetryCommand(
+          retryTemplate,
+          variables,
+          Object.keys(config.env ?? {}),
+          edit?.replaySnapshot
+        )
         commandOverride = {
-          command: bindShellCommand(retryCommand, variables, Object.keys(config.env ?? {})),
-          displayCommand: interpolate(retryCommand, variables)
+          command: bound.command,
+          displayCommand: bound.displayCommand,
+          commandTemplate: bound.commandTemplate
         }
       } catch (error) {
+        if (edit) throw error
         commandOverride = {
           command: { version: 1, segments: [{ type: 'literal', value: '' }], bindings: {} },
-          displayCommand: retryCommand,
+          displayCommand: retryTemplate,
           preparationError: error instanceof Error ? error.message : String(error)
         }
       }
@@ -987,8 +1018,10 @@ export class WorkflowRuntimeEngine {
     let displayCommand: string
     let cwd: string
     let preparationError: string | undefined
+    let commandTemplate: TerminalCommandTemplateSnapshot | undefined
     try {
       command = bindShellCommand(config.command, variables, Object.keys(config.env ?? {}))
+      commandTemplate = createWorkflowCommandTemplateSnapshot(config.command, variables)
       displayCommand = interpolate(config.command, variables)
       cwd = interpolate(config.cwd, variables)
     } catch (error) {
@@ -1013,7 +1046,8 @@ export class WorkflowRuntimeEngine {
       executionTarget: this.state.executionContext?.target,
       env: config.env,
       timeoutMs: 'timeoutMs' in config ? config.timeoutMs : undefined,
-      preparationError
+      preparationError,
+      commandTemplate
     })
 
     if (this.stopped) return false

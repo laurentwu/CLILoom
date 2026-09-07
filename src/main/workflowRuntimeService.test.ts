@@ -638,6 +638,259 @@ describe('WorkflowRuntimeService restore', () => {
     await vi.waitFor(() => expect(service.getState('versioned-retry-task')).toBeNull())
   })
 
+  it('loads a workflow retry draft without writes and binds an edited command at submission time', async () => {
+    const db = createDb()
+    const workflow: WorkflowDefinition = {
+      id: 'edited-retry-workflow',
+      name: 'Edited retry workflow',
+      nodes: [
+        {
+          id: 'terminal',
+          type: 'non-interactive-terminal',
+          name: 'Terminal',
+          config: {
+            command: 'original ${prompt}',
+            retryCommand: 'configured ${prompt}',
+            cwd: '/repo',
+            successExitCodes: [0]
+          }
+        },
+        { id: 'end', type: 'end', name: 'End', config: {} }
+      ],
+      edges: [{ id: 'terminal-end', from: 'terminal', to: 'end' }]
+    }
+    persistWorkflowRuntimeState(db, {
+      taskId: 'edited-retry-task',
+      projectId: 'project-1',
+      projectDir: '/repo',
+      workflowId: workflow.id,
+      status: 'failed',
+      currentNodeId: 'terminal',
+      variables: { prompt: 'current; $(printf unsafe)' },
+      nodeRuns: {
+        terminal: {
+          nodeId: 'terminal',
+          status: 'failed',
+          sessionId: 'edited-retry-session',
+          stderr: 'latest error',
+          exitCode: 6
+        }
+      },
+      executionOrder: ['terminal'],
+      activeBranches: [],
+      branchRuns: {},
+      parallelResults: {},
+      workflowCompleted: false
+    }, 'failed', workflow)
+    db.prepare(
+      'insert into terminal_sessions (id, task_id, node_id, kind, command, cwd, status, transcript, created_at, updated_at, request_json) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    ).run(
+      'edited-retry-session', 'edited-retry-task', 'terminal', 'non-interactive',
+      'original', '/repo', 'failed', 'failed output',
+      '2026-08-05T00:00:00.000Z', '2026-08-05T00:00:01.000Z', null
+    )
+    const retry = vi.fn(() => ({
+      sessionId: 'edited-retry-session',
+      taskId: 'edited-retry-task',
+      nodeId: 'terminal',
+      result: Promise.resolve({
+        sessionId: 'edited-retry-session',
+        stdout: 'ok',
+        stderr: '',
+        exitCode: 0,
+        status: 'closed' as const
+      })
+    }))
+    const source = {
+      sessionId: 'edited-retry-session',
+      taskId: 'edited-retry-task',
+      nodeId: 'terminal',
+      kind: 'non-interactive' as const,
+      cwd: '/repo',
+      createdAt: '2026-08-05T00:00:00.000Z',
+      updatedAt: '2026-08-05T00:00:01.000Z',
+      storedJson: null,
+      retry: {
+        command: { version: 1 as const, segments: [{ type: 'literal' as const, value: 'original' }], bindings: {} },
+        targetCwd: '/repo',
+        target: {
+          kind: 'native' as const,
+          id: 'shell-1',
+          family: 'posix' as const,
+          displayName: 'Test shell',
+          executablePath: '/bin/sh'
+        }
+      }
+    }
+    const runner = {
+      getRetryTarget: () => ({
+        sessionId: source.sessionId,
+        taskId: source.taskId,
+        nodeId: source.nodeId
+      }),
+      getRetrySource: vi.fn(() => source),
+      retry,
+      run: async () => ({ sessionId: 'unused', stdout: '', stderr: '', exitCode: 0 }),
+      runHook: async () => ({ hookRunId: 'hook-1', stdout: '', stderr: '', exitCode: 0 }),
+      killByTask: () => 0,
+      hasLiveSession: () => false
+    }
+    const service = new WorkflowRuntimeService(db, runner as never, () => null)
+    const before = {
+      task: db.prepare('select status, updated_at from tasks where id = ?').get('edited-retry-task'),
+      run: db.prepare('select status, updated_at from workflow_runs where id = ?').get('edited-retry-task'),
+      terminal: db.prepare('select status, transcript, updated_at from terminal_sessions where id = ?').get('edited-retry-session')
+    }
+
+    const draft = await service.getTerminalRetryDraft('edited-retry-session', 'workflow')
+
+    expect(draft).toMatchObject({
+      command: 'configured ${prompt}',
+      source: 'workflow-retry-command',
+      syntax: 'workflow',
+      cwd: '/repo',
+      executionTargetName: 'Test shell'
+    })
+    expect({
+      task: db.prepare('select status, updated_at from tasks where id = ?').get('edited-retry-task'),
+      run: db.prepare('select status, updated_at from workflow_runs where id = ?').get('edited-retry-task'),
+      terminal: db.prepare('select status, transcript, updated_at from terminal_sessions where id = ?').get('edited-retry-session')
+    }).toEqual(before)
+    expect(retry).not.toHaveBeenCalled()
+
+    await expect(service.retryTerminal('edited-retry-session', 'workflow', {
+      revision: draft.revision,
+      command: 'edited ${prompt} ${sys_last_command_stderr} ${sys_last_command_exit_code}'
+    })).resolves.toBe('edited-retry-session')
+    expect(retry).toHaveBeenCalledWith(
+      'edited-retry-session',
+      expect.objectContaining({
+        displayCommand: 'edited current; $(printf unsafe) latest error 6',
+        command: expect.objectContaining({
+          bindings: {
+            CLILOOM_INTERNAL_VALUE_0: 'current; $(printf unsafe)',
+            CLILOOM_INTERNAL_VALUE_1: 'latest error',
+            CLILOOM_INTERNAL_VALUE_2: '6'
+          }
+        }),
+        commandTemplate: expect.objectContaining({
+          template: 'edited ${prompt} ${sys_last_command_stderr} ${sys_last_command_exit_code}'
+        })
+      }),
+      { preserveDefaultCommand: true }
+    )
+    await vi.waitFor(() => expect(service.getState('edited-retry-task')).toBeNull())
+  })
+
+  it('reads a retry draft from a stale running session without repairing persisted state', async () => {
+    const db = createDb()
+    const workflow: WorkflowDefinition = {
+      id: 'stale-running-draft-workflow',
+      name: 'Stale running draft workflow',
+      nodes: [
+        {
+          id: 'terminal',
+          type: 'non-interactive-terminal',
+          name: 'Terminal',
+          config: {
+            command: 'original ${prompt}',
+            retryCommand: 'retry ${prompt}',
+            cwd: '/repo',
+            successExitCodes: [0]
+          }
+        },
+        { id: 'end', type: 'end', name: 'End', config: {} }
+      ],
+      edges: [{ id: 'terminal-end', from: 'terminal', to: 'end' }]
+    }
+    persistWorkflowRuntimeState(db, {
+      taskId: 'stale-running-draft-task',
+      projectId: 'project-1',
+      projectDir: '/repo',
+      workflowId: workflow.id,
+      status: 'running',
+      currentNodeId: 'terminal',
+      variables: { prompt: 'saved value' },
+      nodeRuns: {
+        terminal: {
+          nodeId: 'terminal',
+          status: 'running',
+          sessionId: 'stale-running-draft-session'
+        }
+      },
+      executionOrder: ['terminal'],
+      activeBranches: [],
+      branchRuns: {},
+      parallelResults: {},
+      workflowCompleted: false
+    }, 'running', workflow)
+    db.prepare(
+      'insert into terminal_sessions (id, task_id, node_id, kind, command, cwd, status, transcript, created_at, updated_at, request_json) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    ).run(
+      'stale-running-draft-session', 'stale-running-draft-task', 'terminal',
+      'non-interactive', 'original saved value', '/repo', 'running', 'partial output',
+      '2026-08-05T00:00:00.000Z', '2026-08-05T00:00:01.000Z', null
+    )
+    const source = {
+      sessionId: 'stale-running-draft-session',
+      taskId: 'stale-running-draft-task',
+      nodeId: 'terminal',
+      kind: 'non-interactive' as const,
+      cwd: '/repo',
+      createdAt: '2026-08-05T00:00:00.000Z',
+      updatedAt: '2026-08-05T00:00:01.000Z',
+      storedJson: null,
+      retry: {
+        command: {
+          version: 1 as const,
+          segments: [{ type: 'literal' as const, value: 'original saved value' }],
+          bindings: {}
+        },
+        targetCwd: '/repo'
+      }
+    }
+    const retry = vi.fn()
+    const runner = {
+      getRetrySource: vi.fn(() => source),
+      retry,
+      run: async () => ({ sessionId: 'unused', stdout: '', stderr: '', exitCode: 0 }),
+      runHook: async () => ({ hookRunId: 'hook-1', stdout: '', stderr: '', exitCode: 0 }),
+      killByTask: () => 0,
+      hasLiveSession: () => false
+    }
+    const service = new WorkflowRuntimeService(db, runner as never, () => null)
+    const before = {
+      task: db.prepare('select * from tasks where id = ?').get('stale-running-draft-task'),
+      run: db.prepare('select * from workflow_runs where id = ?').get('stale-running-draft-task'),
+      node: db.prepare('select * from node_runs where run_id = ? and node_id = ?')
+        .get('stale-running-draft-task', 'terminal'),
+      terminal: db.prepare('select * from terminal_sessions where id = ?')
+        .get('stale-running-draft-session')
+    }
+
+    const draft = await service.getTerminalRetryDraft(
+      'stale-running-draft-session',
+      'workflow'
+    )
+
+    expect(draft).toMatchObject({
+      command: 'retry ${prompt}',
+      source: 'workflow-retry-command',
+      syntax: 'workflow',
+      cwd: '/repo'
+    })
+    expect({
+      task: db.prepare('select * from tasks where id = ?').get('stale-running-draft-task'),
+      run: db.prepare('select * from workflow_runs where id = ?').get('stale-running-draft-task'),
+      node: db.prepare('select * from node_runs where run_id = ? and node_id = ?')
+        .get('stale-running-draft-task', 'terminal'),
+      terminal: db.prepare('select * from terminal_sessions where id = ?')
+        .get('stale-running-draft-session')
+    }).toEqual(before)
+    expect(retry).not.toHaveBeenCalled()
+    expect(service.getState('stale-running-draft-task')).toBeNull()
+  })
+
   it('cleans up workflow state after a retry override is rejected synchronously', async () => {
     const db = createDb()
     const workflow: WorkflowDefinition = {

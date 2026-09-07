@@ -52,6 +52,7 @@ const workflow: WorkflowDefinition = {
 }
 
 const failures: string[] = []
+const projectRoot = path.join(__dirname, '..')
 let appDataDirectory = ''
 let electronApp: ElectronApplication
 let fixtureDirectory = ''
@@ -73,14 +74,7 @@ function monitorPage(page: Page) {
   })
 }
 
-test.beforeAll(async () => {
-  const projectRoot = path.join(__dirname, '..')
-  appDataDirectory = mkdtempSync(path.join(tmpdir(), 'cliloom-isolation-e2e-data-'))
-  fixtureDirectory = mkdtempSync(path.join(tmpdir(), 'cliloom-isolation-e2e-projects-'))
-  projectADirectory = path.join(fixtureDirectory, 'Project A')
-  projectBDirectory = path.join(fixtureDirectory, 'Project B')
-  mkdirSync(projectADirectory)
-  mkdirSync(projectBDirectory)
+async function launchApplication() {
   electronApp = await electron.launch({
     args: [projectRoot],
     cwd: projectRoot,
@@ -104,6 +98,16 @@ test.beforeAll(async () => {
   mainPage = await electronApp.firstWindow()
   monitorPage(mainPage)
   await mainPage.locator('#root > *').first().waitFor()
+}
+
+test.beforeAll(async () => {
+  appDataDirectory = mkdtempSync(path.join(tmpdir(), 'cliloom-isolation-e2e-data-'))
+  fixtureDirectory = mkdtempSync(path.join(tmpdir(), 'cliloom-isolation-e2e-projects-'))
+  projectADirectory = path.join(fixtureDirectory, 'Project A')
+  projectBDirectory = path.join(fixtureDirectory, 'Project B')
+  mkdirSync(projectADirectory)
+  mkdirSync(projectBDirectory)
+  await launchApplication()
 })
 
 test.afterAll(async () => {
@@ -235,5 +239,124 @@ test('isolates background task updates and clears unread after a successful proj
   expect(await mainPage.evaluate(() => (
     (window as WindowWithCspProbe).__cliloomCspViolations ?? []
   ))).toEqual([])
+  expect(failures).toEqual([])
+})
+
+test('edits a failed workflow terminal command once through the real runtime chain', async () => {
+  failures.splice(0)
+  const projects = await mainPage.evaluate(() => window.cliLoom?.listProjects()) as ProjectRecord[]
+  const projectA = projects.find((project) => project.path === projectADirectory)
+  if (!projectA) throw new Error('E2E project A was not registered')
+  await mainPage.getByRole('button', { name: 'Open project Project A' }).click()
+
+  const retryWorkflow: WorkflowDefinition = {
+    id: 'e2e-edited-terminal-retry',
+    name: 'Edited terminal retry',
+    nodes: [
+      {
+        id: 'start',
+        type: 'start',
+        name: 'Start',
+        config: {
+          variables: [{ key: 'marker', label: 'Marker', type: 'text', required: true }]
+        }
+      },
+      {
+        id: 'terminal',
+        type: 'non-interactive-terminal',
+        name: 'Fail then edit',
+        config: {
+          command: 'printf \'INITIAL:%s\\n\' "${marker}"; exit 9',
+          cwd: '${sys_project_dir}',
+          successExitCodes: [0]
+        }
+      },
+      { id: 'end', type: 'end', name: 'Finished after edited retry', config: {} }
+    ],
+    edges: [
+      { id: 'start-terminal', from: 'start', to: 'terminal' },
+      { id: 'terminal-end', from: 'terminal', to: 'end' }
+    ]
+  }
+  const taskId = 'e2e-edited-terminal-task'
+  const taskTitle = 'Editable retry task'
+  await mainPage.evaluate(async ({ definition, projectId, taskId, taskTitle }) => {
+    if (!window.cliLoom) throw new Error('Missing main preload API')
+    await window.cliLoom.saveWorkflow(definition)
+    await window.cliLoom.startWorkflow({
+      taskId,
+      projectId,
+      workflow: definition,
+      variables: { marker: taskTitle },
+      startNodeId: 'start'
+    })
+  }, { definition: retryWorkflow, projectId: projectA.id, taskId, taskTitle })
+
+  const taskStatus = () => mainPage.evaluate(async ({ projectId, taskId }) => {
+    if (!window.cliLoom) throw new Error('Missing main preload API')
+    return (await window.cliLoom.listTasks(projectId))
+      .find((task: TaskRecord) => task.id === taskId)?.status
+  }, { projectId: projectA.id, taskId })
+  const transcript = () => mainPage.evaluate(async (taskId) => {
+    if (!window.cliLoom) throw new Error('Missing main preload API')
+    const sessions = await window.cliLoom.listTaskSessions(taskId) as Array<{ id: string }>
+    const session = sessions.at(-1)
+    return session
+      ? (await window.cliLoom.getTaskSessionTranscript(taskId, session.id)).transcript
+      : ''
+  }, taskId)
+
+  await expect.poll(taskStatus).toBe('failed')
+  const taskButton = mainPage.locator('.task-sidebar button').filter({ hasText: taskTitle }).first()
+  await expect(taskButton).toBeVisible()
+  await taskButton.click()
+  await expect.poll(transcript).toContain(`INITIAL:${taskTitle}`)
+
+  const editButton = mainPage.getByRole('button', { name: 'Edit command and retry' })
+  await editButton.click()
+  let dialog = mainPage.getByRole('dialog')
+  const originalCommand = 'printf \'INITIAL:%s\\n\' "${marker}"; exit 9'
+  await expect(dialog.getByLabel('Retry command')).toHaveValue(originalCommand)
+  await dialog.getByLabel('Retry command').fill('printf \'CANCELLED-RETRY-SENTINEL\\n\'')
+  await dialog.getByRole('button', { name: 'Cancel' }).click()
+  await expect(dialog).toBeHidden()
+  expect(await transcript()).not.toContain('CANCELLED-RETRY-SENTINEL')
+  expect(await taskStatus()).toBe('failed')
+
+  await editButton.click()
+  dialog = mainPage.getByRole('dialog')
+  const editedCommand = 'printf \'EDITED-RETRY-SENTINEL\\n\''
+  await dialog.getByLabel('Retry command').fill(editedCommand)
+  await dialog.getByRole('button', { name: 'Retry and continue workflow' }).click()
+  await expect(dialog).toBeHidden()
+  await expect.poll(transcript).toContain('EDITED-RETRY-SENTINEL')
+  await expect.poll(taskStatus).toBe('completed')
+  await expect(mainPage.getByText('Finished after edited retry', { exact: true })).toBeVisible()
+
+  await mainPage.getByRole('radio', { name: 'Flow graph view' }).click()
+  await mainPage.getByText('Fail then edit', { exact: true }).click()
+  await mainPage.getByRole('button', { name: 'Edit command and retry' }).click()
+  dialog = mainPage.getByRole('dialog')
+  await expect(dialog.getByLabel('Retry command')).toHaveValue(originalCommand)
+  await dialog.getByRole('button', { name: 'Cancel' }).click()
+  expect(await mainPage.evaluate(async (workflowId) => {
+    if (!window.cliLoom) throw new Error('Missing main preload API')
+    const records = await window.cliLoom.listWorkflows() as Array<{ workflow: WorkflowDefinition }>
+    return records.find((record) => record.workflow.id === workflowId)?.workflow
+  }, retryWorkflow.id)).toEqual(retryWorkflow)
+
+  await electronApp.close()
+  await launchApplication()
+  await mainPage.getByRole('button', { name: 'Open project Project A' }).click()
+  const restoredTaskButton = mainPage.locator('.task-sidebar button').filter({ hasText: taskTitle }).first()
+  await expect(restoredTaskButton).toBeVisible()
+  await restoredTaskButton.click()
+  await mainPage.getByRole('radio', { name: 'Flow graph view' }).click()
+  await mainPage.getByText('Fail then edit', { exact: true }).click()
+  await expect(mainPage.locator('[data-slot="card-description"]')).toContainText(editedCommand)
+  await mainPage.getByRole('button', { name: 'Edit command and retry' }).click()
+  dialog = mainPage.getByRole('dialog')
+  await expect(dialog.getByLabel('Retry command')).toHaveValue(originalCommand)
+  await dialog.getByRole('button', { name: 'Cancel' }).click()
   expect(failures).toEqual([])
 })

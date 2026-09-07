@@ -31,8 +31,9 @@ import type {
 } from './appTypes'
 import type { TerminalSession } from './utils'
 
-const { designerInspectorRender, reactFlowRender, terminalTranscriptLoadRequest } = vi.hoisted(() => ({
+const { designerInspectorRender, nodeDetailRender, reactFlowRender, terminalTranscriptLoadRequest } = vi.hoisted(() => ({
   designerInspectorRender: vi.fn(),
+  nodeDetailRender: vi.fn(),
   reactFlowRender: vi.fn(),
   terminalTranscriptLoadRequest: vi.fn()
 }))
@@ -403,7 +404,9 @@ vi.mock('./components/NodeDetailPanel', async () => {
       canOperate,
       node,
       onLoadTerminalTranscript,
+      onGetTerminalRetryDraft,
       onRetryNode,
+      onRetryTerminal,
       onRun,
       onVariableChange,
       sessions,
@@ -412,12 +415,16 @@ vi.mock('./components/NodeDetailPanel', async () => {
       canOperate: boolean
       node: { id: string; name: string }
       onLoadTerminalTranscript: (session: TerminalSession) => Promise<void>
+      onGetTerminalRetryDraft: (sessionId: string, mode: 'workflow' | 'standalone') => Promise<unknown>
       onRetryNode: () => void
+      onRetryTerminal: (sessionId: string, mode: 'workflow' | 'standalone', edit?: { revision: string; command: string }) => Promise<void>
       onRun?: () => void
       onVariableChange: (key: string, value: string) => void
       sessions: TerminalSession[]
       variables: Record<string, unknown>
-    }) => React.createElement(
+    }) => {
+      nodeDetailRender({ onGetTerminalRetryDraft, onRetryTerminal })
+      return React.createElement(
       'section',
       { 'data-testid': 'node-detail' },
       React.createElement('span', null, node.name),
@@ -448,7 +455,8 @@ vi.mock('./components/NodeDetailPanel', async () => {
         onClick: onRetryNode,
         type: 'button'
       }, `重试节点 ${node.id}`)
-    )
+      )
+    }
   }
 })
 
@@ -784,6 +792,7 @@ function setupApi(options: {
       (_request: WorkflowRuntimeStartOptions): Promise<WorkflowRuntimeState | undefined> => Promise.resolve(undefined)
     ),
     retryWorkflowNode: vi.fn().mockResolvedValue(undefined),
+    getProcessRetryDraft: vi.fn().mockResolvedValue(null),
     retryProcess: vi.fn().mockResolvedValue({ sessionId: 'session-1' }),
     killProcess: vi.fn().mockResolvedValue(true),
     stopWorkflow: vi.fn().mockResolvedValue(undefined),
@@ -1890,6 +1899,63 @@ describe('App task workflow selection', () => {
       .toContain('End after retry'))
     expect(screen.getByRole('button', { name: '加载 Retry node task' })
       .getAttribute('data-task-status')).toBe('completed')
+  })
+
+  it('passes retry edits through and leaves edited failures for the dialog to render', async () => {
+    const task: TaskRecord = {
+      id: 'terminal-edit-task',
+      project_id: project.id,
+      title: 'Terminal edit task',
+      status: 'failed',
+      created_at: '2026-08-05T00:00:00.000Z',
+      updated_at: '2026-08-05T00:00:00.000Z'
+    }
+    const failedState = {
+      ...runtimeState(task.id, workflowA, task),
+      status: 'failed' as const,
+      workflowCompleted: false
+    }
+    const { api } = setupApi({
+      data: bootstrap([task]),
+      restore: { state: failedState, workflow: workflowA }
+    })
+    const draft = {
+      sessionId: 'session-edit',
+      mode: 'workflow' as const,
+      revision: 'revision-edit',
+      command: 'original',
+      source: 'saved-command' as const,
+      syntax: 'workflow' as const,
+      cwd: '/repo',
+      executionTargetName: null,
+      hasSavedVariables: false
+    }
+    api.getProcessRetryDraft.mockResolvedValue(draft)
+    await renderBootstrappedApp()
+    fireEvent.click(await screen.findByRole('button', { name: '加载 Terminal edit task' }))
+    const callbacks = nodeDetailRender.mock.calls.at(-1)?.[0] as {
+      onGetTerminalRetryDraft: (sessionId: string, mode: 'workflow') => Promise<unknown>
+      onRetryTerminal: (
+        sessionId: string,
+        mode: 'workflow',
+        edit?: { revision: string; command: string }
+      ) => Promise<void>
+    }
+
+    await expect(callbacks.onGetTerminalRetryDraft('session-edit', 'workflow')).resolves.toEqual(draft)
+    expect(api.getProcessRetryDraft).toHaveBeenCalledWith('session-edit', 'workflow')
+
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    api.retryProcess.mockRejectedValueOnce(new Error('edited retry rejected'))
+    const edit = { revision: draft.revision, command: 'edited' }
+    await expect(callbacks.onRetryTerminal('session-edit', 'workflow', edit))
+      .rejects.toThrow('edited retry rejected')
+    expect(api.retryProcess).toHaveBeenCalledWith('session-edit', 'workflow', edit)
+    expect(consoleError).not.toHaveBeenCalled()
+
+    api.retryProcess.mockRejectedValueOnce(new Error('one-click retry rejected'))
+    await expect(callbacks.onRetryTerminal('session-edit', 'workflow')).resolves.toBeUndefined()
+    expect(consoleError).toHaveBeenCalledOnce()
   })
 
   it('passes the branch id when retrying a failed parallel branch node', async () => {

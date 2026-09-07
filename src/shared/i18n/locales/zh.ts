@@ -73,7 +73,10 @@ export default {
       retryBindingIncomplete: '历史终端变量绑定不完整，无法安全重试，请重新运行工作流',
       retryBindingUnmatched: '历史终端包含无法关联的变量绑定，无法安全重试，请重新运行工作流',
       retryEnvInvalid: '终端重试环境无效，请重新运行工作流',
-      retryParamsInvalid: '终端重试参数无效，请重新运行工作流'
+      retryParamsInvalid: '终端重试参数无效，请重新运行工作流',
+      retryCommandEmpty: '重试命令不能为空白',
+      retryVariableUnknown: '保存的命令没有变量“{{name}}”的值',
+      retrySavedVariableUnknown: '未知的保存变量“{{name}}”；请重新加载重试命令'
     },
     assistant: {
       invalidAction: '助手设置操作无效',
@@ -212,6 +215,7 @@ export default {
       stillRunning: '当前任务的工作流仍在运行或等待输入',
       retryAlreadyQueued: '终端重试已在排队或运行',
       nodeStateChanged: '节点状态已变化，无法重试当前终端',
+      retryDraftChanged: '终端或工作流状态已变化，请重新加载命令后再重试。',
       shutdownFailed: '工作流运行时关闭失败：{{detail}}',
       shuttingDown: '应用正在退出，不能启动或恢复工作流'
     },
@@ -653,7 +657,24 @@ export default {
       aria: '重试终端命令',
       workflowTooltip: '重试此节点并继续原工作流',
       rerunTooltip: '独立重新运行这条历史命令，不改变原工作流',
-      rerunTooltipTarget: '在 {{target}} 中独立重新运行这条历史命令，不改变原工作流'
+      rerunTooltipTarget: '在 {{target}} 中独立重新运行这条历史命令，不改变原工作流',
+      editAction: '修改命令后重试',
+      editDescription: '仅本次执行生效，不修改工作流配置或下次默认命令。',
+      executionEnvironment: '执行环境',
+      workingDirectory: '工作目录',
+      commandLabel: '重试命令',
+      workflowHint: '支持 ${变量}；执行时使用当前工作流的变量值。',
+      workflowSavedHint: 'retry_saved_* 占位符使用原会话保存的值。',
+      standaloneHint: '命令中的已保存变量使用原会话的值。',
+      loading: '正在加载重试命令…',
+      loadFailed: '无法加载重试命令：{{detail}}',
+      reload: '重新加载',
+      emptyError: '请输入非空白命令。',
+      nulError: '命令不能包含 NUL 字符。',
+      stateChanged: '此终端已不能执行该操作，请关闭编辑框后重新打开。',
+      submitting: '正在提交…',
+      workflowSubmit: '重试并继续工作流',
+      standaloneSubmit: '重新执行命令'
     },
     environment: {
       label: '环境：{{target}}'

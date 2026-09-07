@@ -81,6 +81,7 @@ function Harness() {
   const [mounted, setMounted] = useState(true)
   const [narrow, setNarrow] = useState(false)
   const [sentInput, setSentInput] = useState('')
+  const [sessionEnded, setSessionEnded] = useState(false)
 
   return (
     <I18nextProvider i18n={i18n}>
@@ -107,6 +108,9 @@ function Harness() {
           <button data-testid="toggle-mounted" onClick={() => setMounted((value) => !value)} type="button">
             切换终端挂载状态
           </button>
+          <button data-testid="toggle-ended" onClick={() => setSessionEnded((value) => !value)} type="button">
+            切换终端结束状态
+          </button>
           <button
             data-testid="emit-detached"
             onClick={() => emitTerminalData('DETACHED-OUTPUT-SENTINEL\r\n')}
@@ -123,8 +127,21 @@ function Harness() {
         >
           {mounted && (
             <TerminalPane
-              session={session}
-              onRetry={async () => undefined}
+              session={{ ...session, status: sessionEnded ? 'closed' : 'running' }}
+              onGetRetryDraft={async (_sessionId, mode) => ({
+                sessionId: session.id,
+                mode,
+                revision: 'e2e-revision',
+                command: 'printf "default ${saved}"',
+                source: 'saved-command',
+                syntax: 'workflow',
+                cwd: '/a/very/long/project/path/that/remains/selectable/and/wraps/in/a/narrow/window',
+                executionTargetName: 'E2E native shell',
+                hasSavedVariables: false
+              })}
+              onRetry={async (_sessionId, _mode, edit) => {
+                if (edit) setSentInput(`RETRY:${edit.command}`)
+              }}
               onSendInput={(_sessionId, input) => setSentInput((value) => value + input)}
               onStop={async () => undefined}
             />

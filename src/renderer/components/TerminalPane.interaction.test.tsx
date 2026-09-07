@@ -347,6 +347,80 @@ describe('TerminalPane context actions', () => {
     expect(screen.queryByRole('button', { name: 'terminal:action.rerunCommand' })).toBeNull()
   })
 
+  it('loads the main-process draft and submits an edited multiline command', async () => {
+    const onGetRetryDraft = vi.fn().mockResolvedValue({
+      sessionId: 'session-1',
+      mode: 'workflow',
+      revision: 'revision-1',
+      command: 'default ${value}',
+      source: 'workflow-retry-command',
+      syntax: 'workflow',
+      cwd: '/a/very/long/project/path',
+      executionTargetName: 'PowerShell',
+      hasSavedVariables: false
+    })
+    const onRetry = vi.fn().mockResolvedValue(undefined)
+    render(
+      <TerminalPane
+        session={{ ...runningSession, status: 'failed' }}
+        workflowRole="retryable"
+        onGetRetryDraft={onGetRetryDraft}
+        onRetry={onRetry}
+        onSendInput={vi.fn()}
+        onStop={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'terminal:retry.editAction' }))
+    const textarea = await screen.findByLabelText('terminal:retry.commandLabel')
+    expect(onGetRetryDraft).toHaveBeenCalledWith('session-1', 'workflow')
+    expect((textarea as HTMLTextAreaElement).value).toBe('default ${value}')
+    fireEvent.change(textarea, { target: { value: '  first line\nsecond ${value}  ' } })
+    fireEvent.click(screen.getByRole('button', { name: 'terminal:retry.workflowSubmit' }))
+
+    await waitFor(() => expect(onRetry).toHaveBeenCalledWith('session-1', 'workflow', {
+      revision: 'revision-1',
+      command: '  first line\nsecond ${value}  '
+    }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  })
+
+  it('keeps edited input when submission fails and prevents blank submission', async () => {
+    const onRetry = vi.fn().mockRejectedValue(new Error('state changed'))
+    render(
+      <TerminalPane
+        session={{ ...runningSession, status: 'closed' }}
+        onGetRetryDraft={vi.fn().mockResolvedValue({
+          sessionId: 'session-1',
+          mode: 'standalone',
+          revision: 'revision-2',
+          command: 'original',
+          source: 'saved-command',
+          syntax: 'replay',
+          cwd: '/repo',
+          executionTargetName: null,
+          hasSavedVariables: true
+        })}
+        onRetry={onRetry}
+        onSendInput={vi.fn()}
+        onStop={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'terminal:retry.editAction' }))
+    const textarea = await screen.findByLabelText('terminal:retry.commandLabel')
+    fireEvent.change(textarea, { target: { value: '   \n' } })
+    fireEvent.click(screen.getByRole('button', { name: 'terminal:retry.standaloneSubmit' }))
+    expect(onRetry).not.toHaveBeenCalled()
+    expect(screen.getByText('terminal:retry.emptyError')).toBeTruthy()
+
+    fireEvent.change(textarea, { target: { value: 'edited ${retry_saved_1}' } })
+    fireEvent.click(screen.getByRole('button', { name: 'terminal:retry.standaloneSubmit' }))
+    await waitFor(() => expect(screen.getByText('state changed')).toBeTruthy())
+    expect((textarea as HTMLTextAreaElement).value).toBe('edited ${retry_saved_1}')
+    expect(screen.getByRole('dialog')).toBeTruthy()
+  })
+
   it('distinguishes ending the workflow terminal from stopping a standalone command', () => {
     const onStop = vi.fn().mockResolvedValue(undefined)
     const { rerender } = render(

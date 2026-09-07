@@ -1,5 +1,5 @@
 import { lazy, memo, Suspense, useCallback, useEffect, useRef, useState } from 'react'
-import { LoaderCircle, RotateCcw, Square } from 'lucide-react'
+import { LoaderCircle, Pencil, RotateCcw, Square } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import {
   canAcceptTerminalInput,
@@ -8,6 +8,7 @@ import {
 } from '../utils'
 import { isTerminalSessionRunning } from '../../shared/terminalSession'
 import type { TerminalRetryMode } from '../../shared/terminalSession'
+import type { TerminalRetryDraft, TerminalRetryEdit } from '../../shared/terminalRetry'
 import {
   getTerminalAction,
   type TerminalWorkflowRole
@@ -20,6 +21,7 @@ import { getSelectionTextWithin, type TerminalTextSnapshot } from '../terminalTe
 import { Button } from '@/components/ui/button'
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
+import { TerminalRetryDialog } from './TerminalRetryDialog'
 
 const LazyTerminalMarkdownDialog = lazy(async () => {
   const module = await import('./TerminalMarkdownDialog')
@@ -55,6 +57,7 @@ export const TerminalPane = memo(function TerminalPane({
   onLoadTranscript,
   onSendInput,
   onRetry,
+  onGetRetryDraft,
   onStop,
   workflowRole = 'history',
   className
@@ -63,7 +66,8 @@ export const TerminalPane = memo(function TerminalPane({
   disabled?: boolean
   onLoadTranscript?: (session: TerminalSession) => Promise<void>
   onSendInput: (sessionId: string, input: string) => void
-  onRetry: (sessionId: string, mode: TerminalRetryMode) => Promise<void>
+  onRetry: (sessionId: string, mode: TerminalRetryMode, edit?: TerminalRetryEdit) => Promise<void>
+  onGetRetryDraft?: (sessionId: string, mode: TerminalRetryMode) => Promise<TerminalRetryDraft>
   onStop: (sessionId: string) => Promise<void>
   workflowRole?: TerminalWorkflowRole
   className?: string
@@ -74,12 +78,14 @@ export const TerminalPane = memo(function TerminalPane({
   const [inputReady, setInputReady] = useState(false)
   const [markdown, setMarkdown] = useState<string | null>(null)
   const [retrying, setRetrying] = useState(false)
+  const [editRetryMode, setEditRetryMode] = useState<TerminalRetryMode | null>(null)
   const [stopping, setStopping] = useState(false)
   const [transcriptLoadAttempt, setTranscriptLoadAttempt] = useState(0)
   const [transcriptLoadState, setTranscriptLoadState] = useState<'idle' | 'loading' | 'failed'>('idle')
   const targetLabel = formatExecutionTarget(session)
   const action = getTerminalAction(session.status, workflowRole)
   const xtermRef = useRef<XtermTerminalHandle>(null)
+  const editRetryButtonRef = useRef<HTMLButtonElement>(null)
   const getTextSnapshot = useCallback((): TerminalTextSnapshot => (
     xtermRef.current?.getTextSnapshot() ?? { source: 'all', text: '' }
   ), [])
@@ -142,25 +148,41 @@ export const TerminalPane = memo(function TerminalPane({
           </CardDescription>
           <CardAction className="flex items-center gap-2">
             {(action === 'retry-workflow' || action === 'rerun-command') && (
-              <Button
-                aria-label={action === 'retry-workflow'
-                  ? t('terminal:retry.aria')
-                  : t('terminal:action.rerunCommand')}
-                disabled={retrying}
-                onClick={() => void retry(action === 'retry-workflow' ? 'workflow' : 'standalone')}
-                size="sm"
-                title={action === 'retry-workflow'
-                  ? t('terminal:retry.workflowTooltip')
-                  : targetLabel
-                    ? t('terminal:retry.rerunTooltipTarget', { target: targetLabel })
-                    : t('terminal:retry.rerunTooltip')}
-                variant="outline"
-              >
-                <RotateCcw data-icon="inline-start" />
-                {action === 'retry-workflow'
-                  ? t('common:action.retry')
-                  : t('terminal:action.rerunCommand')}
-              </Button>
+              <>
+                <Button
+                  aria-label={action === 'retry-workflow'
+                    ? t('terminal:retry.aria')
+                    : t('terminal:action.rerunCommand')}
+                  disabled={retrying}
+                  onClick={() => void retry(action === 'retry-workflow' ? 'workflow' : 'standalone')}
+                  size="sm"
+                  title={action === 'retry-workflow'
+                    ? t('terminal:retry.workflowTooltip')
+                    : targetLabel
+                      ? t('terminal:retry.rerunTooltipTarget', { target: targetLabel })
+                      : t('terminal:retry.rerunTooltip')}
+                  variant="outline"
+                >
+                  <RotateCcw data-icon="inline-start" />
+                  {action === 'retry-workflow'
+                    ? t('common:action.retry')
+                    : t('terminal:action.rerunCommand')}
+                </Button>
+                {onGetRetryDraft && (
+                  <Button
+                    ref={editRetryButtonRef}
+                    aria-label={t('terminal:retry.editAction')}
+                    disabled={retrying}
+                    onClick={() => setEditRetryMode(action === 'retry-workflow' ? 'workflow' : 'standalone')}
+                    size="sm"
+                    title={t('terminal:retry.editAction')}
+                    variant="outline"
+                  >
+                    <Pencil data-icon="inline-start" />
+                    {t('terminal:retry.editAction')}
+                  </Button>
+                )}
+              </>
             )}
             {(action === 'end-and-continue' || action === 'stop-command') && (
               <Button
@@ -237,6 +259,24 @@ export const TerminalPane = memo(function TerminalPane({
         onClose={() => setMarkdown(null)}
         onRestoreFocus={restoreTerminalFocus}
       />
+      {editRetryMode && onGetRetryDraft && (
+        <TerminalRetryDialog
+          open
+          sessionId={session.id}
+          mode={editRetryMode}
+          available={canRetryTerminalSession(session) && (
+            (editRetryMode === 'workflow' && action === 'retry-workflow') ||
+            (editRetryMode === 'standalone' && action === 'rerun-command')
+          )}
+          onLoad={onGetRetryDraft}
+          onSubmit={onRetry}
+          onClose={() => setEditRetryMode(null)}
+          onRestoreFocus={() => {
+            if (editRetryButtonRef.current) editRetryButtonRef.current.focus()
+            else restoreTerminalFocus()
+          }}
+        />
+      )}
     </>
   )
 })

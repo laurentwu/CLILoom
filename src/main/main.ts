@@ -69,6 +69,7 @@ import { SettingsService } from './settingsService'
 import { ShellService } from './shellService'
 import { isUnsupportedProjectPath } from '../shared/projectPath'
 import type { TerminalRetryMode } from '../shared/terminalSession'
+import { parseTerminalRetryEdit, type TerminalRetryEdit } from '../shared/terminalRetry'
 import { clampWindowBounds } from './windowState'
 import { WorkflowConfigService } from './workflowConfigService'
 import { buildApplicationMenuTemplate } from './applicationMenu'
@@ -869,17 +870,27 @@ function registerIpc(): void {
     assertMainSender(event)
     return workflowConfigService.setDesignerState(value)
   })
-  ipcMain.handle('process:retry', async (
+  ipcMain.handle('process:get-retry-draft', async (
     event,
     sessionId: string,
     mode: TerminalRetryMode
   ) => {
     assertMainSender(event)
-    if (typeof sessionId !== 'string' || !sessionId) throw new Error(t('errors:session.invalidId'))
-    if (mode !== 'workflow' && mode !== 'standalone') {
-      throw new Error(t('errors:session.retryDataInvalid'))
-    }
-    return { sessionId: await workflowRuntime.retryTerminal(sessionId, mode) }
+    assertTerminalRetryRequest(sessionId, mode)
+    return workflowRuntime.getTerminalRetryDraft(sessionId, mode)
+  })
+  ipcMain.handle('process:retry', async (
+    event,
+    sessionId: string,
+    mode: TerminalRetryMode,
+    editValue?: TerminalRetryEdit
+  ) => {
+    assertMainSender(event)
+    assertTerminalRetryRequest(sessionId, mode)
+    const parsedEdit = editValue === undefined ? undefined : parseTerminalRetryEdit(editValue)
+    if (editValue !== undefined && !parsedEdit) throw new Error(t('errors:session.retryDataInvalid'))
+    const edit = parsedEdit ?? undefined
+    return { sessionId: await workflowRuntime.retryTerminal(sessionId, mode, edit) }
   })
   ipcMain.on('process:write', (event, sessionId: string, input: string) => {
     if (!isMainSender(event)) return
@@ -1057,6 +1068,15 @@ async function confirmAssistantWorkflowDelete(impact: {
 
 function assertMainSender(event: IpcSenderEvent): void {
   if (!isMainSender(event)) throw new Error(t('errors:sender.mainInvalid'))
+}
+
+function assertTerminalRetryRequest(sessionId: unknown, mode: unknown): asserts mode is TerminalRetryMode {
+  if (typeof sessionId !== 'string' || !sessionId || sessionId.includes('\0')) {
+    throw new Error(t('errors:session.invalidId'))
+  }
+  if (mode !== 'workflow' && mode !== 'standalone') {
+    throw new Error(t('errors:session.retryDataInvalid'))
+  }
 }
 
 function assertAssistantSender(event: IpcSenderEvent): void {

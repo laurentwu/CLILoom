@@ -5,6 +5,7 @@ import type { TerminalDataEvent, TerminalTranscriptSnapshot } from '../shared/te
 import type { UpdateState } from '../shared/update'
 import type { TerminalClosedEvent, TerminalRetryMode } from '../shared/terminalSession'
 import type { TaskDraftPayload, TaskDraftRecord } from '../shared/taskDraft'
+import type { TerminalRetryDraft, TerminalRetryEdit } from '../shared/terminalRetry'
 
 const api = {
   rendererNoSandboxSwitch: process.argv.includes('--no-sandbox'),
@@ -65,8 +66,12 @@ const api = {
   deleteWorkflow: (workflowId: string, expectedRevision: number) =>
     ipcRenderer.invoke('workflows:delete', workflowId, expectedRevision),
   setDesignerState: (value: unknown) => ipcRenderer.invoke('designer:set-state', value),
-  retryProcess: (sessionId: string, mode: TerminalRetryMode) =>
-    ipcRenderer.invoke('process:retry', sessionId, mode) as Promise<{ sessionId: string }>,
+  getProcessRetryDraft: (sessionId: string, mode: TerminalRetryMode) =>
+    ipcRenderer.invoke('process:get-retry-draft', sessionId, mode) as Promise<TerminalRetryDraft>,
+  retryProcess: (sessionId: string, mode: TerminalRetryMode, edit?: TerminalRetryEdit) =>
+    (edit
+      ? ipcRenderer.invoke('process:retry', sessionId, mode, edit)
+      : ipcRenderer.invoke('process:retry', sessionId, mode)) as Promise<{ sessionId: string }>,
   writeProcess: (sessionId: string, input: string) => ipcRenderer.send('process:write', sessionId, input),
   isInputReady: (sessionId: string) => ipcRenderer.invoke('process:isInputReady', sessionId) as Promise<boolean>,
   resizeProcess: (sessionId: string, cols: number, rows: number) => ipcRenderer.invoke('process:resize', sessionId, cols, rows),

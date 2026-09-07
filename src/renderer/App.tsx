@@ -61,6 +61,7 @@ import type {
 } from '../shared/workflowRuntime'
 import { TASK_DRAFT_VERSION } from '../shared/taskDraft'
 import type { TerminalRetryMode } from '../shared/terminalSession'
+import type { TerminalRetryDraft, TerminalRetryEdit } from '../shared/terminalRetry'
 import {
   DEFAULT_ASSISTANT_CONFIG,
   DEFAULT_APPEARANCE_PREFERENCES,
@@ -1016,10 +1017,25 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
     }
   }
 
-  async function retryTerminal(sessionId: string, mode: TerminalRetryMode) {
+  async function getTerminalRetryDraft(
+    sessionId: string,
+    mode: TerminalRetryMode
+  ): Promise<TerminalRetryDraft> {
+    const draft = await window.cliLoom?.getProcessRetryDraft(sessionId, mode)
+    if (!draft) throw new Error(t('terminal:retry.loadFailed', { detail: '' }))
+    return draft
+  }
+
+  async function retryTerminal(
+    sessionId: string,
+    mode: TerminalRetryMode,
+    edit?: TerminalRetryEdit
+  ) {
     try {
-      await window.cliLoom?.retryProcess(sessionId, mode)
+      if (edit) await window.cliLoom?.retryProcess(sessionId, mode, edit)
+      else await window.cliLoom?.retryProcess(sessionId, mode)
     } catch (error) {
+      if (edit) throw error
       handleError(error, 'retryTerminalProcess')
     }
   }
@@ -2603,6 +2619,7 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
                   zoomedNodeId={parallelZoomNodeId}
                   onLoadTerminalTranscript={loadTerminalTranscript}
                   onSendTerminalInput={sendTerminalInput}
+                  onGetTerminalRetryDraft={getTerminalRetryDraft}
                   onRetryTerminal={retryTerminal}
                 />
               ) : selectedNode ? (
@@ -2626,6 +2643,7 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
                   onShowGraph={returnFromNodeDetailZoom}
                   onLoadTerminalTranscript={loadTerminalTranscript}
                   onSendTerminalInput={sendTerminalInput}
+                  onGetTerminalRetryDraft={getTerminalRetryDraft}
                   onRetryTerminal={retryTerminal}
                   zoomTitle={getNodeDetailZoomTitle(nodeDetailZoomTarget)}
                 />

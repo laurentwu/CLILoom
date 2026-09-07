@@ -52,6 +52,7 @@ test.afterAll(async () => {
 })
 
 test.beforeEach(async () => {
+  await page.setViewportSize({ width: 1280, height: 900 })
   await page.reload()
   await page.locator('.xterm-helper-textarea').waitFor()
   await writeSystemClipboard('')
@@ -123,6 +124,40 @@ test('edits and copies Markdown in a trapped dialog, blocks links, and reopens a
   await page.getByRole('menuitem', { name: 'Show in rich text editor' }).click()
   await expect(page.getByRole('dialog').getByRole('heading', { name: 'Terminal E2E' })).toBeVisible()
   await expect(page.getByRole('dialog')).not.toContainText('Edited in Electron')
+})
+
+test('edits a retry command in a keyboard-trapped dialog and discards cancelled drafts', async ({}, testInfo) => {
+  await page.setViewportSize({ width: 800, height: 800 })
+  await page.getByTestId('toggle-ended').click()
+  const editButton = page.getByRole('button', { name: 'Edit command and retry' })
+  await expect(editButton).toBeVisible()
+
+  await editButton.click()
+  let dialog = page.getByRole('dialog')
+  const command = dialog.getByLabel('Retry command')
+  await expect(command).toHaveValue('printf "default ${saved}"')
+  await expect(command).toBeFocused()
+  await expect(dialog).toContainText('/a/very/long/project/path/that/remains/selectable')
+  const box = await dialog.boundingBox()
+  expect(box?.width).toBeLessThanOrEqual(768)
+  for (let index = 0; index < 8; index += 1) {
+    await page.keyboard.press('Tab')
+    expect(await dialog.evaluate((element) => element.contains(document.activeElement))).toBe(true)
+  }
+  await page.screenshot({ path: testInfo.outputPath('terminal-retry-dialog.png') })
+  await dialog.getByRole('button', { name: 'Cancel' }).click()
+  await expect(dialog).toBeHidden()
+  await expect(editButton).toBeFocused()
+  await expect(page.getByTestId('sent-input')).toHaveText('')
+
+  await editButton.click()
+  dialog = page.getByRole('dialog')
+  const reopenedCommand = dialog.getByLabel('Retry command')
+  await expect(reopenedCommand).toHaveValue('printf "default ${saved}"')
+  await reopenedCommand.fill('  printf first\nprintf "${saved}"  ')
+  await dialog.getByRole('button', { name: 'Rerun command' }).click()
+  await expect(dialog).toBeHidden()
+  await expect(page.getByTestId('sent-input')).toHaveText('RETRY:  printf first\nprintf "${saved}"  ')
 })
 
 test('preserves logical lines after real reflow and isolates the alternate buffer', async () => {

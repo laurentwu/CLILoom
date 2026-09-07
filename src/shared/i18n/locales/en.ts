@@ -73,7 +73,10 @@ export default {
       retryBindingIncomplete: 'Historical terminal variable binding is incomplete, cannot retry safely, rerun the workflow',
       retryBindingUnmatched: 'Historical terminal contains variable bindings that cannot be matched, cannot retry safely, rerun the workflow',
       retryEnvInvalid: 'Terminal retry environment is invalid, rerun the workflow',
-      retryParamsInvalid: 'Terminal retry parameters are invalid, rerun the workflow'
+      retryParamsInvalid: 'Terminal retry parameters are invalid, rerun the workflow',
+      retryCommandEmpty: 'Retry command must not be blank',
+      retryVariableUnknown: 'The saved command has no value for variable "{{name}}"',
+      retrySavedVariableUnknown: 'Unknown saved variable "{{name}}"; reload the retry command'
     },
     assistant: {
       invalidAction: 'Invalid assistant settings action',
@@ -212,6 +215,7 @@ export default {
       stillRunning: 'The workflow for the current task is still running or waiting for input',
       retryAlreadyQueued: 'A terminal retry is already queued or running',
       nodeStateChanged: 'Node state has changed; cannot retry the current terminal',
+      retryDraftChanged: 'The terminal or workflow state changed. Reload the command before retrying.',
       shutdownFailed: 'Workflow runtime shutdown failed: {{detail}}',
       shuttingDown: 'The application is exiting; workflows cannot be started or resumed'
     },
@@ -653,7 +657,24 @@ export default {
       aria: 'Retry terminal command',
       workflowTooltip: 'Retry this node and continue the original workflow',
       rerunTooltip: 'Rerun this historical command without changing the original workflow',
-      rerunTooltipTarget: 'Rerun this historical command in {{target}} without changing the original workflow'
+      rerunTooltipTarget: 'Rerun this historical command in {{target}} without changing the original workflow',
+      editAction: 'Edit command and retry',
+      editDescription: 'This applies only to this execution. It does not change the workflow configuration or the next default command.',
+      executionEnvironment: 'Execution environment',
+      workingDirectory: 'Working directory',
+      commandLabel: 'Retry command',
+      workflowHint: 'Supports ${variable}; current workflow values are used when the command runs.',
+      workflowSavedHint: 'retry_saved_* placeholders use values saved with the original session.',
+      standaloneHint: 'Saved variables in the command use values from the original session.',
+      loading: 'Loading retry command…',
+      loadFailed: 'Could not load the retry command: {{detail}}',
+      reload: 'Reload',
+      emptyError: 'Enter a non-blank command.',
+      nulError: 'The command must not contain a NUL character.',
+      stateChanged: 'This terminal is no longer available for this action. Close and reopen the editor.',
+      submitting: 'Submitting…',
+      workflowSubmit: 'Retry and continue workflow',
+      standaloneSubmit: 'Rerun command'
     },
     environment: {
       label: 'Environment: {{target}}'
