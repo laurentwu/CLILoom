@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { Maximize2, Play, Plus, RotateCcw, SquareTerminal, X } from 'lucide-react'
 import type { VariableDefinition, VariableValue, WorkflowNode } from '../../shared/workflow'
 import type { TerminalRetryMode } from '../../shared/terminalSession'
+import type { TerminalRetryDraft, TerminalRetryEdit } from '../../shared/terminalRetry'
 import { NodeIcon } from './NodeIcon'
 import { StatusBadge } from './StatusBadge'
 import { TerminalOutputPane, TerminalPane } from './TerminalPane'
@@ -42,7 +43,8 @@ type NodeDetailPanelProps = {
   onShowGraph: () => void
   onLoadTerminalTranscript: (session: TerminalSession) => Promise<void>
   onSendTerminalInput: (sessionId: string, input: string) => void
-  onRetryTerminal: (sessionId: string, mode: TerminalRetryMode) => Promise<void>
+  onGetTerminalRetryDraft?: (sessionId: string, mode: TerminalRetryMode) => Promise<TerminalRetryDraft>
+  onRetryTerminal: (sessionId: string, mode: TerminalRetryMode, edit?: TerminalRetryEdit) => Promise<void>
   zoomTitle?: string
   className?: string
 }
@@ -63,6 +65,7 @@ export function NodeDetailPanel({
   onShowGraph,
   onLoadTerminalTranscript,
   onSendTerminalInput,
+  onGetTerminalRetryDraft,
   onRetryTerminal,
   zoomTitle,
   className
@@ -174,6 +177,7 @@ export function NodeDetailPanel({
                 session={selectedSession}
                 onLoadTranscript={onLoadTerminalTranscript}
                 onSendInput={onSendTerminalInput}
+                onGetRetryDraft={onGetTerminalRetryDraft}
                 onRetry={onRetryTerminal}
                 onStop={onStopTerminal}
                 workflowRole={getSessionWorkflowRole(selectedSession)}

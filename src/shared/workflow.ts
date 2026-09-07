@@ -1,5 +1,10 @@
 import { AppError } from './appError'
 import type { ShellNeutralCommand } from './shell'
+import {
+  bindMixedWorkflowRetryTemplate,
+  referencedVariableNames,
+  type TerminalCommandTemplateSnapshot
+} from './terminalRetry'
 import type { TranslationKey } from './i18n/types'
 import type { TranslationIssue } from './i18n/translator'
 
@@ -786,6 +791,49 @@ function stringifyVariable(value: VariableValue | undefined): string {
   return result
 }
 
+export function createWorkflowCommandTemplateSnapshot(
+  template: string,
+  variables: Record<string, VariableValue>
+): TerminalCommandTemplateSnapshot {
+  const captured: Record<string, string> = {}
+  for (const name of referencedVariableNames(template)) {
+    if (!Object.hasOwn(captured, name)) captured[name] = stringifyVariable(variables[name])
+  }
+  return { version: 1, syntax: 'workflow', template, variables: captured }
+}
+
+export function bindWorkflowRetryCommand(
+  template: string,
+  variables: Record<string, VariableValue>,
+  reservedEnvironmentNames: Iterable<string> = [],
+  replaySnapshot?: TerminalCommandTemplateSnapshot
+): {
+  command: ShellNeutralCommand
+  displayCommand: string
+  commandTemplate: TerminalCommandTemplateSnapshot
+} {
+  if (replaySnapshot?.syntax === 'replay') {
+    const bound = bindMixedWorkflowRetryTemplate(
+      template,
+      variables,
+      replaySnapshot,
+      stringifyVariable,
+      reservedEnvironmentNames
+    )
+    return {
+      command: bound.command,
+      displayCommand: displayNeutralCommand(bound.command),
+      commandTemplate: bound.snapshot
+    }
+  }
+  const command = bindShellCommand(template, variables, reservedEnvironmentNames)
+  return {
+    command,
+    displayCommand: interpolate(template, variables),
+    commandTemplate: createWorkflowCommandTemplateSnapshot(template, variables)
+  }
+}
+
 export function interpolate(template: string, variables: Record<string, VariableValue>): string {
   return template.replace(VARIABLE_REFERENCE_PATTERN, (_match, key: string) => {
     return stringifyVariable(variables[key])
@@ -857,6 +905,12 @@ export function bindShellCommand(
   }
 
   return { version: 1, segments, bindings }
+}
+
+function displayNeutralCommand(command: ShellNeutralCommand): string {
+  return command.segments.map((segment) => (
+    segment.type === 'literal' ? segment.value : command.bindings[segment.name]
+  )).join('')
 }
 
 export function validateWorkflow(definition: WorkflowDefinition): TranslationIssue[] {

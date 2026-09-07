@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import type { VariableValue, WorkflowNode } from '../../shared/workflow'
 import type { WorkflowRuntimeBranchRun, WorkflowRuntimeNodeRun } from '../../shared/workflowRuntime'
 import type { TerminalRetryMode } from '../../shared/terminalSession'
+import type { TerminalRetryDraft, TerminalRetryEdit } from '../../shared/terminalRetry'
 import { getBranchRouteNodeIds, getCurrentInputVariables, type TerminalSession } from '../utils'
 import { NodeDetailPanel } from './NodeDetailPanel'
 import { Button } from '@/components/ui/button'
@@ -23,7 +24,8 @@ type ParallelBranchGroupProps = {
   zoomedNodeId?: string | null
   onLoadTerminalTranscript: (session: TerminalSession) => Promise<void>
   onSendTerminalInput: (sessionId: string, input: string) => void
-  onRetryTerminal: (sessionId: string, mode: TerminalRetryMode) => Promise<void>
+  onGetTerminalRetryDraft?: (sessionId: string, mode: TerminalRetryMode) => Promise<TerminalRetryDraft>
+  onRetryTerminal: (sessionId: string, mode: TerminalRetryMode, edit?: TerminalRetryEdit) => Promise<void>
 }
 
 export function ParallelBranchGroup({
@@ -41,6 +43,7 @@ export function ParallelBranchGroup({
   zoomedNodeId = null,
   onLoadTerminalTranscript,
   onSendTerminalInput,
+  onGetTerminalRetryDraft,
   onRetryTerminal
 }: ParallelBranchGroupProps) {
   const { t } = useTranslation()
@@ -110,6 +113,7 @@ export function ParallelBranchGroup({
                 onShowGraph={() => onToggleZoomNode(node.id)}
                 onLoadTerminalTranscript={onLoadTerminalTranscript}
                 onSendTerminalInput={onSendTerminalInput}
+                onGetTerminalRetryDraft={onGetTerminalRetryDraft}
                 onRetryTerminal={onRetryTerminal}
                 zoomTitle={isZoomed ? t('node:zoom.backToGateway') : t('node:zoom.zoomIn')}
               />

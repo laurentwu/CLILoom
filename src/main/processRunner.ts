@@ -38,6 +38,10 @@ import type {
   TerminalSessionKind,
   TerminalSessionStatus
 } from '../shared/terminalSession'
+import {
+  parseTerminalCommandTemplateSnapshot,
+  type TerminalCommandTemplateSnapshot
+} from '../shared/terminalRetry'
 
 const SESSION_PERSIST_INTERVAL_MS = 5000
 const TERMINAL_DATA_FLUSH_INTERVAL_MS = 16
@@ -155,6 +159,8 @@ export type RunProcessRequest = {
   cols?: number
   rows?: number
   preparationError?: string
+  commandTemplate?: TerminalCommandTemplateSnapshot
+  defaultCommand?: StoredRetryCommand
 }
 
 export type RunProcessResult = {
@@ -178,6 +184,11 @@ export type RetryCommandOverride = {
   command: string | ShellNeutralCommand
   displayCommand?: string
   preparationError?: string
+  commandTemplate?: TerminalCommandTemplateSnapshot
+}
+
+export type RetryProcessOptions = {
+  preserveDefaultCommand?: boolean
 }
 
 export type RetryProcessTarget = Omit<RetriedProcess, 'result'>
@@ -250,22 +261,27 @@ type PendingLaunch = {
 type PendingTerminalData = TerminalDataEvent
 type TerminalDataInput = Omit<TerminalDataEvent, 'cursor'>
 
-type StoredRunRetry = {
+export type StoredRetryCommand = {
   command: ShellNeutralCommand
+  displayCommand?: string
+  preparationError?: string
+  commandTemplate?: TerminalCommandTemplateSnapshot
+}
+
+type StoredRunRetry = StoredRetryCommand & {
   sourceCwd?: string
   targetCwd?: string
   target?: ExecutionTargetDescriptor
   env?: Record<string, string>
   timeoutMs?: number
-  displayCommand?: string
   cols?: number
   rows?: number
-  preparationError?: string
 }
 
 type StoredRunEnvelope = {
   version: 3
   retry: StoredRunRetry
+  defaultCommand?: StoredRetryCommand
   diagnostic?: {
     targetId: string
     kind: 'native'
@@ -284,7 +300,26 @@ type RetriableSessionRecord = {
   cwd: string
   status: TerminalSessionStatus
   created_at: string
+  updated_at: string
   request_json?: string | null
+}
+
+export type ProcessRetrySource = {
+  sessionId: string
+  taskId: string
+  nodeId: string
+  kind: RunProcessRequest['kind']
+  cwd: string
+  createdAt: string
+  updatedAt: string
+  storedJson: string | null
+  retry: StoredRunRetry
+  defaultCommand?: StoredRetryCommand
+}
+
+type ParsedStoredRunRequest = {
+  retry: StoredRunRetry
+  defaultCommand?: StoredRetryCommand
 }
 
 type NormalizedRunRequest = Omit<RunProcessRequest, 'command' | 'env'> & {
@@ -408,31 +443,60 @@ export class ProcessRunner {
     }
   }
 
-  retry(sessionId: string, commandOverride?: RetryCommandOverride): RetriedProcess {
+  getRetrySource(sessionId: string): ProcessRetrySource {
     const row = this.getRetriableSession(sessionId)
-    const storedRequest = this.parseStoredRunRequest(row.command, row.request_json)
+    const stored = this.parseStoredRunRequest(row.command, row.request_json)
+    return {
+      sessionId: row.id,
+      taskId: row.task_id,
+      nodeId: row.node_id,
+      kind: row.kind,
+      cwd: row.cwd,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      storedJson: row.request_json ?? null,
+      retry: stored.retry,
+      ...(stored.defaultCommand ? { defaultCommand: stored.defaultCommand } : {})
+    }
+  }
+
+  retry(
+    sessionId: string,
+    commandOverride?: RetryCommandOverride,
+    options: RetryProcessOptions = {}
+  ): RetriedProcess {
+    const row = this.getRetriableSession(sessionId)
+    const stored = this.parseStoredRunRequest(row.command, row.request_json)
+    const storedRequest = stored.defaultCommand ?? stored.retry
     const baselineRequest: RunProcessRequest = {
       taskId: row.task_id,
       nodeId: row.node_id,
       kind: row.kind,
       command: storedRequest.command,
       displayCommand: storedRequest.displayCommand
-        ?? getTerminalSessionDisplayCommand(row.command, row.request_json),
-      cwd: storedRequest.targetCwd ?? row.cwd,
-      sourceCwd: storedRequest.sourceCwd ?? row.cwd,
-      ...(storedRequest.target ? { executionTarget: storedRequest.target } : {}),
-      env: storedRequest.env,
-      timeoutMs: storedRequest.timeoutMs,
-      cols: storedRequest.cols,
-      rows: storedRequest.rows,
-      preparationError: storedRequest.preparationError
+        ?? (stored.defaultCommand
+          ? displayNeutralCommand(storedRequest.command)
+          : getTerminalSessionDisplayCommand(row.command, row.request_json)),
+      cwd: stored.retry.targetCwd ?? row.cwd,
+      sourceCwd: stored.retry.sourceCwd ?? row.cwd,
+      ...(stored.retry.target ? { executionTarget: stored.retry.target } : {}),
+      env: stored.retry.env,
+      timeoutMs: stored.retry.timeoutMs,
+      cols: stored.retry.cols,
+      rows: stored.retry.rows,
+      preparationError: storedRequest.preparationError,
+      commandTemplate: storedRequest.commandTemplate,
+      ...(options.preserveDefaultCommand
+        ? { defaultCommand: stored.defaultCommand ?? toStoredRetryCommand(stored.retry) }
+        : {})
     }
     const request = normalizeRunRequest(commandOverride
       ? {
           ...baselineRequest,
           command: commandOverride.command,
           displayCommand: commandOverride.displayCommand,
-          preparationError: commandOverride.preparationError
+          preparationError: commandOverride.preparationError,
+          commandTemplate: commandOverride.commandTemplate
         }
       : baselineRequest)
     const now = new Date().toISOString()
@@ -506,7 +570,7 @@ export class ProcessRunner {
 
   private getRetriableSession(sessionId: string): RetriableSessionRecord {
     const row = this.db.prepare(
-      `select id, task_id, node_id, kind, command, cwd, status, created_at, request_json
+      `select id, task_id, node_id, kind, command, cwd, status, created_at, updated_at, request_json
       from terminal_sessions where id = ?`
     ).get(sessionId) as RetriableSessionRecord | undefined
 
@@ -532,7 +596,12 @@ export class ProcessRunner {
       if (request.cols !== undefined) legacyRetry.cols = request.cols
       if (request.rows !== undefined) legacyRetry.rows = request.rows
       if (request.preparationError !== undefined) legacyRetry.preparationError = request.preparationError
-      return JSON.stringify({ version: 2, retry: legacyRetry })
+      if (request.commandTemplate !== undefined) legacyRetry.commandTemplate = request.commandTemplate
+      return JSON.stringify({
+        version: 2,
+        retry: legacyRetry,
+        ...(request.defaultCommand ? { defaultCommand: request.defaultCommand } : {})
+      })
     }
     const retry: StoredRunRetry = {
       command: request.command,
@@ -546,9 +615,11 @@ export class ProcessRunner {
     if (request.cols !== undefined) retry.cols = request.cols
     if (request.rows !== undefined) retry.rows = request.rows
     if (request.preparationError !== undefined) retry.preparationError = request.preparationError
+    if (request.commandTemplate !== undefined) retry.commandTemplate = request.commandTemplate
     const stored: StoredRunEnvelope = {
       version: 3,
       retry,
+      ...(request.defaultCommand ? { defaultCommand: request.defaultCommand } : {}),
       ...(target ? {
         diagnostic: {
           targetId: target.id,
@@ -565,8 +636,8 @@ export class ProcessRunner {
   private parseStoredRunRequest(
     storedCommand: string,
     value: string | null | undefined
-  ): StoredRunRetry {
-    if (!value) return decodeLegacyCommand(storedCommand, undefined)
+  ): ParsedStoredRunRequest {
+    if (!value) return { retry: decodeLegacyCommand(storedCommand, undefined) }
     try {
       const parsedValue = JSON.parse(value) as unknown
       if (!parsedValue || typeof parsedValue !== 'object' || Array.isArray(parsedValue)) {
@@ -600,7 +671,7 @@ export class ProcessRunner {
         if (parsed.version === 3 && (!sourceCwd || !targetCwd)) {
           throw new TerminalRetryError(t('errors:session.retryDataInvalid'))
         }
-        return {
+        const parsedRetry: StoredRunRetry = {
           command,
           ...(sourceCwd ? { sourceCwd } : {}),
           ...(targetCwd ? { targetCwd } : {}),
@@ -612,7 +683,14 @@ export class ProcessRunner {
           rows: parseStoredNumber(retry.rows),
           preparationError: typeof retry.preparationError === 'string'
             ? retry.preparationError
-            : undefined
+            : undefined,
+          commandTemplate: parseTerminalCommandTemplateSnapshot(retry.commandTemplate, command)
+            ?? undefined
+        }
+        const defaultCommand = parseStoredRetryCommand(parsed.defaultCommand)
+        return {
+          retry: parsedRetry,
+          ...(defaultCommand ? { defaultCommand } : {})
         }
       }
 
@@ -628,12 +706,12 @@ export class ProcessRunner {
         ? parsed.displayCommand
         : undefined
       const decoded = decodeLegacyCommand(storedCommand, env)
-      return {
+      return { retry: {
         command: decoded.command,
         env: decoded.env,
         timeoutMs,
         displayCommand
-      }
+      } }
     } catch (error) {
       if (error instanceof TerminalRetryError) throw error
       throw new TerminalRetryError(t('errors:session.retryReadFailed'))
@@ -1625,9 +1703,41 @@ function neutralCommandSource(command: ShellNeutralCommand): string {
 
 function getRequestDisplayCommand(request: NormalizedRunRequest): string {
   if (request.displayCommand !== undefined) return request.displayCommand
-  return request.command.segments.map((segment) => (
-    segment.type === 'literal' ? segment.value : request.command.bindings[segment.name]
+  return displayNeutralCommand(request.command)
+}
+
+function displayNeutralCommand(command: ShellNeutralCommand): string {
+  return command.segments.map((segment) => (
+    segment.type === 'literal' ? segment.value : command.bindings[segment.name]
   )).join('')
+}
+
+function toStoredRetryCommand(value: StoredRunRetry): StoredRetryCommand {
+  return {
+    command: value.command,
+    ...(value.displayCommand !== undefined ? { displayCommand: value.displayCommand } : {}),
+    ...(value.preparationError !== undefined ? { preparationError: value.preparationError } : {}),
+    ...(value.commandTemplate !== undefined ? { commandTemplate: value.commandTemplate } : {})
+  }
+}
+
+function parseStoredRetryCommand(value: unknown): StoredRetryCommand | undefined {
+  if (value === undefined) return undefined
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new TerminalRetryError(t('errors:session.retryDataInvalid'))
+  }
+  const stored = value as Record<string, unknown>
+  const command = parseShellNeutralCommand(stored.command)
+  if (!command) throw new TerminalRetryError(t('errors:session.retryCommandInvalid'))
+  const commandTemplate = parseTerminalCommandTemplateSnapshot(stored.commandTemplate, command)
+  return {
+    command,
+    ...(typeof stored.displayCommand === 'string' ? { displayCommand: stored.displayCommand } : {}),
+    ...(typeof stored.preparationError === 'string'
+      ? { preparationError: stored.preparationError }
+      : {}),
+    ...(commandTemplate ? { commandTemplate } : {})
+  }
 }
 
 function parseStoredEnvironment(value: unknown): Record<string, string> | undefined {

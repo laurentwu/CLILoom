@@ -54,6 +54,7 @@ Configure your preferred AI CLI and run it in a dedicated interactive terminal w
   - Interactive PTY sessions with keyboard input and responsive resizing.
   - Per-node working directories, environment variables, timeouts, and accepted exit codes.
   - Persisted terminal output and safe retries for historical commands.
+  - Edit a workflow retry or historical rerun command for one execution without changing the workflow or the next default command.
   - Native-shell target snapshots shared by terminals, hooks, retries, and the AI CLI assistant.
 
 - **Variables and hooks**

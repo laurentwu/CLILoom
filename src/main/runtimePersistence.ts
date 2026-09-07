@@ -212,6 +212,45 @@ export function restoreWorkflowRuntimeState(
   }
 }
 
+/**
+ * Load the retry-relevant runtime snapshot without repairing database rows,
+ * persisting workflow versions, emitting events, or creating a runtime engine.
+ */
+export function readWorkflowRuntimeState(
+  db: AppDatabase,
+  taskId: string,
+  options: RestoreRuntimeOptions = {}
+): RuntimeRestoreResult {
+  const terminalSessions = listTerminalSessionMetadataByTask(db, taskId).map((session) => {
+    if (session.status !== 'running' || options.isTerminalSessionLive?.(session)) return session
+    return { ...session, status: 'interrupted' as const }
+  })
+  const run = db
+    .prepare('select * from workflow_runs where task_id = ? order by updated_at desc limit 1')
+    .get(taskId) as WorkflowRunRow | undefined
+  if (!run) {
+    return { state: null, workflow: null, workflowVersion: null, terminalSessions }
+  }
+  const state = restoreStateFromRun(db, run)
+  for (const session of terminalSessions) {
+    if (session.status !== 'interrupted') continue
+    const nodeRun = state.nodeRuns[session.node_id]
+    if (nodeRun?.sessionId !== session.id || nodeRun.status !== 'running') continue
+    state.nodeRuns[session.node_id] = { ...nodeRun, status: 'interrupted' }
+    const branch = Object.values(state.branchRuns).find(
+      (item) => item.currentNodeId === session.node_id && item.status === 'running'
+    )
+    if (branch) branch.status = 'interrupted'
+    else if (state.currentNodeId === session.node_id && state.status === 'running') {
+      state.status = 'interrupted'
+    }
+  }
+  const workflow = run.workflow_version === null
+    ? null
+    : loadWorkflowVersion(db, run.workflow_id, run.workflow_version)
+  return { state, workflow, workflowVersion: run.workflow_version, terminalSessions }
+}
+
 export function reconcileRecoverableRuntimeState(
   db: AppDatabase,
   options: RestoreRuntimeOptions = {}

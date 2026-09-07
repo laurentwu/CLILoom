@@ -367,6 +367,63 @@ describe.runIf(Boolean(posixTestShell))('ProcessRunner PTY execution', () => {
     db.close()
   })
 
+  it('keeps an edited retry temporary across consecutive edits and runner recreation', async () => {
+    const { db, runner } = createRunner()
+    const first = await runner.run({
+      taskId: 'task-temporary-retry',
+      nodeId: 'node-temporary-retry',
+      kind: 'non-interactive',
+      command: 'printf A',
+      displayCommand: 'printf A',
+      commandTemplate: { version: 1, syntax: 'workflow', template: 'printf A', variables: {} },
+      cwd: process.cwd()
+    })
+
+    const retryB = runner.retry(first.sessionId, {
+      command: 'printf B',
+      displayCommand: 'printf B',
+      commandTemplate: { version: 1, syntax: 'workflow', template: 'printf B', variables: {} }
+    }, { preserveDefaultCommand: true })
+    await expect(retryB.result).resolves.toMatchObject({ stdout: expect.stringContaining('B') })
+    expect(runner.getRetrySource(first.sessionId)).toMatchObject({
+      retry: { displayCommand: 'printf B' },
+      defaultCommand: { displayCommand: 'printf A' }
+    })
+
+    const retryC = runner.retry(first.sessionId, {
+      command: 'printf C',
+      displayCommand: 'printf C',
+      commandTemplate: { version: 1, syntax: 'workflow', template: 'printf C', variables: {} }
+    }, { preserveDefaultCommand: true })
+    await expect(retryC.result).resolves.toMatchObject({ stdout: expect.stringContaining('C') })
+    const afterC = JSON.parse((db.prepare(
+      'select request_json from terminal_sessions where id = ?'
+    ).get(first.sessionId) as { request_json: string }).request_json)
+    expect(afterC).toMatchObject({
+      retry: { displayCommand: 'printf C' },
+      defaultCommand: { displayCommand: 'printf A' }
+    })
+
+    const recreated = new ProcessRunner(
+      db,
+      () => null,
+      process.env,
+      { resolveEffectiveShell: () => posixTestShell! }
+    )
+    expect(recreated.getRetrySource(first.sessionId)).toMatchObject({
+      retry: { displayCommand: 'printf C' },
+      defaultCommand: { displayCommand: 'printf A' }
+    })
+    const normalRetry = recreated.retry(first.sessionId)
+    await expect(normalRetry.result).resolves.toMatchObject({ stdout: expect.stringContaining('A') })
+    const afterNormal = JSON.parse((db.prepare(
+      'select request_json from terminal_sessions where id = ?'
+    ).get(first.sessionId) as { request_json: string }).request_json)
+    expect(afterNormal.retry.displayCommand).toBe('printf A')
+    expect(afterNormal).not.toHaveProperty('defaultCommand')
+    db.close()
+  })
+
   it('clears a stored preparation error when a valid retry override is supplied', async () => {
     const { db, runner } = createRunner()
     const first = await runner.run({

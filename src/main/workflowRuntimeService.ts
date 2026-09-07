@@ -1,9 +1,11 @@
+import { createHash } from 'node:crypto'
 import type { BrowserWindow } from 'electron'
 import { ensureWorkflowVersion, type AppDatabase } from './database'
 import { t } from './i18n'
 import type { ProcessRunner } from './processRunner'
 import {
   persistWorkflowRuntimeState,
+  readWorkflowRuntimeState,
   restoreWorkflowRuntimeState,
   type RuntimeRestoreResult
 } from './runtimePersistence'
@@ -27,6 +29,15 @@ import {
   type WorkflowExecutionContext
 } from '../shared/shell'
 import type { TerminalRetryMode } from '../shared/terminalSession'
+import {
+  bindTerminalCommandTemplate,
+  restoreTerminalCommandTemplate,
+  TerminalRetryTemplateError,
+  type TerminalCommandTemplateSnapshot,
+  type TerminalRetryDraft,
+  type TerminalRetryEdit
+} from '../shared/terminalRetry'
+import type { ProcessRetrySource } from './processRunner'
 
 type WorkflowExecutionTargetService = {
   resolveEffectiveTarget: () => Promise<ResolvedExecutionTarget>
@@ -37,6 +48,12 @@ type WorkflowExecutionTargetService = {
 
 export type WorkflowRuntimeStartRequest = Omit<WorkflowRuntimeStartOptions, 'projectDir'> & {
   projectDir?: string
+}
+
+type PreparedTerminalRetryDraft = {
+  draft: TerminalRetryDraft
+  snapshot: TerminalCommandTemplateSnapshot
+  source: ProcessRetrySource
 }
 
 export class WorkflowRuntimeService {
@@ -229,7 +246,8 @@ export class WorkflowRuntimeService {
 
   async retryTerminal(
     sessionId: string,
-    mode: TerminalRetryMode | 'auto' = 'auto'
+    mode: TerminalRetryMode | 'auto' = 'auto',
+    edit?: TerminalRetryEdit
   ): Promise<string> {
     this.assertRuntimeAvailable()
     if (this.pendingTerminalRetries.has(sessionId)) {
@@ -243,7 +261,7 @@ export class WorkflowRuntimeService {
     try {
       return await this.serializeTask(
         target.taskId,
-        () => this.retryTerminalInternal(sessionId, target, mode)
+        () => this.retryTerminalInternal(sessionId, target, mode, edit)
       )
     } catch (error) {
       this.pendingTerminalRetries.delete(sessionId)
@@ -254,10 +272,28 @@ export class WorkflowRuntimeService {
   private async retryTerminalInternal(
     sessionId: string,
     target: ReturnType<ProcessRunner['getRetryTarget']>,
-    mode: TerminalRetryMode | 'auto'
+    mode: TerminalRetryMode | 'auto',
+    edit?: TerminalRetryEdit
   ): Promise<string> {
     this.assertRuntimeAvailable()
-    if (mode === 'standalone') return this.retryStandaloneTerminal(sessionId)
+    let prepared: PreparedTerminalRetryDraft | undefined
+    let commandEdited = false
+    if (edit) {
+      if (mode === 'auto') throw new Error(t('errors:session.retryDataInvalid'))
+      prepared = await this.prepareTerminalRetryDraft(sessionId, mode)
+      if (prepared.draft.revision !== edit.revision) {
+        throw new Error(t('errors:workflowRuntime.retryDraftChanged'))
+      }
+      if (!edit.command.trim()) throw new Error(t('errors:session.retryCommandEmpty'))
+      if (edit.command.includes('\0')) throw new Error(t('errors:session.commandContainsNul'))
+      commandEdited = edit.command !== prepared.draft.command
+    }
+    if (mode === 'standalone') {
+      return this.retryStandaloneTerminal(
+        sessionId,
+        commandEdited && edit && prepared ? { edit, prepared } : undefined
+      )
+    }
 
     const engine = this.getEngineForTerminalRetry(target.taskId, target.nodeId)
     if (!engine) {
@@ -265,7 +301,23 @@ export class WorkflowRuntimeService {
       return this.retryStandaloneTerminal(sessionId)
     }
 
-    const retryStart = await engine.beginTerminalRetry(target.nodeId, target.sessionId)
+    let retryStart: Awaited<ReturnType<WorkflowRuntimeEngine['beginTerminalRetry']>>
+    try {
+      retryStart = await engine.beginTerminalRetry(
+        target.nodeId,
+        target.sessionId,
+        commandEdited && edit && prepared
+          ? {
+              command: edit.command,
+              ...(prepared.snapshot.syntax === 'replay'
+                ? { replaySnapshot: prepared.snapshot }
+                : {})
+            }
+          : undefined
+      )
+    } catch (error) {
+      throw this.describeTerminalRetryTemplateError(error)
+    }
     if (retryStart === false) {
       this.releaseEngineIfTerminal(target.taskId, engine)
       throw new Error(t('errors:workflowRuntime.nodeStateChanged'))
@@ -276,7 +328,13 @@ export class WorkflowRuntimeService {
     let retried: ReturnType<ProcessRunner['retry']>
     try {
       retried = retryStart.commandOverride
-        ? this.processRunner.retry(sessionId, retryStart.commandOverride)
+        ? commandEdited
+          ? this.processRunner.retry(
+              sessionId,
+              retryStart.commandOverride,
+              { preserveDefaultCommand: true }
+            )
+          : this.processRunner.retry(sessionId, retryStart.commandOverride)
         : this.processRunner.retry(sessionId)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -307,13 +365,176 @@ export class WorkflowRuntimeService {
     return retried.sessionId
   }
 
-  private retryStandaloneTerminal(sessionId: string): string {
-    const retried = this.processRunner.retry(sessionId)
+  private retryStandaloneTerminal(
+    sessionId: string,
+    edited?: { edit: TerminalRetryEdit; prepared: PreparedTerminalRetryDraft }
+  ): string {
+    let retried: ReturnType<ProcessRunner['retry']>
+    if (edited) {
+      try {
+        const command = bindTerminalCommandTemplate(
+          edited.edit.command,
+          edited.prepared.snapshot,
+          Object.keys(edited.prepared.source.retry.env ?? {})
+        )
+        retried = this.processRunner.retry(sessionId, {
+          command,
+          displayCommand: displayNeutralCommand(command),
+          commandTemplate: {
+            ...edited.prepared.snapshot,
+            template: edited.edit.command
+          }
+        }, { preserveDefaultCommand: true })
+      } catch (error) {
+        throw this.describeTerminalRetryTemplateError(error)
+      }
+    } else {
+      retried = this.processRunner.retry(sessionId)
+    }
     void retried.result.then(
       () => this.pendingTerminalRetries.delete(sessionId),
       () => this.pendingTerminalRetries.delete(sessionId)
     )
     return retried.sessionId
+  }
+
+  async getTerminalRetryDraft(
+    sessionId: string,
+    mode: TerminalRetryMode
+  ): Promise<TerminalRetryDraft> {
+    this.assertRuntimeAvailable()
+    return (await this.prepareTerminalRetryDraft(sessionId, mode)).draft
+  }
+
+  private async prepareTerminalRetryDraft(
+    sessionId: string,
+    mode: TerminalRetryMode
+  ): Promise<PreparedTerminalRetryDraft> {
+    const source = this.processRunner.getRetrySource(sessionId)
+    const savedCommand = source.defaultCommand ?? source.retry
+    let command = ''
+    let draftSource: TerminalRetryDraft['source'] = 'saved-command'
+    let snapshot: TerminalCommandTemplateSnapshot
+    let workflowRevision: Record<string, unknown> | undefined
+
+    if (mode === 'workflow') {
+      const inspection = this.inspectWorkflowTerminalRetry(source)
+      const configuredCommand = inspection.engine.getTerminalRetryCommand(source.nodeId)
+      if (!inspection.engine.canRetryTerminalNode(source.nodeId)) {
+        throw new Error(t('errors:workflowRuntime.nodeStateChanged'))
+      }
+      this.assertTerminalSessionIdentity(source, inspection.state, inspection.terminalSessions)
+      if (configuredCommand !== undefined) {
+        command = configuredCommand
+        draftSource = 'workflow-retry-command'
+        snapshot = { version: 1, syntax: 'workflow', template: command, variables: {} }
+      } else {
+        snapshot = restoreTerminalCommandTemplate(savedCommand.command, savedCommand.commandTemplate)
+        command = snapshot.template
+      }
+      const run = this.db.prepare(
+        'select id, workflow_id, workflow_version from workflow_runs where task_id = ? order by updated_at desc limit 1'
+      ).get(source.taskId) as Record<string, unknown> | undefined
+      const nodeRun = inspection.state.nodeRuns[source.nodeId]
+      const branch = Object.values(inspection.state.branchRuns).find(
+        (item) => item.currentNodeId === source.nodeId && item.nodeIds.includes(source.nodeId)
+      )
+      workflowRevision = {
+        run: run ?? null,
+        nodeId: source.nodeId,
+        nodeRun: nodeRun ?? null,
+        branchId: branch?.branchId ?? null,
+        branchStatus: branch?.status ?? null
+      }
+    } else {
+      snapshot = restoreTerminalCommandTemplate(savedCommand.command, savedCommand.commandTemplate)
+      command = snapshot.template
+    }
+
+    const revision = createHash('sha256').update(stableStringify({
+      sessionId,
+      mode,
+      updatedAt: source.updatedAt,
+      storedJson: source.storedJson,
+      defaultSource: savedCommand,
+      command,
+      workflow: workflowRevision ?? null
+    })).digest('hex')
+    const executionTargetName = source.retry.target?.displayName
+      ?? await this.resolveRetryTargetName()
+    const draft: TerminalRetryDraft = {
+      sessionId,
+      mode,
+      revision,
+      command,
+      source: draftSource,
+      syntax: snapshot.syntax,
+      cwd: source.retry.targetCwd ?? source.cwd,
+      executionTargetName,
+      hasSavedVariables: snapshot.syntax === 'replay' && Object.keys(snapshot.variables).length > 0
+    }
+    return { draft, snapshot, source }
+  }
+
+  private inspectWorkflowTerminalRetry(source: ProcessRetrySource): {
+    engine: WorkflowRuntimeEngine
+    state: WorkflowRuntimeState
+    terminalSessions: RuntimeRestoreResult['terminalSessions']
+  } {
+    const persisted = readWorkflowRuntimeState(this.db, source.taskId, {
+      isTerminalSessionLive: (session) => this.processRunner.hasLiveSession(session.id)
+    })
+    const active = this.engines.get(source.taskId)
+    const state = active?.getState() ?? persisted.state
+    if (!state || !persisted.workflow || persisted.workflowVersion === null) {
+      throw new Error(t('errors:workflowRuntime.nodeStateChanged'))
+    }
+    const engine = active ?? new WorkflowRuntimeEngine({
+      taskId: state.taskId,
+      projectId: state.projectId,
+      projectDir: state.projectDir,
+      workflow: persisted.workflow,
+      variables: state.variables,
+      initialState: state,
+      translator: t
+    }, this.createAdapter(persisted.workflow, persisted.workflowVersion))
+    return { engine, state, terminalSessions: persisted.terminalSessions }
+  }
+
+  private assertTerminalSessionIdentity(
+    source: ProcessRetrySource,
+    state: WorkflowRuntimeState,
+    sessions: RuntimeRestoreResult['terminalSessions']
+  ): void {
+    const nodeRun = state.nodeRuns[source.nodeId]
+    if (nodeRun?.sessionId) {
+      if (nodeRun.sessionId !== source.sessionId) {
+        throw new Error(t('errors:workflowRuntime.nodeStateChanged'))
+      }
+      return
+    }
+    const latest = sessions.filter((session) => session.node_id === source.nodeId).at(-1)
+    if (latest?.id !== source.sessionId) {
+      throw new Error(t('errors:workflowRuntime.nodeStateChanged'))
+    }
+  }
+
+  private async resolveRetryTargetName(): Promise<string | null> {
+    if (!this.executionTargets) return null
+    return (await this.executionTargets.resolveEffectiveTarget()).displayName
+  }
+
+  private describeTerminalRetryTemplateError(error: unknown): Error {
+    if (!(error instanceof TerminalRetryTemplateError)) {
+      return error instanceof Error ? error : new Error(String(error))
+    }
+    if (error.code === 'unknown-saved-variable') {
+      return new Error(t('errors:session.retrySavedVariableUnknown', { name: error.variable ?? '' }))
+    }
+    if (error.code === 'unknown-variable') {
+      return new Error(t('errors:session.retryVariableUnknown', { name: error.variable ?? '' }))
+    }
+    return new Error(t('errors:session.retryCommandEmpty'))
   }
 
   async restore(taskId: string): Promise<RuntimeRestoreResult> {
@@ -614,4 +835,24 @@ function cancelledHookResult() {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+function displayNeutralCommand(command: import('../shared/shell').ShellNeutralCommand): string {
+  return command.segments.map((segment) => (
+    segment.type === 'literal' ? segment.value : command.bindings[segment.name]
+  )).join('')
+}
+
+function stableStringify(value: unknown): string {
+  return JSON.stringify(sortJsonValue(value))
+}
+
+function sortJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortJsonValue)
+  if (!value || typeof value !== 'object') return value
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => [key, sortJsonValue(item)])
+  )
 }
