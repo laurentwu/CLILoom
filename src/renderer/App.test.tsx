@@ -240,6 +240,7 @@ vi.mock('./components/ProjectRail', async () => {
       onRenameProject,
       onSelectProject,
       projects,
+      unreadProjectIds,
       shellSnapshot,
       onShellChange,
       onRefreshShells,
@@ -254,6 +255,7 @@ vi.mock('./components/ProjectRail', async () => {
       onRenameProject: (project: ProjectRecord, name: string) => Promise<void>
       onSelectProject: (project: ProjectRecord) => void
       projects: ProjectRecord[]
+      unreadProjectIds: ReadonlySet<string>
       shellSnapshot: ShellSnapshot
       onShellChange: (shellId: string | 'automatic') => Promise<void>
       onRefreshShells: () => Promise<void>
@@ -264,6 +266,11 @@ vi.mock('./components/ProjectRail', async () => {
     }) => React.createElement(
       'nav',
       null,
+      React.createElement(
+        'output',
+        { 'data-testid': 'unread-projects' },
+        [...unreadProjectIds].sort().join(',')
+      ),
       ...projects.map((item) => React.createElement(
         React.Fragment,
         { key: item.id },
@@ -334,6 +341,7 @@ vi.mock('./components/TaskSidebar', async () => {
       activeProject,
       displayedTasks,
       onLoadTask,
+      onDeleteTask,
       onRenameTask,
       onShowMoreTasks,
       onStartNewTask,
@@ -343,6 +351,7 @@ vi.mock('./components/TaskSidebar', async () => {
       activeProject: ProjectRecord | null
       displayedTasks: TaskRecord[]
       onLoadTask: (task: TaskRecord) => void
+      onDeleteTask: (task: TaskRecord) => Promise<void>
       onRenameTask: (task: TaskRecord, title: string) => Promise<void>
       onShowMoreTasks: () => void
       onStartNewTask: () => void
@@ -359,6 +368,7 @@ vi.mock('./components/TaskSidebar', async () => {
       showDraftTask
         ? React.createElement('div', { 'data-testid': 'draft-task' }, '草稿任务')
         : null,
+      React.createElement('output', { 'data-testid': 'task-count' }, String(totalTaskCount)),
       ...displayedTasks.map((task) => React.createElement(
         React.Fragment,
         { key: task.id },
@@ -370,7 +380,11 @@ vi.mock('./components/TaskSidebar', async () => {
         React.createElement('button', {
           onClick: () => void onRenameTask(task, '手动名称'),
           type: 'button'
-        }, `重命名 ${task.title}`)
+        }, `重命名 ${task.title}`),
+        React.createElement('button', {
+          onClick: () => void onDeleteTask(task),
+          type: 'button'
+        }, `删除任务 ${task.title}`)
       )),
       displayedTasks.length < totalTaskCount
         ? React.createElement('button', {
@@ -652,12 +666,13 @@ function runtimeState(
   definition: WorkflowDefinition,
   task?: TaskRecord
 ): WorkflowRuntimeState {
+  const projectId = task?.project_id ?? project.id
   return {
     taskId,
-    projectId: project.id,
-    projectDir: project.path,
+    projectId,
+    projectDir: projectId === otherProject.id ? otherProject.path : project.path,
     workflowId: definition.id,
-    status: task?.status === 'completed' ? 'completed' : 'running',
+    status: task?.status ?? 'running',
     currentNodeId: definition.nodes[0].id,
     variables: { prompt: 'saved prompt' },
     nodeRuns: {},
@@ -757,6 +772,7 @@ function setupApi(options: {
     setLastOpenedWorkspace: vi.fn().mockResolvedValue(undefined),
     renameProject: vi.fn().mockResolvedValue(undefined),
     updateTaskTitle: vi.fn().mockResolvedValue(undefined),
+    deleteTask: vi.fn().mockResolvedValue(undefined),
     setDesignerState: vi.fn().mockResolvedValue(undefined),
     setProjectDefaultWorkflow: vi.fn().mockResolvedValue(undefined),
     saveWorkflow: vi.fn().mockImplementation((workflow: WorkflowDefinition) => Promise.resolve({
@@ -771,6 +787,7 @@ function setupApi(options: {
     retryProcess: vi.fn().mockResolvedValue({ sessionId: 'session-1' }),
     killProcess: vi.fn().mockResolvedValue(true),
     stopWorkflow: vi.fn().mockResolvedValue(undefined),
+    updateWorkflowVariables: vi.fn().mockResolvedValue(undefined),
     updateShell: vi.fn().mockResolvedValue(data.shell),
     refreshShells: vi.fn().mockResolvedValue(data.shell),
     getUpdateState: vi.fn().mockResolvedValue(initialUpdateState),
@@ -1048,6 +1065,275 @@ describe('App task pagination', () => {
     expect(screen.queryByRole('button', { name: '加载 项目二任务 11' })).toBeNull()
     expect(screen.queryByRole('button', { name: '加载 项目一任务 20' })).toBeNull()
     expect(screen.getByRole('button', { name: '查看更多' })).toBeTruthy()
+  })
+})
+
+describe('App project task isolation and unread state', () => {
+  const thirdProject: ProjectRecord = {
+    ...project,
+    id: 'project-3',
+    name: 'Third Project',
+    path: '/third-repo'
+  }
+
+  it('keeps background updates out of the current rows, count, pagination and workspace', async () => {
+    const projectTasks = taskRecords(project, 12, 'Current')
+    const data = bootstrap(projectTasks)
+    data.projects = [project, otherProject, thirdProject]
+    const { listeners } = setupApi({ data })
+
+    await renderBootstrappedApp()
+    await screen.findByRole('button', { name: '加载 Current 10' })
+    fireEvent.click(screen.getByRole('button', { name: '查看更多' }))
+    expect(screen.getByTestId('task-count').textContent).toBe('12')
+    expect(screen.getByTestId('variables').textContent).toBe('{"prompt":"default a"}')
+
+    const backgroundTask = taskRecords(otherProject, 1, 'Background')[0]
+    backgroundTask.status = 'waiting-input'
+    const thirdTask = taskRecords(thirdProject, 1, 'Third')[0]
+    thirdTask.status = 'failed'
+    act(() => {
+      listeners.workflowState?.(runtimeState(backgroundTask.id, workflowB, backgroundTask))
+      listeners.workflowState?.(runtimeState(thirdTask.id, workflowA, thirdTask))
+    })
+
+    expect(screen.getByTestId('task-count').textContent).toBe('12')
+    expect(screen.getByRole('button', { name: '加载 Current 12' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '加载 Background 1' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '加载 Third 1' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '查看更多' })).toBeNull()
+    expect(screen.getByTestId('variables').textContent).toBe('{"prompt":"default a"}')
+    expect(screen.getByTestId('unread-projects').textContent).toBe('project-2,project-3')
+  })
+
+  it('keeps a marker while loading, merges a newer event, and clears only that project on success', async () => {
+    const projectTasks = taskRecords(project, 1, 'Current')
+    const backgroundTask = taskRecords(otherProject, 1, 'Background')[0]
+    backgroundTask.status = 'waiting-input'
+    const thirdTask = taskRecords(thirdProject, 1, 'Third')[0]
+    thirdTask.status = 'running'
+    const pendingBackgroundList = deferred<TaskRecord[]>()
+    const data = bootstrap(projectTasks)
+    data.projects = [project, otherProject, thirdProject]
+    const { api, listeners } = setupApi({ data })
+    api.listTasks.mockImplementation((projectId: string) => {
+      if (projectId === otherProject.id) return pendingBackgroundList.promise
+      return Promise.resolve(projectTasks)
+    })
+
+    await renderBootstrappedApp()
+    await screen.findByRole('button', { name: '加载 Current 1' })
+    act(() => {
+      listeners.workflowState?.(runtimeState(backgroundTask.id, workflowB, backgroundTask))
+      listeners.workflowState?.(runtimeState(thirdTask.id, workflowA, thirdTask))
+    })
+    fireEvent.click(screen.getByRole('button', { name: '切换项目 Other Project' }))
+    await waitFor(() => expect(api.listTasks).toHaveBeenCalledWith(otherProject.id))
+    expect(screen.getByTestId('unread-projects').textContent).toBe('project-2,project-3')
+    expect(screen.getByTestId('task-count').textContent).toBe('0')
+
+    const completedTask = {
+      ...backgroundTask,
+      status: 'completed' as const,
+      updated_at: '2026-08-10T19:31:00.000Z'
+    }
+    act(() => listeners.workflowState?.(runtimeState(completedTask.id, workflowB, completedTask)))
+    await act(async () => {
+      pendingBackgroundList.resolve([backgroundTask, projectTasks[0]])
+      await pendingBackgroundList.promise
+    })
+
+    const row = screen.getByRole('button', { name: '加载 Background 1' })
+    expect(row.getAttribute('data-task-status')).toBe('completed')
+    expect(screen.queryByRole('button', { name: '加载 Current 1' })).toBeNull()
+    expect(screen.getByTestId('task-count').textContent).toBe('1')
+    expect(screen.getByTestId('unread-projects').textContent).toBe('project-3')
+  })
+
+  it('does not clear unread on a failed list and clears it after a later successful visit', async () => {
+    const projectTasks = taskRecords(project, 1, 'Current')
+    const backgroundTasks = taskRecords(otherProject, 1, 'Background')
+    const data = bootstrap(projectTasks)
+    data.projects = [project, otherProject]
+    const { api, listeners } = setupApi({ data })
+    let backgroundLoads = 0
+    api.listTasks.mockImplementation((projectId: string) => {
+      if (projectId !== otherProject.id) return Promise.resolve(projectTasks)
+      backgroundLoads += 1
+      return backgroundLoads === 1
+        ? Promise.reject(new Error('list failed'))
+        : Promise.resolve(backgroundTasks)
+    })
+
+    await renderBootstrappedApp()
+    act(() => listeners.workflowState?.(runtimeState(
+      backgroundTasks[0].id,
+      workflowB,
+      backgroundTasks[0]
+    )))
+    fireEvent.click(screen.getByRole('button', { name: '切换项目 Other Project' }))
+    await waitFor(() => expect(backgroundLoads).toBe(1))
+    expect(screen.getByTestId('unread-projects').textContent).toBe('project-2')
+
+    fireEvent.click(screen.getByRole('button', { name: '切换项目 Project' }))
+    await screen.findByRole('button', { name: '加载 Current 1' })
+    fireEvent.click(screen.getByRole('button', { name: '切换项目 Other Project' }))
+    await screen.findByRole('button', { name: '加载 Background 1' })
+    expect(screen.getByTestId('unread-projects').textContent).toBe('')
+  })
+
+  it('rejects an old A list after navigating A to B to A', async () => {
+    const oldA = deferred<TaskRecord[]>()
+    const currentA = deferred<TaskRecord[]>()
+    const data = bootstrap([])
+    data.projects = [project, otherProject]
+    const { api } = setupApi({ data })
+    let aLoads = 0
+    api.listTasks.mockImplementation((projectId: string) => {
+      if (projectId === otherProject.id) return Promise.resolve([])
+      aLoads += 1
+      return aLoads === 1 ? oldA.promise : currentA.promise
+    })
+
+    await renderBootstrappedApp()
+    await waitFor(() => expect(aLoads).toBe(1))
+    fireEvent.click(screen.getByRole('button', { name: '切换项目 Other Project' }))
+    await waitFor(() => expect(api.listTasks).toHaveBeenCalledWith(otherProject.id))
+    fireEvent.click(screen.getByRole('button', { name: '切换项目 Project' }))
+    await waitFor(() => expect(aLoads).toBe(2))
+
+    await act(async () => {
+      oldA.resolve([{
+        ...taskRecords(project, 1)[0],
+        id: 'old',
+        title: 'Task old'
+      }])
+      await oldA.promise
+    })
+    expect(screen.queryByRole('button', { name: '加载 Task old' })).toBeNull()
+    await act(async () => {
+      currentA.resolve([{
+        ...taskRecords(project, 1)[0],
+        id: 'current',
+        title: 'Task current'
+      }])
+      await currentA.promise
+    })
+    expect(screen.getByRole('button', { name: '加载 Task current' })).toBeTruthy()
+  })
+
+  it('keeps a delayed launch result in its owning project and still cleans that draft', async () => {
+    const data = bootstrap([])
+    data.projects = [project, otherProject]
+    const pendingStart = deferred<WorkflowRuntimeState>()
+    const { api, listeners } = setupApi({ data, drafts: {} })
+    api.listTasks.mockResolvedValue([])
+    api.startWorkflow.mockReturnValueOnce(pendingStart.promise)
+
+    const newTaskButton = await renderBootstrappedApp()
+    fireEvent.click(newTaskButton)
+    await waitFor(() => expect(api.saveTaskDraft).toHaveBeenCalledWith(
+      project.id,
+      expect.anything(),
+      true
+    ))
+    fireEvent.click(screen.getByRole('button', { name: '运行' }))
+    await waitFor(() => expect(api.startWorkflow).toHaveBeenCalledOnce())
+    const request = api.startWorkflow.mock.calls[0][0] as WorkflowRuntimeStartOptions
+
+    fireEvent.click(screen.getByRole('button', { name: '切换项目 Other Project' }))
+    await waitFor(() => expect(api.listTasks).toHaveBeenCalledWith(otherProject.id))
+    const launchedTask: TaskRecord = {
+      id: request.taskId,
+      project_id: project.id,
+      title: 'Delayed A task',
+      status: 'running',
+      created_at: '2026-08-10T19:30:00.000Z',
+      updated_at: '2026-08-10T19:30:00.000Z'
+    }
+    await act(async () => {
+      pendingStart.resolve(runtimeState(request.taskId, request.workflow, launchedTask))
+      await pendingStart.promise
+    })
+    act(() => listeners.workflowState?.(runtimeState(
+      request.taskId,
+      request.workflow,
+      launchedTask
+    )))
+
+    expect(screen.getByTestId('task-count').textContent).toBe('0')
+    expect(screen.queryByRole('button', { name: '加载 Delayed A task' })).toBeNull()
+    expect(screen.getByTestId('unread-projects').textContent).toBe(project.id)
+    await waitFor(() => expect(api.deleteTaskDraft).toHaveBeenCalledWith(project.id))
+  })
+
+  it('ignores late restore, rename and delete results after switching projects', async () => {
+    const selectedTask = taskRecords(project, 1, 'Selected A')[0]
+    const renamedTask = {
+      ...taskRecords(project, 1, 'Rename A')[0],
+      id: 'project-1-task-to-rename'
+    }
+    const backgroundTask = taskRecords(otherProject, 1, 'Stable B')[0]
+    const data = bootstrap([selectedTask, renamedTask])
+    data.projects = [project, otherProject]
+    const restoreA = deferred<{
+      state: WorkflowRuntimeState
+      workflow: WorkflowDefinition
+      terminalSessions: TerminalSession[]
+    }>()
+    const renameA = deferred<void>()
+    const deleteA = deferred<void>()
+    const { api } = setupApi({ data })
+    api.listTasks.mockImplementation((projectId: string) => Promise.resolve(
+      projectId === otherProject.id ? [backgroundTask] : [selectedTask, renamedTask]
+    ))
+    api.restoreWorkflowState.mockImplementation((taskId: string) => {
+      if (taskId === selectedTask.id) return restoreA.promise
+      if (taskId === backgroundTask.id) {
+        return Promise.resolve({
+          state: runtimeState(backgroundTask.id, workflowB, backgroundTask),
+          workflow: workflowB,
+          terminalSessions: []
+        })
+      }
+      return Promise.resolve(null)
+    })
+    api.updateTaskTitle.mockReturnValueOnce(renameA.promise)
+    api.deleteTask.mockReturnValueOnce(deleteA.promise)
+    await renderBootstrappedApp()
+
+    fireEvent.click(await screen.findByRole('button', { name: '加载 Selected A 1' }))
+    fireEvent.click(screen.getByRole('button', { name: '重命名 Rename A 1' }))
+    fireEvent.click(screen.getByRole('button', { name: '删除任务 Selected A 1' }))
+    await waitFor(() => {
+      expect(api.restoreWorkflowState).toHaveBeenCalledWith(selectedTask.id)
+      expect(api.updateTaskTitle).toHaveBeenCalledWith(renamedTask.id, '手动名称')
+      expect(api.deleteTask).toHaveBeenCalledWith(selectedTask.id)
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '切换项目 Other Project' }))
+    fireEvent.click(await screen.findByRole('button', { name: '加载 Stable B 1' }))
+    await waitFor(() => expect(screen.getByTitle('流程 B')).toBeTruthy())
+    expect(screen.getByTestId('variables').textContent).toBe('{"prompt":"saved prompt"}')
+
+    await act(async () => {
+      renameA.resolve(undefined)
+      deleteA.resolve(undefined)
+      restoreA.resolve({
+        state: runtimeState(selectedTask.id, workflowA, selectedTask),
+        workflow: { ...workflowA, name: 'Late A snapshot' },
+        terminalSessions: []
+      })
+      await Promise.all([renameA.promise, deleteA.promise, restoreA.promise])
+    })
+
+    expect(screen.getByTestId('task-count').textContent).toBe('1')
+    expect(screen.getByRole('button', { name: '加载 Stable B 1' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '加载 Selected A 1' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '加载 手动名称' })).toBeNull()
+    expect(screen.getByTitle('Stable B 1')).toBeTruthy()
+    expect(screen.getByTitle('流程 B')).toBeTruthy()
+    expect(screen.getByTestId('variables').textContent).toBe('{"prompt":"saved prompt"}')
   })
 })
 
@@ -2469,6 +2755,94 @@ describe('App restored workflow snapshots', () => {
       await Promise.resolve()
     })
     expect(screen.getByTitle('流程 A 快照')).toBeTruthy()
+  })
+
+  it('loads the workflow and sessions without letting a pending restore overwrite a newer event', async () => {
+    await i18n.changeLanguage('en')
+    const task: TaskRecord = {
+      id: 'task-racing-restore',
+      project_id: project.id,
+      title: 'Racing restore task',
+      status: 'running',
+      created_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-01-02T00:00:00.000Z'
+    }
+    const restoredWorkflow: WorkflowDefinition = {
+      id: 'restored-terminal-workflow',
+      name: 'Restored terminal snapshot',
+      nodes: [
+        { id: 'start', type: 'start', name: 'Start', config: { variables: [] } },
+        {
+          id: 'terminal',
+          type: 'non-interactive-terminal',
+          name: 'Restored terminal',
+          config: { command: 'echo restored', cwd: '/repo', successExitCodes: [0] }
+        },
+        { id: 'end', type: 'end', name: 'End', config: {} }
+      ],
+      edges: [
+        { id: 'start-terminal', from: 'start', to: 'terminal' },
+        { id: 'terminal-end', from: 'terminal', to: 'end' }
+      ]
+    }
+    const restoreDeferred = deferred<{
+      state: WorkflowRuntimeState
+      workflow: WorkflowDefinition
+      terminalSessions: TerminalSession[]
+    }>()
+    const { api, listeners } = setupApi({ data: bootstrap([task]) })
+    api.restoreWorkflowState.mockReturnValueOnce(restoreDeferred.promise)
+    await renderBootstrappedApp()
+
+    fireEvent.click(await screen.findByRole('button', { name: '加载 Racing restore task' }))
+    await waitFor(() => expect(api.restoreWorkflowState).toHaveBeenCalledWith(task.id))
+    const liveTask: TaskRecord = {
+      ...task,
+      status: 'completed',
+      updated_at: '2026-01-04T00:00:00.000Z'
+    }
+    act(() => listeners.workflowState?.({
+      ...runtimeState(task.id, restoredWorkflow, liveTask),
+      currentNodeId: 'terminal',
+      variables: { prompt: 'live value' },
+      nodeRuns: { terminal: { nodeId: 'terminal', status: 'completed' } },
+      executionOrder: ['start', 'terminal'],
+      workflowCompleted: true
+    }))
+
+    const staleTask: TaskRecord = {
+      ...task,
+      updated_at: '2026-01-01T00:00:00.000Z'
+    }
+    await act(async () => {
+      restoreDeferred.resolve({
+        state: {
+          ...runtimeState(task.id, restoredWorkflow, staleTask),
+          currentNodeId: 'terminal',
+          variables: { prompt: 'stale value' },
+          nodeRuns: { terminal: { nodeId: 'terminal', status: 'running' } },
+          executionOrder: ['start', 'terminal']
+        },
+        workflow: restoredWorkflow,
+        terminalSessions: [{
+          id: 'restored-session',
+          task_id: task.id,
+          node_id: 'terminal',
+          kind: 'non-interactive',
+          command: 'echo restored',
+          cwd: '/repo',
+          status: 'closed',
+          transcript: 'restored transcript'
+        }]
+      })
+      await restoreDeferred.promise
+    })
+
+    expect(screen.getByTitle('Restored terminal snapshot')).toBeTruthy()
+    expect(screen.getByTestId('variables').textContent).toBe('{"prompt":"live value"}')
+    expect(screen.getByTestId('terminal-transcript').textContent).toBe('restored transcript')
+    expect(screen.getByRole('button', { name: '加载 Racing restore task' })
+      .getAttribute('data-task-status')).toBe('completed')
   })
 })
 

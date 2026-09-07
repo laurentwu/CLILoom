@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useReducer,
   useRef,
   useState,
   type CSSProperties,
@@ -92,8 +93,7 @@ import {
   getNodeDetailZoomTarget,
   getNodeDetailZoomTitle,
   getNextActiveProjectIdAfterDelete,
-  shouldResetActiveTaskAfterDelete,
-  mergeTaskRecord
+  shouldResetActiveTaskAfterDelete
 } from './utils'
 import { getWorkflowAction } from './executionActions'
 import type { NodeDetailZoomTarget, TerminalSession } from './utils'
@@ -126,6 +126,16 @@ import type {
 } from './appTypes'
 import { applySkin, DEFAULT_SKIN, type Skin } from './theme'
 import { i18n, syncI18nLanguage } from './i18n'
+import {
+  canApplyRuntimeState,
+  createProjectTaskState,
+  getTaskObservationVersion,
+  isRuntimeStateIdentityValid,
+  projectTaskReducer,
+  selectCurrentProjectTasks,
+  type ProjectTaskAction,
+  type RuntimeStateSource
+} from './projectTaskState'
 import { useTranslation } from 'react-i18next'
 import type { TranslationKey } from '../shared/i18n/types'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -298,7 +308,11 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
   const { t } = useTranslation()
   const [bootstrap, setBootstrap] = useState<Bootstrap>(fallbackBootstrap)
   const [projects, setProjects] = useState<ProjectRecord[]>([])
-  const [tasks, setTasks] = useState<TaskRecord[]>([])
+  const [projectTaskState, projectTaskDispatch] = useReducer(
+    projectTaskReducer,
+    undefined,
+    createProjectTaskState
+  )
   const [visibleTaskCount, setVisibleTaskCount] = useState(TASK_BATCH_SIZE)
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
   const [workflow, setWorkflow] = useState<WorkflowDefinition>(emptyWorkflow)
@@ -359,6 +373,9 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
   const [executionOrder, setExecutionOrder] = useState<string[]>([])
   const activeTaskIdRef = useRef(activeTaskId)
   const activeProjectIdRef = useRef(activeProjectId)
+  const projectTaskStateRef = useRef(projectTaskState)
+  const projectActivationIdRef = useRef(0)
+  const taskListRequestIdRef = useRef(0)
   const workflowRef = useRef(workflow)
   const variablesRef = useRef(variables)
   const draftStartedRef = useRef(draftStarted)
@@ -394,6 +411,7 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
   editingWorkflowIdRef.current = editingWorkflow?.id ?? null
   workflowIdRef.current = workflow.id
   activeProjectIdRef.current = activeProjectId
+  projectTaskStateRef.current = projectTaskState
   workflowRef.current = workflow
   variablesRef.current = variables
   draftStartedRef.current = draftStarted
@@ -402,6 +420,27 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
   startingWorkflowTaskIdRef.current = startingWorkflowTaskId
   pendingWorkflowIdRef.current = pendingWorkflowId
   availableWorkflowsRef.current = bootstrap.workflows
+
+  function dispatchProjectTaskState(action: ProjectTaskAction) {
+    const nextState = projectTaskReducer(projectTaskStateRef.current, action)
+    projectTaskStateRef.current = nextState
+    projectTaskDispatch(action)
+    return nextState
+  }
+
+  function syncProjectRecords(nextProjects: ProjectRecord[]) {
+    setProjects(nextProjects)
+    dispatchProjectTaskState({ type: 'syncProjects', projects: nextProjects })
+  }
+
+  function commitActiveProject(projectId: string | null) {
+    const activationId = projectActivationIdRef.current + 1
+    projectActivationIdRef.current = activationId
+    activeProjectIdRef.current = projectId
+    setActiveProjectId(projectId)
+    dispatchProjectTaskState({ type: 'activateProject', projectId, activationId })
+  }
+
   const activeRuntimeStatus = runtimeState?.taskId === activeTaskId ? runtimeState.status : null
   const isRunning = activeRuntimeStatus === 'running'
   const isWaitingForInput = activeRuntimeStatus === 'waiting-input'
@@ -477,9 +516,10 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
   const taskGraphFitViewOptions = taskGraphFocusNodeId && taskFlowNodes.some((node) => node.id === taskGraphFocusNodeId)
     ? { nodes: [{ id: taskGraphFocusNodeId }], padding: 0.2, maxZoom: 1 }
     : { padding: 0.2, maxZoom: 1 }
-  const displayedTasks = tasks.slice(0, visibleTaskCount)
-  const persistedActiveTask = tasks.find((task) => task.id === activeTaskId)
-  const persistedTaskIds = tasks.map((task) => task.id)
+  const currentProjectTasks = selectCurrentProjectTasks(projectTaskState, activeProjectId)
+  const displayedTasks = currentProjectTasks.slice(0, visibleTaskCount)
+  const persistedActiveTask = currentProjectTasks.find((task) => task.id === activeTaskId)
+  const persistedTaskIds = currentProjectTasks.map((task) => task.id)
   const canSwitchWorkflow = Boolean(
     activeProject &&
     availableWorkflows.length > 0 &&
@@ -765,15 +805,27 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
 
   function applyRuntimeState(
     state: WorkflowRuntimeState,
-    options: { moveTaskToFront?: boolean } = {}
-  ) {
-    if (state.task) {
-      setTasks((current) => mergeTaskRecord(
-        current,
-        state.task as TaskRecord,
-        options.moveTaskToFront ?? true
-      ))
+    options: {
+      moveTaskToFront?: boolean
+      source: RuntimeStateSource
+      observationVersion?: number
     }
+  ) {
+    const currentProjectTaskState = projectTaskStateRef.current
+    if (!isRuntimeStateIdentityValid(currentProjectTaskState, state)) return
+    const shouldApply = canApplyRuntimeState(
+      currentProjectTaskState,
+      state,
+      options.source,
+      options.observationVersion
+    )
+    dispatchProjectTaskState({
+      type: 'runtimeReceived',
+      state,
+      source: options.source,
+      moveTaskToFront: options.moveTaskToFront ?? true,
+      observationVersion: options.observationVersion
+    })
     const pendingDraftLaunch = pendingDraftLaunchesRef.current.get(state.taskId)
     if (
       state.task &&
@@ -785,7 +837,11 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
         void deletePersistedDraft(state.projectId)
       }
     }
-    if (state.taskId !== activeTaskIdRef.current) return
+    if (
+      !shouldApply ||
+      state.projectId !== activeProjectIdRef.current ||
+      state.taskId !== activeTaskIdRef.current
+    ) return
     activeTaskPersistedRef.current = true
     updateRuntimeState(state)
     updateNewTaskDraft(false)
@@ -896,7 +952,7 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
         startNodeId
       })) as WorkflowRuntimeState | undefined
       if (state) {
-        applyRuntimeState(state)
+        applyRuntimeState(state, { source: 'command' })
       }
     } catch (error) {
       if (pendingDraftLaunchRegistered) pendingDraftLaunchesRef.current.delete(taskId)
@@ -922,7 +978,7 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
   async function continueWorkflowWithVariables() {
     try {
       const state = (await window.cliLoom?.updateWorkflowVariables(activeTaskId, variables)) as WorkflowRuntimeState | null | undefined
-      if (state) applyRuntimeState(state)
+      if (state) applyRuntimeState(state, { source: 'command' })
     } catch (error) {
       handleError(error, 'updateWorkflowVariables')
     }
@@ -931,7 +987,7 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
   async function continueBranchWithVariables(branchId: string) {
     try {
       const state = (await window.cliLoom?.updateWorkflowVariables(activeTaskId, branchRuns[branchId]?.variables ?? {}, branchId)) as WorkflowRuntimeState | null | undefined
-      if (state) applyRuntimeState(state)
+      if (state) applyRuntimeState(state, { source: 'command' })
     } catch (error) {
       handleError(error, 'updateWorkflowBranchVariables')
     }
@@ -940,7 +996,7 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
   async function stopWorkflow() {
     try {
       const state = (await window.cliLoom?.stopWorkflow(activeTaskId)) as WorkflowRuntimeState | null | undefined
-      if (state) applyRuntimeState(state)
+      if (state) applyRuntimeState(state, { source: 'command' })
       else {
         const currentState = runtimeStateRef.current
         if (currentState?.taskId === activeTaskId) {
@@ -975,7 +1031,7 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
         nodeId,
         branchId
       )) as WorkflowRuntimeState | undefined
-      if (state) applyRuntimeState(state)
+      if (state) applyRuntimeState(state, { source: 'command' })
     } catch (error) {
       handleError(error, 'retryWorkflowNode')
     }
@@ -1059,7 +1115,7 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
       availableWorkflowsRef.current = data.workflows
       setBootstrap(data)
       setWorkflowRevisions(toWorkflowRevisionMap(data.workflowRecords))
-      setProjects(data.projects)
+      syncProjectRecords(data.projects)
       setSessions(data.terminalSessions)
       setProjectRailWidth(data.settings.layout.projectRailWidth)
       setTaskSidebarWidth(data.settings.layout.taskSidebarWidth)
@@ -1084,8 +1140,7 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
       updateNewTaskDraft(false)
       updatePendingWorkflowId(null)
       updateRuntimeState(null)
-      activeProjectIdRef.current = initialProject?.id ?? null
-      setActiveProjectId(initialProject?.id ?? null)
+      commitActiveProject(initialProject?.id ?? null)
       const initialWorkflow = data.workflows.find((item) => item.id === initialProject?.default_workflow_id)
         ?? data.workflows[0]
         ?? emptyWorkflow
@@ -1205,7 +1260,7 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
     })
     const removeProject = window.cliLoom?.onProjectChanged(() => {
       window.cliLoom?.listProjects().then((records: ProjectRecord[]) => {
-        setProjects(records)
+        syncProjectRecords(records)
       }).catch((error: unknown) => handleError(error, 'refreshProjects'))
     })
     return () => {
@@ -1226,19 +1281,37 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
 
   useEffect(() => {
     setVisibleTaskCount(TASK_BATCH_SIZE)
-    if (!activeProjectId) {
-      setTasks([])
-      return
-    }
+    if (!activeProjectId) return
     let cancelled = false
+    const activationId = projectActivationIdRef.current
+    const requestId = taskListRequestIdRef.current + 1
+    taskListRequestIdRef.current = requestId
+    dispatchProjectTaskState({
+      type: 'listStarted',
+      projectId: activeProjectId,
+      activationId,
+      requestId
+    })
     window.cliLoom?.listTasks(activeProjectId).then((records: TaskRecord[]) => {
-      if (cancelled) return
-      setTasks(records)
+      if (
+        cancelled ||
+        activeProjectIdRef.current !== activeProjectId ||
+        projectActivationIdRef.current !== activationId ||
+        taskListRequestIdRef.current !== requestId
+      ) return
+      const nextProjectTaskState = dispatchProjectTaskState({
+        type: 'listSucceeded',
+        projectId: activeProjectId,
+        activationId,
+        requestId,
+        tasks: records
+      })
+      const mergedTasks = selectCurrentProjectTasks(nextProjectTaskState, activeProjectId)
 
       const pendingTask = pendingStartupTaskRef.current
       if (!pendingTask || pendingTask.projectId !== activeProjectId) return
       pendingStartupTaskRef.current = null
-      const task = records.find((record) => record.id === pendingTask.taskId)
+      const task = mergedTasks.find((record) => record.id === pendingTask.taskId)
       if (!task) {
         rememberWorkspace(activeProjectId, null)
         // The remembered task is gone, so fall back to the project's draft
@@ -1247,17 +1320,28 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
         if (fallbackProject) restoreStartupDraft(fallbackProject)
         return
       }
-      const taskIndex = records.indexOf(task)
+      const taskIndex = mergedTasks.indexOf(task)
       if (taskIndex >= TASK_BATCH_SIZE) {
         setVisibleTaskCount(Math.ceil((taskIndex + 1) / TASK_BATCH_SIZE) * TASK_BATCH_SIZE)
       }
       loadTask(task)
     }).catch((error: unknown) => {
+      if (
+        cancelled ||
+        activeProjectIdRef.current !== activeProjectId ||
+        projectActivationIdRef.current !== activationId ||
+        taskListRequestIdRef.current !== requestId
+      ) return
+      dispatchProjectTaskState({
+        type: 'listFailed',
+        projectId: activeProjectId,
+        activationId,
+        requestId
+      })
       handleError(error, 'listTasks')
       // A failed startup task lookup must not strand the workspace without
       // the draft fallback, and the stale marker must not survive to a
       // later navigation of the same project.
-      if (cancelled) return
       const pendingTask = pendingStartupTaskRef.current
       if (!pendingTask || pendingTask.projectId !== activeProjectId) return
       pendingStartupTaskRef.current = null
@@ -1393,7 +1477,7 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
 
   useEffect(() => {
     const removeState = window.cliLoom?.onWorkflowState((event) => {
-      applyRuntimeState(event as WorkflowRuntimeState)
+      applyRuntimeState(event as WorkflowRuntimeState, { source: 'event' })
     })
     return () => removeState?.()
   }, [])
@@ -1445,15 +1529,13 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
       if (draftLoadRequestRef.current !== requestId) return
       const nextProjects = (await window.cliLoom?.listProjects()) as ProjectRecord[]
       if (draftLoadRequestRef.current !== requestId) return
-      setProjects(nextProjects)
+      syncProjectRecords(nextProjects)
       // The folder picker also returns an existing project when the selected
       // path is already registered. Keep the current editor in place in that
       // case; switching away and back is the explicit navigation action that
       // should reset the transient workspace.
       if (project.id === activeProjectIdRef.current) return
-      activeProjectIdRef.current = project.id
-      setActiveProjectId(project.id)
-      setTasks([])
+      commitActiveProject(project.id)
       resetTaskWorkspaceForProject(project, { draftStarted: false })
       rememberWorkspace(project.id, null)
       // Landing on the project through the folder picker is a project switch
@@ -1477,10 +1559,8 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
       const nextProjects = (await window.cliLoom?.listProjects()) as ProjectRecord[]
       const nextActiveProjectId = getNextActiveProjectIdAfterDelete({ projects: nextProjects, deletedProjectId: project.id })
       const nextProject = nextProjects.find((item) => item.id === nextActiveProjectId) ?? null
-      setProjects(nextProjects)
-      activeProjectIdRef.current = nextActiveProjectId
-      setActiveProjectId(nextActiveProjectId)
-      setTasks([])
+      syncProjectRecords(nextProjects)
+      commitActiveProject(nextActiveProjectId)
       resetTaskWorkspaceForProject(nextProject, { draftStarted: false })
       rememberWorkspace(nextProject?.id ?? null, null)
       // Falling back to a neighboring project is a project switch too, so
@@ -1512,9 +1592,12 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
     if (!normalizedTitle) return
     try {
       await window.cliLoom?.updateTaskTitle(task.id, normalizedTitle)
-      setTasks((current) => current.map((item) => (
-        item.id === task.id ? { ...item, title: normalizedTitle } : item
-      )))
+      dispatchProjectTaskState({
+        type: 'taskRenamed',
+        projectId: task.project_id,
+        taskId: task.id,
+        title: normalizedTitle
+      })
     } catch (error) {
       handleError(error, 'renameTask')
       throw error
@@ -1524,10 +1607,21 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
   async function deleteTaskRecord(task: TaskRecord) {
     try {
       await window.cliLoom?.deleteTask(task.id)
-      setTasks((current) => current.filter((item) => item.id !== task.id))
-      if (shouldResetActiveTaskAfterDelete({ activeTaskId, deletedTaskId: task.id })) {
-        resetTaskWorkspaceForProject(activeProject, { draftStarted: false })
-        rememberWorkspace(activeProject?.id ?? null, null)
+      dispatchProjectTaskState({
+        type: 'taskDeleted',
+        projectId: task.project_id,
+        taskId: task.id
+      })
+      if (
+        activeProjectIdRef.current === task.project_id &&
+        shouldResetActiveTaskAfterDelete({
+          activeTaskId: activeTaskIdRef.current,
+          deletedTaskId: task.id
+        })
+      ) {
+        const currentProject = projects.find((item) => item.id === task.project_id) ?? null
+        resetTaskWorkspaceForProject(currentProject, { draftStarted: false })
+        rememberWorkspace(task.project_id, null)
       }
     } catch (error) {
       handleError(error, 'deleteTask')
@@ -1857,9 +1951,7 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
     pendingDraftLoadRef.current = null
     await flushActiveDraft()
     if (draftLoadRequestRef.current !== requestId) return
-    activeProjectIdRef.current = project.id
-    setActiveProjectId(project.id)
-    setTasks([])
+    commitActiveProject(project.id)
     resetTaskWorkspaceForProject(project, { draftStarted: false })
     rememberWorkspace(project.id, null)
     // Switching to a project that has a persisted draft restores it directly
@@ -2157,6 +2249,7 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
       <ProjectRail
         projects={projects}
         activeProjectId={activeProjectId}
+        unreadProjectIds={projectTaskState.unreadProjectIds}
         onSelectProject={selectProject}
         onReorderProject={reorderProject}
         onAddProject={chooseFolder}
@@ -2342,7 +2435,7 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
         activeProject={activeProject}
         availableWorkflows={availableWorkflows}
         displayedTasks={displayedTasks}
-        totalTaskCount={tasks.length}
+        totalTaskCount={currentProjectTasks.length}
         activeTaskId={activeTaskId}
         onSetDefaultWorkflow={setDefaultWorkflow}
         onStartNewTask={startNewTask}
@@ -2350,7 +2443,7 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
         onRenameTask={renameTask}
         onDeleteTask={deleteTaskRecord}
         onShowMoreTasks={() => setVisibleTaskCount((current) => (
-          Math.min(current + TASK_BATCH_SIZE, tasks.length)
+          Math.min(current + TASK_BATCH_SIZE, currentProjectTasks.length)
         ))}
       />
 
@@ -2886,6 +2979,11 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
 
     const requestId = taskLoadRequestRef.current + 1
     taskLoadRequestRef.current = requestId
+    const restoreObservationVersion = getTaskObservationVersion(
+      projectTaskStateRef.current,
+      task.project_id,
+      task.id
+    )
     setActiveTaskId(task.id)
     activeTaskIdRef.current = task.id
     activeTaskPersistedRef.current = true
@@ -2901,7 +2999,9 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
     setParallelZoomNodeId(null)
 
     const isCurrentTaskLoad = () => (
-      taskLoadRequestRef.current === requestId && activeTaskIdRef.current === task.id
+      taskLoadRequestRef.current === requestId &&
+      activeProjectIdRef.current === task.project_id &&
+      activeTaskIdRef.current === task.id
     )
 
     const applyTaskContextFallback = async () => {
@@ -2947,11 +3047,28 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
         terminalSessions?: TerminalSession[]
       } | null | undefined
       if (payload?.state) {
+        const restoredStateIdentityIsValid =
+          payload.state.projectId === task.project_id &&
+          payload.state.taskId === task.id &&
+          isRuntimeStateIdentityValid(projectTaskStateRef.current, payload.state)
+        if (!restoredStateIdentityIsValid) return
+        const shouldApplyRestoredRuntimeState = canApplyRuntimeState(
+          projectTaskStateRef.current,
+          payload.state,
+          'restore',
+          restoreObservationVersion
+        )
         const nextWorkflow = payload.workflow
           ?? availableWorkflows.find((item) => item.id === payload.state?.workflowId)
           ?? workflow
         updateWorkspaceWorkflow(nextWorkflow)
-        applyRuntimeState(payload.state, { moveTaskToFront: false })
+        if (shouldApplyRestoredRuntimeState) {
+          applyRuntimeState(payload.state, {
+            source: 'restore',
+            moveTaskToFront: false,
+            observationVersion: restoreObservationVersion
+          })
+        }
         setViewMode('focus')
       } else {
         await applyTaskContextFallback()

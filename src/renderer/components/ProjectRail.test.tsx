@@ -99,6 +99,7 @@ vi.mock('@/components/ui/alert-dialog', async () => {
 import { ProjectRail } from './ProjectRail'
 
 const defaultUpdateProps = {
+  unreadProjectIds: new Set<string>(),
   updateState: {
     status: 'idle' as const,
     capability: 'installable' as const,
@@ -115,6 +116,77 @@ afterEach(() => {
 })
 
 describe('ProjectRail project actions', () => {
+  it('renders and removes the unread marker with localized accessible text', async () => {
+    await i18n.changeLanguage('en')
+    const projects = [
+      {
+        id: 'project-1',
+        name: 'Current',
+        path: '/repo/current',
+        sort_order: 0,
+        created_at: '2026-08-11T00:00:00.000Z'
+      },
+      {
+        id: 'project-2',
+        name: 'Background',
+        path: '/repo/background',
+        sort_order: 1,
+        created_at: '2026-08-11T00:00:00.000Z'
+      }
+    ]
+    const onSelectProject = vi.fn()
+    const renderRail = (unreadProjectIds: ReadonlySet<string>) => (
+      <I18nextProvider i18n={i18n}>
+        <ProjectRail
+          {...defaultUpdateProps}
+          activeProjectId="project-2"
+          activeSkinId="builtin.light.neutral"
+          language="en"
+          projects={projects}
+          shellSnapshot={{
+            platform: 'linux',
+            preferences: { version: 3, selection: { mode: 'automatic' } },
+            candidates: [],
+            effectiveShell: null,
+            error: undefined
+          }}
+          unreadProjectIds={unreadProjectIds}
+          onAddProject={() => undefined}
+          onLanguageChange={() => undefined}
+          onOpenAppearance={() => undefined}
+          onDeleteProject={async () => undefined}
+          onOpenAssistant={() => undefined}
+          onOpenDesigner={() => undefined}
+          onRefreshShells={async () => undefined}
+          onRenameProject={async () => undefined}
+          onReorderProject={() => undefined}
+          onSelectProject={onSelectProject}
+          onShellChange={async () => undefined}
+          onSkinChange={() => undefined}
+          userSkins={[]}
+        />
+      </I18nextProvider>
+    )
+    const view = render(renderRail(new Set(['project-2'])))
+
+    const unreadButton = screen.getByRole('button', {
+      name: 'Open project Background, unread task status updates'
+    })
+    const marker = view.container.querySelector('[data-project-unread-indicator="true"]')
+    expect(marker?.getAttribute('data-project-id')).toBe('project-2')
+    expect(marker?.className).toContain('size-2')
+    expect(marker?.className).toContain('bg-red-500')
+    expect(marker?.className).toContain('pointer-events-none')
+    expect(screen.getByText('Unread task status updates')).toBeTruthy()
+    fireEvent.click(unreadButton)
+    expect(onSelectProject).toHaveBeenCalledWith(projects[1])
+
+    view.rerender(renderRail(new Set()))
+    expect(view.container.querySelector('[data-project-unread-indicator="true"]')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Open project Background' })).toBeTruthy()
+    expect(screen.queryByText('Unread task status updates')).toBeNull()
+  })
+
   it('moves rename and delete into an ordered project context menu', async () => {
     i18n.changeLanguage('zh')
     const project = {
