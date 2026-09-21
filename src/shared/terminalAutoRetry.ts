@@ -226,38 +226,6 @@ export function parseWorkflowAutoRetryContext(value: unknown): WorkflowAutoRetry
 }
 
 /**
- * Strict parser for the dedicated assistant auto-retry command. Unlike the
- * lenient workflow parser, unknown fields are rejected instead of ignored and
- * `recommended` mode must not carry a `cron` field. A top-level JSON null maps
- * to undefined so callers can distinguish "remove the stored configuration".
- */
-export function parseTerminalAutoRetryCommandInput(
-  value: unknown
-): TerminalAutoRetryConfig | undefined {
-  if (value === null) return undefined
-  if (typeof value !== 'object' || Array.isArray(value)) {
-    throw autoRetryConfigError('errors:workflowValidation.autoRetryInvalid')
-  }
-  const raw = value as Record<string, unknown>
-  const allowedKeys = raw.mode === 'cron'
-    ? ['enabled', 'mode', 'maxRetries', 'cron']
-    : ['enabled', 'mode', 'maxRetries']
-  for (const key of Object.keys(raw)) {
-    if (!allowedKeys.includes(key)) {
-      throw autoRetryConfigError('errors:workflowValidation.autoRetryUnknownField', {
-        field: key
-      })
-    }
-  }
-  if (raw.mode !== 'recommended' && raw.mode !== 'cron') {
-    throw autoRetryConfigError('errors:workflowValidation.autoRetryModeInvalid')
-  }
-  const config = parseTerminalAutoRetryConfig(raw)
-  if (config === undefined) throw autoRetryConfigError('errors:workflowValidation.autoRetryInvalid')
-  return config
-}
-
-/**
  * Check whether an `autoRetry` configuration passes workflow validation.
  * Enabled cron-mode configurations must resolve to a future trigger time.
  * Disabled configurations may keep an unfinished cron draft, but structural

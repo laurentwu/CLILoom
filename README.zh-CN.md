@@ -77,7 +77,8 @@ CLILoom 是一款用于可视化编排、运行和管理 AI CLI 开发任务的�
   - 检测并启动自定义初始化命令。
   - 在独立终端窗口中启动、停止和重启助手。
   - 与主应用共享 Shell、语言和外观设置。
-  - 通过私有 `cliloom` 命令配置应用：读取详细工作流结构说明、设置终端节点失败自动重试、列出/刷新/选择全局 Shell、管理用户皮肤（创建、修改、复制、重命名、删除、导入、导出、字体列表），以及设置项目栏和任务侧栏宽度。
+  - 通过私有 `cliloom` 命令配置应用：读取完整的工作流保存字段说明（`cliloom workflow schema`）、通过 `workflow get`/`validate`/`save` 创建或更新完整工作流定义（含终端节点自动重试，位于 `nodes[].config.autoRetry`）、列出/刷新/选择全局 Shell、管理用户皮肤（创建、修改、复制、重命名、删除、导入、导出、字体列表），以及设置项目栏和任务侧栏宽度。
+  - 旧的 `cliloom workflow auto-retry get/set` 命令已移除；请改用 `cliloom workflow get` 加完整 `cliloom workflow save`。所有可用字段以 `cliloom workflow schema` 为准。
   - 修改结果返回实际保存的值和生效范围：工作流定义只影响之后启动的任务（运行中的任务保留其绑定版本），Shell 选择影响新工作流和下一次助手会话，皮肤和宽度通过现有设置广播立即生效。
 
 - **跨平台与个性化**

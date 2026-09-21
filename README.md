@@ -77,7 +77,8 @@ Configure your preferred AI CLI and run it in a dedicated interactive terminal w
   - Validate and launch a custom initialization command.
   - Start, stop, and restart the assistant in its own terminal window.
   - Share shell, language, and appearance settings with the main application.
-  - Configure the application through the private `cliloom` command: read the detailed workflow schema, set terminal-node automatic retry, list/refresh/select the global shell, manage user skins (create, update, duplicate, rename, delete, import, export, list fonts), and set the project rail and task sidebar widths.
+  - Configure the application through the private `cliloom` command: read the complete workflow save field documentation (`cliloom workflow schema`), create or update complete workflow definitions — including terminal-node automatic retry through `nodes[].config.autoRetry` — with `workflow get`/`validate`/`save`, list/refresh/select the global shell, manage user skins (create, update, duplicate, rename, delete, import, export, list fonts), and set the project rail and task sidebar widths.
+  - The former `cliloom workflow auto-retry get/set` commands were removed; use `cliloom workflow get` and a complete `cliloom workflow save` instead. Run `cliloom workflow schema` for every accepted workflow field.
   - Changes report their actual saved values and scope: workflow definitions apply to future runs (running tasks keep their bound version), shell selection applies to new workflows and the next assistant session, skins and widths apply immediately through the existing settings broadcast.
 
 - **Cross-platform and customizable**

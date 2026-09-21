@@ -191,6 +191,17 @@ test.afterAll(async () => {
   if (appDataDirectory) rmSync(appDataDirectory, { recursive: true, force: true })
 })
 
+function withTermAutoRetry(definition: WorkflowDefinition, autoRetry: unknown): WorkflowDefinition {
+  return {
+    ...definition,
+    nodes: definition.nodes.map((node) => (
+      node.id === 'term'
+        ? { ...node, config: { ...(node.config as Record<string, unknown>), autoRetry } }
+        : node
+    )) as WorkflowDefinition['nodes']
+  }
+}
+
 test('assistant discovers capabilities and configures terminal auto-retry', async () => {
   const context = await runJob('10-context', 'cliloom context --json')
   expect(context.exit).toBe('0')
@@ -201,8 +212,11 @@ test('assistant discovers capabilities and configures terminal auto-retry', asyn
     publicSettings: Array<{ key: string }>
     workflows: Array<{ id: string; revision: number }>
   }
-  expect(contextData.schemaVersion).toBe(1)
-  expect(contextData.commandDescriptors.map((descriptor) => descriptor.id)).toContain('workflow.auto-retry.set')
+  expect(contextData.schemaVersion).toBe(2)
+  const descriptorIds = contextData.commandDescriptors.map((descriptor) => descriptor.id)
+  expect(descriptorIds).toContain('workflow.save')
+  expect(descriptorIds).not.toContain('workflow.auto-retry.get')
+  expect(descriptorIds).not.toContain('workflow.auto-retry.set')
   expect(contextData.publicSettings.map((setting) => setting.key)).toContain('layout.projectRailWidth')
   expect(contextData.workflows).toEqual([expect.objectContaining({ id: 'assistant-config-e2e', revision: 1 })])
   expect(context.stdout).not.toContain('CLILOOM_ASSISTANT_BRIDGE_TOKEN')
@@ -211,11 +225,13 @@ test('assistant discovers capabilities and configures terminal auto-retry', asyn
   expect(schema.exit).toBe('0')
   const schemaData = JSON.parse(schema.stdout) as {
     schemaVersion: number
+    save: { usage: string }
     nodeConfigs: Record<string, unknown>
     terminalAutoRetry: { examples: Record<string, unknown> }
     examples: Record<string, unknown>
   }
-  expect(schemaData.schemaVersion).toBe(1)
+  expect(schemaData.schemaVersion).toBe(2)
+  expect(schemaData.save.usage).toContain('cliloom workflow save')
   expect(Object.keys(schemaData.nodeConfigs)).toEqual([
     'start',
     'interactive-terminal',
@@ -226,26 +242,24 @@ test('assistant discovers capabilities and configures terminal auto-retry', asyn
     'end'
   ])
 
-  const read = await runJob('30-auto-retry-get', 'cliloom workflow auto-retry get assistant-config-e2e term --json')
+  const read = await runJob('30-workflow-get', 'cliloom workflow get assistant-config-e2e --json')
   expect(read.exit).toBe('0')
-  expect(JSON.parse(read.stdout)).toMatchObject({
-    command: 'workflow.auto-retry.get',
-    nodeId: 'term',
-    nodeType: 'interactive-terminal',
-    revision: 1,
-    autoRetry: null,
-    appliesTo: 'future-workflow-runs'
-  })
+  const record = JSON.parse(read.stdout) as {
+    workflow: WorkflowDefinition
+    revision: number
+  }
+  expect(record.revision).toBe(1)
+  expect(record.workflow.id).toBe('assistant-config-e2e')
 
-  const set = await runJob('40-auto-retry-set', [
-    'printf \'%s\' \'{"enabled":true,"mode":"recommended","maxRetries":5}\' | cliloom workflow auto-retry set assistant-config-e2e term --stdin --expected-revision 1 --json'
+  const set = await runJob('40-workflow-save-recommended', [
+    `printf '%s' '${JSON.stringify(withTermAutoRetry(record.workflow, { enabled: true, mode: 'recommended', maxRetries: 5 }))}' | cliloom workflow save --stdin --expected-revision ${record.revision} --json`
   ].join('\n'))
   expect(set.exit, `set stderr: ${set.stderr}`).toBe('0')
   expect(set.stderr).toBe('')
   expect(JSON.parse(set.stdout)).toMatchObject({
-    command: 'workflow.auto-retry.set',
-    revision: 2,
-    autoRetry: { enabled: true, mode: 'recommended', maxRetries: 5 }
+    command: 'workflow.save',
+    created: false,
+    revision: 2
   })
 
   const savedInApp = await mainPage.evaluate(async () => {
@@ -271,8 +285,8 @@ test('assistant discovers capabilities and configures terminal auto-retry', asyn
     if (!window.cliLoom) throw new Error('Missing main preload API')
     await window.cliLoom.setDesignerState({ workflowId, open: true, dirty: true })
   }, 'assistant-config-e2e')
-  const dirty = await runJob('50-auto-retry-dirty', [
-    'printf \'%s\' \'{"enabled":true,"mode":"cron","cron":"*/15 * * * *","maxRetries":null}\' | cliloom workflow auto-retry set assistant-config-e2e term --stdin --expected-revision 2 --json'
+  const dirty = await runJob('50-workflow-save-dirty', [
+    `printf '%s' '${JSON.stringify(withTermAutoRetry(record.workflow, { enabled: true, mode: 'cron', cron: '*/15 * * * *', maxRetries: null }))}' | cliloom workflow save --stdin --expected-revision 2 --json`
   ].join('\n'))
   expect(dirty.exit).toBe('2')
   expect(JSON.parse(dirty.stderr).error.code).toBe('VALIDATION_ERROR')
@@ -281,20 +295,38 @@ test('assistant discovers capabilities and configures terminal auto-retry', asyn
     if (!window.cliLoom) throw new Error('Missing main preload API')
     await window.cliLoom.setDesignerState({ workflowId: null, open: false, dirty: false })
   })
-  const stale = await runJob('60-auto-retry-stale', [
-    'printf \'%s\' \'{"enabled":true,"mode":"cron","cron":"*/15 * * * *","maxRetries":null}\' | cliloom workflow auto-retry set assistant-config-e2e term --stdin --expected-revision 1 --json'
+  const stale = await runJob('60-workflow-save-stale', [
+    `printf '%s' '${JSON.stringify(withTermAutoRetry(record.workflow, { enabled: true, mode: 'cron', cron: '*/15 * * * *', maxRetries: null }))}' | cliloom workflow save --stdin --expected-revision 1 --json`
   ].join('\n'))
   expect(stale.exit).toBe('5')
   expect(JSON.parse(stale.stderr).error.code).toBe('WORKFLOW_REVISION_CONFLICT')
 
-  const retry = await runJob('70-auto-retry-cron', [
-    'printf \'%s\' \'{"enabled":true,"mode":"cron","cron":"*/15 * * * *","maxRetries":null}\' | cliloom workflow auto-retry set assistant-config-e2e term --stdin --expected-revision 2 --json'
+  const removal = await runJob('65-workflow-save-removal', [
+    `printf '%s' '${JSON.stringify(withTermAutoRetry(record.workflow, undefined))}' | cliloom workflow save --stdin --expected-revision 2 --json`
+  ].join('\n'))
+  expect(removal.exit, `removal stderr: ${removal.stderr}`).toBe('0')
+  expect(JSON.parse(removal.stdout)).toMatchObject({ revision: 3 })
+  const afterRemoval = await runJob('66-workflow-get-removed', 'cliloom workflow get assistant-config-e2e --json')
+  const removedRecord = JSON.parse(afterRemoval.stdout) as { workflow: WorkflowDefinition; revision: number }
+  const removedTerminal = removedRecord.workflow.nodes.find((node) => node.id === 'term')
+  expect((removedTerminal?.config as Record<string, unknown>).autoRetry).toBeUndefined()
+  expect(removedTerminal?.config).toMatchObject({ command: 'sleep 30', retryCommand: 'sleep 30 --retry' })
+
+  const retry = await runJob('70-workflow-save-cron', [
+    `printf '%s' '${JSON.stringify(withTermAutoRetry(removedRecord.workflow, { enabled: true, mode: 'cron', cron: '*/15 * * * *', maxRetries: null }))}' | cliloom workflow save --stdin --expected-revision 3 --json`
   ].join('\n'))
   expect(retry.exit).toBe('0')
   expect(JSON.parse(retry.stdout)).toMatchObject({
-    revision: 3,
-    autoRetry: { enabled: true, mode: 'cron', cron: '*/15 * * * *', maxRetries: null }
+    revision: 4
   })
+
+  const legacyGet = await runJob('75-legacy-auto-retry-get', 'cliloom workflow auto-retry get assistant-config-e2e term --json')
+  expect(legacyGet.exit).toBe('2')
+  const legacySet = await runJob('76-legacy-auto-retry-set', [
+    `printf '%s' '{"enabled":true,"mode":"recommended"}' | cliloom workflow auto-retry set assistant-config-e2e term --stdin --expected-revision 4 --json`
+  ].join('\n'))
+  expect(legacySet.exit).toBe('2')
+  expect(JSON.parse(legacySet.stderr).error.code).toBe('INVALID_ARGUMENT')
 })
 
 test('assistant updates widths, shells, and skins with live application sync', async () => {
@@ -392,7 +424,7 @@ test('assistant configuration persists across an application restart', async () 
     }>
     return records.find((item) => item.workflow.id === 'assistant-config-e2e')
   })
-  expect(record?.revision).toBe(3)
+  expect(record?.revision).toBe(4)
   const terminal = record?.workflow.nodes.find((node) => node.id === 'term')
   expect(terminal?.config).toMatchObject({
     autoRetry: { enabled: true, mode: 'cron', cron: '*/15 * * * *', maxRetries: null }

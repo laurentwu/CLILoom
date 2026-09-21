@@ -87,7 +87,7 @@ export function readAssistantCommandInput(options: {
 
 /**
  * Parse the JSON payload of a command. Accepts a top-level null so callers
- * such as auto-retry set can distinguish "remove the configuration".
+ * can distinguish payloads that use null as a meaningful value.
  */
 export function parseAssistantCommandJson(source: string): unknown {
   if (!source.trim()) throw new AssistantCommandError('INVALID_ARGUMENT', 2, t('errors:assistantCommand.inputJsonEmpty'))
@@ -107,14 +107,6 @@ export function requireJsonObjectInput(value: unknown): void {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     throw new AssistantCommandError('INVALID_ARGUMENT', 2, t('errors:assistantCommand.inputJsonObjectRequired'))
   }
-}
-
-export function requireRevision(source: AssistantInputSource): number {
-  const revision = source.expectedRevision
-  if (revision === undefined || !Number.isInteger(revision) || revision < 1) {
-    throw new AssistantCommandError('INVALID_ARGUMENT', 2, t('errors:assistantCommand.revisionPositive'))
-  }
-  return revision
 }
 
 /** Reject unexpected top-level keys in a fixed-shape JSON input object. */

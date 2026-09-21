@@ -839,6 +839,47 @@ describe('WorkflowRuntimeEngine', () => {
     expect(engine.getState().nodeRuns.b.status).toBe('completed')
   })
 
+  it('continues along the first outgoing edge of a join that has several', async () => {
+    const workflow: WorkflowDefinition = {
+      id: 'wf-parallel-multi-out-join',
+      name: 'Parallel multi-out join',
+      nodes: [
+        { id: 'start', type: 'start', name: 'Start', config: { variables: [] } },
+        { id: 'split', type: 'parallel-gateway', name: 'Split', config: { mode: 'split' } },
+        { id: 'a', type: 'non-interactive-terminal', name: 'A', config: { command: 'echo a', cwd: '${sys_project_dir}', successExitCodes: [0] } },
+        { id: 'b', type: 'non-interactive-terminal', name: 'B', config: { command: 'echo b', cwd: '${sys_project_dir}', successExitCodes: [0] } },
+        { id: 'join', type: 'parallel-gateway', name: 'Join', config: { mode: 'join', joinIncomingEdgeIds: ['e-a-join', 'e-b-join'] } },
+        { id: 'first', type: 'end', name: 'First', config: {} },
+        { id: 'second', type: 'end', name: 'Second', config: {} }
+      ],
+      edges: [
+        { id: 'e-start-split', from: 'start', to: 'split' },
+        { id: 'e-split-a', from: 'split', to: 'a' },
+        { id: 'e-split-b', from: 'split', to: 'b' },
+        { id: 'e-a-join', from: 'a', to: 'join' },
+        { id: 'e-b-join', from: 'b', to: 'join' },
+        { id: 'e-join-first', from: 'join', to: 'first' },
+        { id: 'e-join-second', from: 'join', to: 'second' }
+      ]
+    }
+    const { adapter } = createAdapter()
+    const engine = new WorkflowRuntimeEngine({
+      taskId: 'task-multi-out-join',
+      projectId: 'project-1',
+      projectDir: '/repo',
+      workflow,
+      variables: {},
+      startNodeId: 'start'
+    }, adapter)
+
+    await engine.start()
+
+    expect(engine.getState().status).toBe('completed')
+    expect(engine.getState().executionOrder).toEqual(['start', 'split', 'a', 'b', 'join', 'first'])
+    expect(engine.getState().nodeRuns.first.status).toBe('completed')
+    expect(engine.getState().nodeRuns.second).toBeUndefined()
+  })
+
   it('re-enters the same parallel split after a completed join', async () => {
     const workflow: WorkflowDefinition = {
       id: 'wf-parallel-loop',

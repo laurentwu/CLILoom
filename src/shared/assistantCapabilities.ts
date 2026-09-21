@@ -7,6 +7,16 @@ import {
 } from './terminalAutoRetry'
 import { SKIN_BOUNDS } from './skin'
 import { LAYOUT_BOUNDS } from './appSettings'
+import {
+  MAX_WORKFLOW_EDGES,
+  MAX_WORKFLOW_NODES,
+  MAX_WORKFLOW_STRING,
+  SYSTEM_VARIABLES,
+  SYSTEM_VARIABLE_DESCRIPTIONS
+} from './workflow'
+import type { NodeType } from './workflow'
+import type { Translator } from './i18n/translator'
+import type { TranslationKey } from './i18n/types'
 
 /**
  * Descriptive capability catalog for the cliloom assistant CLI. This module is
@@ -15,7 +25,7 @@ import { LAYOUT_BOUNDS } from './appSettings'
  * business parsers; nothing here is a JSON Schema validator.
  */
 
-export const ASSISTANT_CAPABILITY_SCHEMA_VERSION = 1
+export const ASSISTANT_CAPABILITY_SCHEMA_VERSION = 2
 
 export type AssistantCommandDescriptor = {
   /** Stable command id used in --json output and capability tests. */
@@ -63,7 +73,7 @@ export const ASSISTANT_COMMAND_DESCRIPTORS: readonly AssistantCommandDescriptor[
   {
     id: 'workflow.schema',
     usage: 'cliloom workflow schema [--json]',
-    summary: 'Detailed field-level workflow schema, node configs, hooks, auto-retry rules, and valid examples',
+    summary: 'Complete field-level workflow save documentation, node configs, variables, hooks, edges, layout, auto-retry rules, and valid examples',
     appliesTo: 'read-only'
   },
   {
@@ -76,7 +86,7 @@ export const ASSISTANT_COMMAND_DESCRIPTORS: readonly AssistantCommandDescriptor[
   {
     id: 'workflow.save',
     usage: 'cliloom workflow save (--stdin | --file <relative-path>) [--expected-revision <revision>] [--json]',
-    summary: 'Create or revision-checked update of a full workflow definition',
+    summary: 'Create or revision-checked update of a full workflow definition (including nodes[].config.autoRetry)',
     input: 'Full workflow definition object',
     appliesTo: 'future-workflow-runs'
   },
@@ -84,19 +94,6 @@ export const ASSISTANT_COMMAND_DESCRIPTORS: readonly AssistantCommandDescriptor[
     id: 'workflow.delete',
     usage: 'cliloom workflow delete <workflow-id> [--json]',
     summary: 'Delete a workflow after the existing confirmation flow',
-    appliesTo: 'future-workflow-runs'
-  },
-  {
-    id: 'workflow.auto-retry.get',
-    usage: 'cliloom workflow auto-retry get <workflow-id> <node-id> [--json]',
-    summary: 'Read the saved autoRetry configuration of one terminal node (null means not configured and disabled)',
-    appliesTo: 'read-only'
-  },
-  {
-    id: 'workflow.auto-retry.set',
-    usage: 'cliloom workflow auto-retry set <workflow-id> <node-id> (--stdin | --file <relative-path>) --expected-revision <revision> [--json]',
-    summary: 'Replace or remove the autoRetry configuration of one terminal node',
-    input: 'Complete autoRetry object or JSON null',
     appliesTo: 'future-workflow-runs'
   },
   {
@@ -212,12 +209,13 @@ export const ASSISTANT_COMMAND_DESCRIPTORS: readonly AssistantCommandDescriptor[
   }
 ]
 
-export function buildAssistantHelpText(): string {
+export function buildAssistantHelpText(notes: readonly string[] = []): string {
   return [
     'CLILoom assistant command',
     '',
     'Usage:',
-    ...ASSISTANT_COMMAND_DESCRIPTORS.map((descriptor) => `  ${descriptor.usage}`)
+    ...ASSISTANT_COMMAND_DESCRIPTORS.map((descriptor) => `  ${descriptor.usage}`),
+    ...(notes.length > 0 ? ['', ...notes.map((note) => `  ${note}`)] : [])
   ].join('\n')
 }
 
@@ -229,55 +227,34 @@ export function getAssistantCommandDescriptor(id: string): AssistantCommandDescr
 // Workflow schema description
 // ---------------------------------------------------------------------------
 
-export const AUTO_RETRY_RECOMMENDED_DELAYS_LABEL = [
-  ...RECOMMENDED_RETRY_DELAYS_MINUTES.slice(0, -1),
-  `then ${RECOMMENDED_RETRY_DELAYS_MINUTES[RECOMMENDED_RETRY_DELAYS_MINUTES.length - 1]} minutes for every later attempt`
-].join(', ')
+export const WORKFLOW_NODE_TYPES = [
+  'start',
+  'interactive-terminal',
+  'non-interactive-terminal',
+  'input',
+  'exclusive-gateway',
+  'parallel-gateway',
+  'end'
+] as const
 
-export const TERMINAL_AUTO_RETRY_SCHEMA = {
-  appliesTo: [
-    'interactive-terminal',
-    'non-interactive-terminal'
-  ],
-  storage: 'config.autoRetry on the node; absence means the feature is off with no persisted state',
-  setCommand: 'cliloom workflow auto-retry set <workflow-id> <node-id> --stdin --expected-revision <revision>',
-  fields: {
-    enabled: `boolean, required; false keeps the strategy fields for later re-enable but stops retrying`,
-    mode: `'recommended' (fixed backoff delays) or 'cron' (calendar schedule), required`,
-    maxRetries: `integer ${AUTO_RETRY_MIN_MAX_RETRIES}-${AUTO_RETRY_MAX_MAX_RETRIES}, null for unlimited; omitted defaults to ${AUTO_RETRY_DEFAULT_MAX_RETRIES}`,
-    cron: `required for cron mode: five-field cron (minute hour day month weekday); at most ${AUTO_RETRY_CRON_MAX_LENGTH} characters`
-  },
-  recommendedDelays: AUTO_RETRY_RECOMMENDED_DELAYS_LABEL,
-  semantics: [
-    `maxRetries counts automatic retries only; the first execution and manual retries do not consume attempts, and a manual retry starts a fresh cycle`,
-    'recommended mode waits from the moment of failure: ' + AUTO_RETRY_RECOMMENDED_DELAYS_LABEL + ' (minutes)',
-    'cron mode retries at the next calendar match after the failure, not after a fixed delay',
-    'when both day-of-month and weekday are restricted, cron uses the classic Unix any-match semantics',
-    'six-field seconds, @macros, names, and Quartz extensions are not accepted',
-    'the time zone comes from the system IANA zone captured when the task starts; there is no timezone field',
-    'whether hook failures, user stops, or interruptions trigger a retry follows the existing runtime rules',
-    'enabled cron configurations must have a computable future trigger time; disabled ones may keep an unfinished draft',
-    'changing the workflow does not cancel existing waiting plans, reset counters of running tasks, or rewrite history'
-  ],
-  setRules: [
-    'the set command replaces the whole autoRetry object; get first, then submit the merged object',
-    'top-level JSON null removes config.autoRetry and restores the not-configured state',
-    'unknown fields (including cron in recommended mode) are rejected',
-    'saving requires the workflow revision returned by get; the designer must not hold unsaved edits for the same workflow'
-  ],
-  examples: {
-    recommendedFinite: { enabled: true, mode: 'recommended', maxRetries: 5 },
-    recommendedDefault: { enabled: true, mode: 'recommended' },
-    cronFinite: { enabled: true, mode: 'cron', cron: '*/15 * * * *', maxRetries: 4 },
-    cronUnlimited: { enabled: true, mode: 'cron', cron: '*/15 * * * *', maxRetries: null },
-    disabledKeepsStrategy: { enabled: false, mode: 'cron', cron: '*/5 * * * *', maxRetries: 5 },
-    clear: null
-  }
+/**
+ * Field-value examples for nodes[].config.autoRetry. These are values of the
+ * autoRetry field, not complete workflows; the adjacent test enforces that the
+ * shared parser accepts each of them.
+ */
+export const TERMINAL_AUTO_RETRY_CONFIG_EXAMPLES = {
+  recommendedFinite: { enabled: true, mode: 'recommended', maxRetries: 5 },
+  recommendedDefault: { enabled: true, mode: 'recommended' },
+  cronFinite: { enabled: true, mode: 'cron', cron: '*/15 * * * *', maxRetries: 4 },
+  cronUnlimited: { enabled: true, mode: 'cron', cron: '*/15 * * * *', maxRetries: null },
+  disabledKeepsStrategy: { enabled: false, mode: 'cron', cron: '*/5 * * *', maxRetries: 5 },
+  clear: null
 } as const
 
 /**
- * Minimal complete workflows. Every example must pass
- * parseWorkflowDefinition; the adjacent test enforces this.
+ * Complete workflow definitions. Every example must pass
+ * parseWorkflowDefinition; the adjacent test enforces this. None of them may
+ * contain comments, ellipses, or a workflow-get response wrapper.
  */
 export const WORKFLOW_SCHEMA_EXAMPLES = {
   minimal: {
@@ -316,7 +293,7 @@ export const WORKFLOW_SCHEMA_EXAMPLES = {
           retryCommand: 'watch logs --from-start',
           cwd: '${sys_project_dir}',
           autoStart: false,
-          autoRetry: { enabled: true, mode: 'recommended', maxRetries: 10 }
+          autoRetry: { enabled: true, mode: 'recommended', maxRetries: 5 }
         }
       },
       {
@@ -331,12 +308,92 @@ export const WORKFLOW_SCHEMA_EXAMPLES = {
           autoRetry: { enabled: true, mode: 'cron', cron: '*/15 * * * *', maxRetries: null }
         }
       },
+      {
+        id: 'notify',
+        type: 'non-interactive-terminal',
+        name: 'Notify',
+        config: {
+          command: 'notify-done',
+          cwd: '${sys_project_dir}',
+          successExitCodes: [0],
+          autoRetry: { enabled: true, mode: 'recommended' }
+        }
+      },
       { id: 'end', type: 'end', name: 'End', config: {} }
     ],
     edges: [
       { id: 'start-watch', from: 'start', to: 'watch' },
       { id: 'watch-sync', from: 'watch', to: 'sync' },
-      { id: 'sync-end', from: 'sync', to: 'end' }
+      { id: 'sync-notify', from: 'sync', to: 'notify' },
+      { id: 'notify-end', from: 'notify', to: 'end' }
+    ]
+  },
+  disabledKeepsStrategy: {
+    id: 'example-auto-retry-disabled',
+    name: 'Disabled auto-retry with kept strategy',
+    nodes: [
+      { id: 'start', type: 'start', name: 'Start', config: { variables: [] } },
+      {
+        id: 'watch',
+        type: 'interactive-terminal',
+        name: 'Watch service',
+        config: {
+          command: 'watch logs',
+          cwd: '${sys_project_dir}',
+          autoStart: false,
+          autoRetry: { enabled: false, mode: 'cron', cron: '*/15 * * *', maxRetries: 5 }
+        }
+      },
+      { id: 'end', type: 'end', name: 'End', config: {} }
+    ],
+    edges: [
+      { id: 'start-watch', from: 'start', to: 'watch' },
+      { id: 'watch-end', from: 'watch', to: 'end' }
+    ]
+  },
+  removedByNull: {
+    id: 'example-auto-retry-removed-null',
+    name: 'Auto-retry removed via field null',
+    nodes: [
+      { id: 'start', type: 'start', name: 'Start', config: { variables: [] } },
+      {
+        id: 'watch',
+        type: 'interactive-terminal',
+        name: 'Watch service',
+        config: {
+          command: 'watch logs',
+          cwd: '${sys_project_dir}',
+          autoStart: false,
+          autoRetry: null
+        }
+      },
+      { id: 'end', type: 'end', name: 'End', config: {} }
+    ],
+    edges: [
+      { id: 'start-watch', from: 'start', to: 'watch' },
+      { id: 'watch-end', from: 'watch', to: 'end' }
+    ]
+  },
+  removedByOmission: {
+    id: 'example-auto-retry-removed-omission',
+    name: 'Auto-retry removed via field omission',
+    nodes: [
+      { id: 'start', type: 'start', name: 'Start', config: { variables: [] } },
+      {
+        id: 'watch',
+        type: 'interactive-terminal',
+        name: 'Watch service',
+        config: {
+          command: 'watch logs',
+          cwd: '${sys_project_dir}',
+          autoStart: false
+        }
+      },
+      { id: 'end', type: 'end', name: 'End', config: {} }
+    ],
+    edges: [
+      { id: 'start-watch', from: 'start', to: 'watch' },
+      { id: 'watch-end', from: 'watch', to: 'end' }
     ]
   },
   allNodeTypes: {
@@ -367,6 +424,13 @@ export const WORKFLOW_SCHEMA_EXAMPLES = {
         id: 'prepare',
         type: 'interactive-terminal',
         name: 'Prepare',
+        startHook: {
+          enabled: true,
+          command: 'prepare-workspace ${environment}',
+          cwd: '${sys_project_dir}',
+          env: { CLILOOM_EXAMPLE: '1' },
+          failPolicy: 'continue'
+        },
         config: {
           command: 'prepare-workspace ${environment}',
           cwd: '${sys_project_dir}',
@@ -378,6 +442,11 @@ export const WORKFLOW_SCHEMA_EXAMPLES = {
         id: 'build',
         type: 'non-interactive-terminal',
         name: 'Build',
+        endHook: {
+          enabled: false,
+          command: '',
+          failPolicy: 'fail-node'
+        },
         config: {
           command: 'build --env ${environment}',
           retryCommand: 'build --env ${environment} --retry',
@@ -422,7 +491,7 @@ export const WORKFLOW_SCHEMA_EXAMPLES = {
       { id: 'confirm-prepare', from: 'confirm', to: 'prepare' },
       { id: 'prepare-build', from: 'prepare', to: 'build' },
       { id: 'build-gate', from: 'build', to: 'gate' },
-      { id: 'gate-fanout', from: 'gate', to: 'fanout', condition: '${environment} == "production"' },
+      { id: 'gate-fanout', from: 'gate', to: 'fanout', condition: 'environment == "production"' },
       { id: 'gate-end', from: 'gate', to: 'end', isDefault: true },
       { id: 'branch-a', from: 'fanout', to: 'fanin' },
       { id: 'branch-b', from: 'fanout', to: 'fanin' },
@@ -445,94 +514,271 @@ export const WORKFLOW_SCHEMA_EXAMPLES = {
   }
 } as const
 
-export const WORKFLOW_NODE_TYPES = [
-  'start',
-  'interactive-terminal',
-  'non-interactive-terminal',
-  'input',
-  'exclusive-gateway',
-  'parallel-gateway',
-  'end'
-] as const
+// ---------------------------------------------------------------------------
+// Complete workflow save documentation
+// ---------------------------------------------------------------------------
 
-export const WORKFLOW_SCHEMA_NOTES = [
-  'A workflow has id, name, optional description, nodes, edges, and optional layout (nodes mapped to {x,y}).',
-  'Exactly one start node is required. Node ids, edge ids, and references are validated on save.',
-  'Start nodes need one outgoing edge and no incoming edge; end nodes have no outgoing edge; other node types need at least one incoming edge and exactly one outgoing edge (gateways may have more).',
-  'Variables live on start/input nodes: key, label, type (text|number), required, optional order, defaultValue, and options.',
-  'Hooks (startHook/endHook) are optional per node: enabled, command, optional cwd/env, and failPolicy (continue|fail-node).',
-  'Both terminal types accept command, optional retryCommand, cwd, optional env, and optional autoRetry. Interactive terminals add autoStart; non-interactive terminals add optional timeoutMs and successExitCodes.',
-  'Exclusive gateways route by edge condition with an optional defaultEdgeId; parallel gateways are split or join (join lists joinIncomingEdgeIds).',
-  'The legacy per-node shell field is still parsed for compatibility but does not replace the global shell selection (shell select).',
-  'Updates through workflow save must carry the revision read at workflow get; a valid configuration alone does not mean the command ran.',
-  'Use cliloom workflow validate before save, and cliloom workflow auto-retry get/set for focused autoRetry edits.'
-] as const
+export type WorkflowSchemaFieldDocs = Record<string, string>
 
-export function buildWorkflowSchema(): {
+export type WorkflowSchemaDocument = {
   schemaVersion: number
-  workflow: Record<string, unknown>
-  nodeConfigs: Record<string, unknown>
-  hooks: Record<string, unknown>
-  terminalAutoRetry: unknown
+  save: {
+    usage: string
+    input: string
+    create: string
+    update: string
+    readback: string
+    semantics: string[]
+  }
+  workflow: WorkflowSchemaFieldDocs
+  node: WorkflowSchemaFieldDocs
+  nodeConfigs: Record<NodeType, WorkflowSchemaFieldDocs>
+  variables: WorkflowSchemaFieldDocs
+  hooks: WorkflowSchemaFieldDocs
+  edges: WorkflowSchemaFieldDocs
+  layout: WorkflowSchemaFieldDocs
+  terminalAutoRetry: {
+    appliesTo: string[]
+    storage: string
+    saveCommand: string
+    fields: WorkflowSchemaFieldDocs
+    recommendedDelays: string
+    semantics: string[]
+    saveRules: string[]
+    examples: Record<string, unknown>
+  }
+  systemVariables: WorkflowSchemaFieldDocs
   examples: Record<string, unknown>
-  notes: readonly string[]
-} {
+  notes: string[]
+}
+
+function schemaKey(path: string): TranslationKey {
+  return `assistant:workflowSchema.${path}` as TranslationKey
+}
+
+function translateFields(
+  translate: Translator,
+  section: string,
+  fields: readonly string[],
+  params?: Record<string, unknown>
+): WorkflowSchemaFieldDocs {
+  return Object.fromEntries(
+    fields.map((field) => [field, translate(schemaKey(`${section}.${field}`), params)])
+  )
+}
+
+function translateList(
+  translate: Translator,
+  section: string,
+  entries: readonly string[],
+  params?: Record<string, unknown>
+): string[] {
+  return entries.map((entry) => translate(schemaKey(`${section}.${entry}`), params))
+}
+
+const RECOMMENDED_DELAY_PREFIX = RECOMMENDED_RETRY_DELAYS_MINUTES
+  .slice(0, -1)
+  .join(', ')
+const RECOMMENDED_DELAY_TAIL = String(
+  RECOMMENDED_RETRY_DELAYS_MINUTES[RECOMMENDED_RETRY_DELAYS_MINUTES.length - 1]
+)
+
+export function buildWorkflowSchema(translate: Translator): WorkflowSchemaDocument {
+  const terminalShared = translateFields(
+    translate,
+    'terminalShared',
+    ['command', 'retryCommand', 'cwd', 'env', 'autoRetry'],
+    { maxString: MAX_WORKFLOW_STRING }
+  )
+  const variablesField = translate(schemaKey('variables.variables'))
   return {
     schemaVersion: ASSISTANT_CAPABILITY_SCHEMA_VERSION,
-    workflow: {
-      id: 'string, 1-512 chars, no NUL; identifies the workflow',
-      name: 'string, 1-512 chars',
-      description: 'optional string',
-      nodes: 'array of nodes (see nodeConfigs); unique ids',
-      edges: 'array of { id, from, to, condition?, isDefault? } referencing existing nodes',
-      layout: 'optional { nodes: { [nodeId]: { x, y } } }'
+    save: {
+      usage: translate(schemaKey('save.usage')),
+      input: translate(schemaKey('save.input')),
+      create: translate(schemaKey('save.create')),
+      update: translate(schemaKey('save.update')),
+      readback: translate(schemaKey('save.readback')),
+      semantics: translateList(translate, 'save.semantics', [
+        'fullReplacement',
+        'revisionOption',
+        'validateBoundary',
+        'noExecution',
+        'dirtyDesigner',
+        'sizeLimits',
+        'partialInput',
+        'transportFailure'
+      ])
     },
+    workflow: translateFields(translate, 'workflow', ['id', 'name', 'description', 'nodes', 'edges', 'layout'], {
+      maxNodes: MAX_WORKFLOW_NODES,
+      maxEdges: MAX_WORKFLOW_EDGES,
+      maxString: MAX_WORKFLOW_STRING
+    }),
+    node: translateFields(translate, 'node', ['id', 'type', 'name', 'config', 'startHook', 'endHook'], {
+      maxString: MAX_WORKFLOW_STRING
+    }),
     nodeConfigs: {
-      start: {
-        variables: 'VariableDefinition[] (may be empty)'
-      },
+      start: { variables: variablesField },
       'interactive-terminal': {
-        command: 'required string; supports ${variable} references',
-        retryCommand: 'optional command template used for manual retries and automatic retries (falls back to command when absent)',
-        cwd: 'required string, e.g. ${sys_project_dir}',
-        env: 'optional record of string to string',
-        shell: 'legacy compatibility field; prefer the global shell selection',
-        autoStart: 'required boolean',
-        autoRetry: 'optional terminal auto-retry configuration'
+        ...terminalShared,
+        ...translateFields(translate, 'interactive', ['shell', 'autoStart'])
       },
       'non-interactive-terminal': {
-        command: 'required string; supports ${variable} references',
-        retryCommand: 'optional command template used for manual retries and automatic retries (falls back to command when absent)',
-        cwd: 'required string',
-        env: 'optional record of string to string',
-        timeoutMs: 'optional integer 1-86400000',
-        successExitCodes: 'required integer array (-255..255), e.g. [0]',
-        autoRetry: 'optional terminal auto-retry configuration'
+        ...terminalShared,
+        ...translateFields(translate, 'nonInteractive', ['timeoutMs', 'successExitCodes'])
       },
-      input: {
-        variables: 'VariableDefinition[] (may be empty)'
-      },
-      'exclusive-gateway': {
-        defaultEdgeId: 'optional id of one outgoing edge used when no condition matches'
-      },
-      'parallel-gateway': {
-        mode: "'split' or 'join'",
-        joinIncomingEdgeIds: 'for join: ids of the incoming edges to wait for (required, unique, targeting this node)'
-      },
-      end: {}
+      input: { variables: variablesField },
+      'exclusive-gateway': translateFields(translate, 'gatewayExclusive', ['defaultEdgeId']),
+      'parallel-gateway': translateFields(translate, 'gatewayParallel', ['mode', 'joinIncomingEdgeIds'], {
+        maxEdges: MAX_WORKFLOW_EDGES
+      }),
+      end: translateFields(translate, 'endConfig', ['config'])
     },
-    hooks: {
-      location: 'optional startHook/endHook on any node',
-      enabled: 'boolean',
-      command: 'string (may be empty)',
-      cwd: 'optional string',
-      env: 'optional record of string to string',
-      failPolicy: "'continue' or 'fail-node'"
+    variables: {
+      variables: variablesField,
+      ...translateFields(
+        translate,
+        'variables',
+        ['key', 'label', 'type', 'required', 'order', 'defaultValue', 'options'],
+        { maxString: MAX_WORKFLOW_STRING }
+      )
     },
-    terminalAutoRetry: TERMINAL_AUTO_RETRY_SCHEMA,
+    hooks: translateFields(translate, 'hooks', ['enabled', 'command', 'cwd', 'env', 'failPolicy', 'absence'], {
+      maxString: MAX_WORKFLOW_STRING
+    }),
+    edges: translateFields(translate, 'edges', ['id', 'from', 'to', 'condition', 'isDefault', 'expression'], {
+      maxString: MAX_WORKFLOW_STRING
+    }),
+    layout: translateFields(translate, 'layout', ['nodes', 'x', 'y'], {
+      maxNodes: MAX_WORKFLOW_NODES
+    }),
+    terminalAutoRetry: {
+      appliesTo: ['interactive-terminal', 'non-interactive-terminal'],
+      storage: translate(schemaKey('autoRetry.storage')),
+      saveCommand: translate(schemaKey('autoRetry.saveCommand')),
+      fields: translateFields(translate, 'autoRetry.fields', ['enabled', 'mode', 'maxRetries', 'cron'], {
+        min: AUTO_RETRY_MIN_MAX_RETRIES,
+        max: AUTO_RETRY_MAX_MAX_RETRIES,
+        default: AUTO_RETRY_DEFAULT_MAX_RETRIES,
+        limit: AUTO_RETRY_CRON_MAX_LENGTH
+      }),
+      recommendedDelays: translate(schemaKey('autoRetry.recommendedDelays'), {
+        delays: RECOMMENDED_DELAY_PREFIX,
+        later: RECOMMENDED_DELAY_TAIL
+      }),
+      semantics: translateList(translate, 'autoRetry.semantics', [
+        'countOnly',
+        'cronCalendar',
+        'cronLimits',
+        'cronDraft',
+        'timezone',
+        'retryCommand',
+        'failureScope',
+        'persistence'
+      ]),
+      saveRules: translateList(translate, 'autoRetry.saveRules', [
+        'fullReplace',
+        'removal',
+        'disabledKeeps',
+        'unknownKeys'
+      ]),
+      examples: TERMINAL_AUTO_RETRY_CONFIG_EXAMPLES
+    },
+    systemVariables: Object.fromEntries(
+      SYSTEM_VARIABLES.map((name) => [name, translate(SYSTEM_VARIABLE_DESCRIPTIONS[name])])
+    ),
     examples: WORKFLOW_SCHEMA_EXAMPLES,
-    notes: WORKFLOW_SCHEMA_NOTES
+    notes: translateList(translate, 'notes', [
+      'graph',
+      'noGlobalGuarantees',
+      'normalization',
+      'templates',
+      'systemVariables',
+      'shellLegacy',
+      'revisionHint',
+      'validateHint',
+      'exampleFileUsage'
+    ])
   }
+}
+
+/**
+ * Render the complete workflow save documentation as plain text from the same
+ * schema data returned by buildWorkflowSchema. This is the full document, not
+ * a summary: every section and every complete JSON example is included.
+ */
+export function renderWorkflowSchemaText(
+  schema: WorkflowSchemaDocument,
+  translate: Translator
+): string {
+  const lines: string[] = [
+    translate(schemaKey('title'), { version: schema.schemaVersion }),
+    ''
+  ]
+  const section = (title: string, fields: WorkflowSchemaFieldDocs): void => {
+    lines.push(title, ...Object.entries(fields).map(([field, description]) => `  ${field}: ${description}`), '')
+  }
+  const bulletList = (title: string, entries: readonly string[]): void => {
+    lines.push(title, ...entries.map((entry) => `  - ${entry}`), '')
+  }
+  const jsonBlock = (name: string, value: unknown, label?: string): void => {
+    lines.push(`  ${name}${label ? ` (${label})` : ''}:`)
+    for (const line of JSON.stringify(value, null, 2).split('\n')) lines.push(`    ${line}`)
+  }
+
+  lines.push(translate(schemaKey('saveTitle')), '')
+  lines.push(`  usage: ${schema.save.usage}`)
+  lines.push(`  input: ${schema.save.input}`)
+  lines.push(`  create: ${schema.save.create}`)
+  lines.push(`  update: ${schema.save.update}`)
+  lines.push(`  readback: ${schema.save.readback}`)
+  bulletList(`  ${translate(schemaKey('saveSemanticsTitle'))}`, schema.save.semantics)
+
+  section(translate(schemaKey('workflowTitle')), schema.workflow)
+  section(translate(schemaKey('nodeTitle')), schema.node)
+
+  lines.push(translate(schemaKey('nodeConfigsTitle')))
+  for (const type of WORKFLOW_NODE_TYPES) {
+    lines.push(`  ${type}:`)
+    for (const [field, description] of Object.entries(schema.nodeConfigs[type])) {
+      lines.push(`    ${field}: ${description}`)
+    }
+  }
+  lines.push('')
+
+  section(translate(schemaKey('variablesTitle')), schema.variables)
+  section(translate(schemaKey('hooksTitle')), schema.hooks)
+  section(translate(schemaKey('edgesTitle')), schema.edges)
+  section(translate(schemaKey('layoutTitle')), schema.layout)
+
+  lines.push(translate(schemaKey('autoRetryTitle')))
+  lines.push(`  appliesTo: ${schema.terminalAutoRetry.appliesTo.join(', ')}`)
+  lines.push(`  storage: ${schema.terminalAutoRetry.storage}`)
+  lines.push(`  saveCommand: ${schema.terminalAutoRetry.saveCommand}`)
+  lines.push(`  recommendedDelays: ${schema.terminalAutoRetry.recommendedDelays}`)
+  lines.push(`  ${translate(schemaKey('autoRetryFieldsTitle'))}`)
+  for (const [field, description] of Object.entries(schema.terminalAutoRetry.fields)) {
+    lines.push(`    ${field}: ${description}`)
+  }
+  bulletList(`  ${translate(schemaKey('autoRetrySemanticsTitle'))}`, schema.terminalAutoRetry.semantics)
+  bulletList(`  ${translate(schemaKey('autoRetrySaveRulesTitle'))}`, schema.terminalAutoRetry.saveRules)
+  lines.push(`  ${translate(schemaKey('autoRetryExamplesTitle'))}`)
+  for (const [name, value] of Object.entries(schema.terminalAutoRetry.examples)) {
+    jsonBlock(name, value)
+  }
+  lines.push('')
+
+  section(translate(schemaKey('systemVariablesTitle')), schema.systemVariables)
+
+  lines.push(translate(schemaKey('examplesTitle')))
+  for (const [name, value] of Object.entries(schema.examples)) {
+    jsonBlock(name, value)
+  }
+  lines.push('')
+
+  bulletList(translate(schemaKey('notesTitle')), schema.notes)
+  return lines.join('\n')
 }
 
 // ---------------------------------------------------------------------------
@@ -544,24 +790,28 @@ export const CONTEXT_CAPABILITY_SUMMARIES = [
   'create or revision-safe update workflows',
   'set project default workflows',
   'read and update public settings',
-  'read the detailed workflow schema (workflow schema)',
-  'read and change terminal node automatic retry (workflow auto-retry get/set)',
+  'read the complete workflow save documentation (workflow schema)',
+  'configure terminal node automatic retry by editing nodes[].config.autoRetry through workflow get/save',
   'list, refresh, and select the global shell (shell list/refresh/select)',
   'manage user skins: list, get, create, update, duplicate, rename, delete, import, export, fonts',
   'read and set the project rail and task sidebar widths (layout.projectRailWidth, layout.taskSidebarWidth)'
 ] as const
 
 export const CONTEXT_WORKFLOW_SCHEMA_NOTES = [
-  ...WORKFLOW_SCHEMA_NOTES.slice(0, 3),
-  'Run `cliloom workflow schema --json` for the full field-level schema, auto-retry rules, and valid examples.'
+  'A workflow is saved as one complete definition: id, name, optional description, nodes, edges, and optional layout.',
+  'Exactly one start node is required. Node ids, edge ids, and references are validated on save.',
+  'The revision read at workflow get must be passed to workflow save via --expected-revision; save replaces the whole definition.',
+  'Run `cliloom workflow schema` (or `cliloom workflow schema --json`) for the complete field-level save documentation, auto-retry rules, and valid examples.'
 ] as const
 
 export const CONTEXT_TERMINAL_AUTO_RETRY_SUMMARY = {
-  command: 'cliloom workflow auto-retry get/set <workflow-id> <node-id>',
+  editVia: 'cliloom workflow get <workflow-id> --json, edit nodes[].config.autoRetry in the workflow object, then cliloom workflow save with --expected-revision',
+  storage: 'nodes[].config.autoRetry on interactive-terminal and non-interactive-terminal nodes',
   modes: ['recommended', 'cron'],
   defaultMaxRetries: AUTO_RETRY_DEFAULT_MAX_RETRIES,
   maxRetriesRange: [AUTO_RETRY_MIN_MAX_RETRIES, AUTO_RETRY_MAX_MAX_RETRIES],
   recommendedDelaysMinutes: RECOMMENDED_RETRY_DELAYS_MINUTES,
+  schemaCommand: 'cliloom workflow schema --json',
   appliesTo: 'future-workflow-runs'
 } as const
 
