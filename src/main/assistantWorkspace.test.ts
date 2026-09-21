@@ -286,6 +286,38 @@ describe('assistant workspace file boundary', () => {
     expect(readFileSync(userFile, 'utf8')).toBe('{"preserved":true}')
   })
 
+  it('teaches the new configuration capabilities and resynchronizes guidance for changed builds', () => {
+    const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'cliloom-assistant-workspace-'))
+    temporaryDirectories.push(temporaryRoot)
+    const workspace = ensureAssistantWorkspace({
+      userDataPath: temporaryRoot,
+      executablePath: process.execPath,
+      ...buildIdentity
+    })
+    const instructions = readFileSync(path.join(workspace.rootPath, 'AGENTS.md'), 'utf8')
+
+    expect(instructions).toContain('cliloom context --json')
+    expect(instructions).toContain('cliloom workflow schema --json')
+    expect(instructions).toContain('workflow auto-retry')
+    expect(instructions).toContain('shell select')
+    expect(instructions).toContain('cliloom skin get')
+    expect(instructions).toContain('last-saved-wins')
+    expect(readFileSync(path.join(workspace.rootPath, 'CLAUDE.md'), 'utf8')).toBe(instructions)
+    expect(workspace.inspect().managedFileCount).toBe(4)
+
+    // A same-version source change lands with a new build identity; the
+    // guidance must be repaired rather than left stale.
+    writeFileSync(path.join(workspace.rootPath, 'AGENTS.md'), 'stale instructions')
+    const nextBuild = ensureAssistantWorkspace({
+      userDataPath: temporaryRoot,
+      executablePath: process.execPath,
+      appVersion: '0.1.0',
+      buildId: `sha256:${'c'.repeat(64)}`
+    })
+    expect(readFileSync(path.join(nextBuild.rootPath, 'AGENTS.md'), 'utf8')).toBe(instructions)
+    expect(nextBuild.inspect().synchronized).toBe(true)
+  })
+
   it('reports tampered managed files before repairing them', () => {
     const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'cliloom-assistant-workspace-'))
     temporaryDirectories.push(temporaryRoot)

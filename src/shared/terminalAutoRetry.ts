@@ -7,7 +7,7 @@ export const AUTO_RETRY_MIN_MAX_RETRIES = 1
 export const AUTO_RETRY_MAX_MAX_RETRIES = 9999
 export const AUTO_RETRY_CRON_MAX_LENGTH = 512
 
-const RECOMMENDED_RETRY_DELAYS_MINUTES = [1, 2, 5, 10, 30] as const
+export const RECOMMENDED_RETRY_DELAYS_MINUTES = [1, 2, 5, 10, 30] as const
 
 /**
  * Optional per-node configuration for automatic retries of failed terminal
@@ -223,6 +223,38 @@ export function parseWorkflowAutoRetryContext(value: unknown): WorkflowAutoRetry
   if (typeof raw.runId !== 'string' || !raw.runId || raw.runId.length > 512 || raw.runId.includes('\0')) return null
   if (typeof raw.timeZone !== 'string' || !isValidTimeZone(raw.timeZone)) return null
   return { runId: raw.runId, timeZone: raw.timeZone }
+}
+
+/**
+ * Strict parser for the dedicated assistant auto-retry command. Unlike the
+ * lenient workflow parser, unknown fields are rejected instead of ignored and
+ * `recommended` mode must not carry a `cron` field. A top-level JSON null maps
+ * to undefined so callers can distinguish "remove the stored configuration".
+ */
+export function parseTerminalAutoRetryCommandInput(
+  value: unknown
+): TerminalAutoRetryConfig | undefined {
+  if (value === null) return undefined
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw autoRetryConfigError('errors:workflowValidation.autoRetryInvalid')
+  }
+  const raw = value as Record<string, unknown>
+  const allowedKeys = raw.mode === 'cron'
+    ? ['enabled', 'mode', 'maxRetries', 'cron']
+    : ['enabled', 'mode', 'maxRetries']
+  for (const key of Object.keys(raw)) {
+    if (!allowedKeys.includes(key)) {
+      throw autoRetryConfigError('errors:workflowValidation.autoRetryUnknownField', {
+        field: key
+      })
+    }
+  }
+  if (raw.mode !== 'recommended' && raw.mode !== 'cron') {
+    throw autoRetryConfigError('errors:workflowValidation.autoRetryModeInvalid')
+  }
+  const config = parseTerminalAutoRetryConfig(raw)
+  if (config === undefined) throw autoRetryConfigError('errors:workflowValidation.autoRetryInvalid')
+  return config
 }
 
 /**

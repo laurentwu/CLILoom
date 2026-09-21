@@ -11,8 +11,18 @@ import {
   type WorkflowRecord
 } from './database'
 import { AppError } from '../shared/appError'
+import { NotFoundError } from './errors'
 import { t } from './i18n'
-import { parseWorkflowDefinition, type WorkflowDefinition } from '../shared/workflow'
+import {
+  parseTerminalAutoRetryCommandInput,
+  type TerminalAutoRetryConfig
+} from '../shared/terminalAutoRetry'
+import {
+  parseWorkflowDefinition,
+  type InteractiveTerminalConfig,
+  type NonInteractiveTerminalConfig,
+  type WorkflowDefinition
+} from '../shared/workflow'
 
 export type WorkflowChangeEvent = {
   operation: 'created' | 'updated' | 'deleted'
@@ -58,6 +68,86 @@ export class WorkflowConfigService {
 
   validate(input: unknown): WorkflowDefinition {
     return parseWorkflowDefinition(input)
+  }
+
+  /**
+   * Read the stored autoRetry configuration of one terminal node. Returns
+   * null for autoRetry when the node has no persisted configuration.
+   */
+  getTerminalAutoRetry(
+    workflowId: string,
+    nodeId: string
+  ): {
+    workflowId: string
+    nodeId: string
+    nodeType: 'interactive-terminal' | 'non-interactive-terminal'
+    revision: number
+    autoRetry: TerminalAutoRetryConfig | null
+  } {
+    const record = this.requireTerminalNode(workflowId, nodeId)
+    const config = record.workflow.nodes
+      .find((node) => node.id === nodeId)!.config as
+      | InteractiveTerminalConfig
+      | NonInteractiveTerminalConfig
+    return {
+      workflowId: record.workflow.id,
+      nodeId,
+      nodeType: record.node.type as 'interactive-terminal' | 'non-interactive-terminal',
+      revision: record.revision,
+      autoRetry: config.autoRetry ?? null
+    }
+  }
+
+  /**
+   * Replace or remove the autoRetry configuration of one terminal node using
+   * the regular revision-checked save path. `input` is a complete autoRetry
+   * object (strictly validated) or JSON null to remove the configuration.
+   */
+  setTerminalAutoRetry(
+    workflowId: string,
+    nodeId: string,
+    input: unknown,
+    expectedRevision: number
+  ): SaveWorkflowResult & {
+    nodeType: 'interactive-terminal' | 'non-interactive-terminal'
+    autoRetry: TerminalAutoRetryConfig | null
+  } {
+    const record = this.requireTerminalNode(workflowId, nodeId)
+    const nodeType = record.node.type as 'interactive-terminal' | 'non-interactive-terminal'
+    const autoRetry = parseTerminalAutoRetryCommandInput(input)
+    const candidate: WorkflowDefinition = {
+      ...record.workflow,
+      nodes: record.workflow.nodes.map((node) => {
+        if (node.id !== nodeId) return node
+        const terminalConfig = { ...(node.config as Record<string, unknown>) }
+        if (autoRetry === undefined) delete terminalConfig.autoRetry
+        else terminalConfig.autoRetry = autoRetry
+        return { ...node, config: terminalConfig } as typeof node
+      })
+    }
+    const saved = this.save(candidate, expectedRevision, 'assistant')
+    return { ...saved, nodeType, autoRetry: autoRetry ?? null }
+  }
+
+  private requireTerminalNode(
+    workflowId: string,
+    nodeId: string
+  ): WorkflowRecord & {
+    node: WorkflowDefinition['nodes'][number]
+  } {
+    requireId(workflowId, t('errors:workflowConfig.workflowIdLabel'))
+    requireId(nodeId, t('errors:workflowConfig.nodeIdLabel'))
+    const record = getWorkflowRecord(this.db, workflowId)
+    if (!record) throw new NotFoundError(t('errors:assistantCommand.workflowNotFound'))
+    const node = record.workflow.nodes.find((candidate) => candidate.id === nodeId)
+    if (!node) throw new NotFoundError(t('errors:assistantCommand.nodeNotFound'))
+    if (node.type !== 'interactive-terminal' && node.type !== 'non-interactive-terminal') {
+      throw new AppError({
+        code: 'VALIDATION_ERROR',
+        message: t('errors:workflowConfig.autoRetryNodeNotTerminal')
+      })
+    }
+    return { ...record, node }
   }
 
   save(

@@ -53,6 +53,80 @@ describe('settings persistence', () => {
     })
   })
 
+  it('exposes the sidebar widths as public settings with canonical strings', () => {
+    const service = createService()
+
+    const settings = service.listPublicSettings()
+    expect(settings['layout.projectRailWidth']).toBe('64')
+    expect(settings['layout.taskSidebarWidth']).toBe('168')
+    expect(service.getPublicSetting('layout.taskSidebarWidth')).toBe('168')
+
+    expect(service.setPublicSetting('layout.projectRailWidth', ' 52 ')).toBe('52')
+    expect(service.setPublicSetting('layout.taskSidebarWidth', '380')).toBe('380')
+    expect(service.getSnapshot().layout).toEqual({
+      version: 1,
+      projectRailWidth: 52,
+      taskSidebarWidth: 380
+    })
+  })
+
+  it('updates one width while keeping the other and persists across services', () => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'cliloom-settings-'))
+    const db = openDatabase(directory)
+    databases.push({ db, directory })
+    const service = new SettingsService(db)
+
+    service.setLayout({ version: 1, projectRailWidth: 80, taskSidebarWidth: 200 })
+    expect(service.setPublicSetting('layout.taskSidebarWidth', '140')).toBe('140')
+    const reloadedDb = openDatabase(directory)
+    try {
+      expect(new SettingsService(reloadedDb).getSnapshot().layout).toEqual({
+        version: 1,
+        projectRailWidth: 80,
+        taskSidebarWidth: 140
+      })
+    } finally {
+      reloadedDb.close()
+    }
+  })
+
+  it('rejects invalid width input without writing or broadcasting', () => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'cliloom-settings-'))
+    const db = openDatabase(directory)
+    databases.push({ db, directory })
+    const service = new SettingsService(db)
+    service.setLayout({ version: 1, projectRailWidth: 100, taskSidebarWidth: 240 })
+    let broadcasts = 0
+    service.onChanged(() => { broadcasts += 1 })
+
+    for (const value of ['', ' ', '52.5', '-1', '0x40', '1e2', '64px']) {
+      expect(() => service.setPublicSetting('layout.projectRailWidth', value)).toThrow()
+      expect(() => service.setPublicSetting('layout.taskSidebarWidth', value)).toThrow()
+    }
+    for (const value of ['51', '221']) {
+      expect(() => service.setPublicSetting('layout.projectRailWidth', value)).toThrow()
+    }
+    for (const value of ['139', '381']) {
+      expect(() => service.setPublicSetting('layout.taskSidebarWidth', value)).toThrow()
+    }
+    expect(broadcasts).toBe(0)
+    expect(service.getSnapshot().layout).toEqual({
+      version: 1,
+      projectRailWidth: 100,
+      taskSidebarWidth: 240
+    })
+    const reloadedDb = openDatabase(directory)
+    try {
+      expect(new SettingsService(reloadedDb).getSnapshot().layout).toEqual({
+        version: 1,
+        projectRailWidth: 100,
+        taskSidebarWidth: 240
+      })
+    } finally {
+      reloadedDb.close()
+    }
+  })
+
   it('defaults to automatic shell selection and persists an explicit descriptor', () => {
     const service = createService()
 

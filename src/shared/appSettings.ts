@@ -85,10 +85,57 @@ export const DEFAULT_APPEARANCE_PREFERENCES: AppearancePreferences = {
   language: 'en'
 }
 
+export const LAYOUT_BOUNDS = {
+  projectRailWidthMin: 52,
+  projectRailWidthMax: 220,
+  projectRailWidthDefault: 64,
+  taskSidebarWidthMin: 140,
+  taskSidebarWidthMax: 380,
+  taskSidebarWidthDefault: 168
+} as const
+
+export type PublicLayoutWidthKey = 'layout.projectRailWidth' | 'layout.taskSidebarWidth'
+
+export const PUBLIC_LAYOUT_WIDTH_KEYS: readonly PublicLayoutWidthKey[] = [
+  'layout.projectRailWidth',
+  'layout.taskSidebarWidth'
+]
+
+export function layoutWidthBounds(key: PublicLayoutWidthKey): {
+  minimum: number
+  maximum: number
+  fallback: number
+} {
+  return key === 'layout.projectRailWidth'
+    ? {
+        minimum: LAYOUT_BOUNDS.projectRailWidthMin,
+        maximum: LAYOUT_BOUNDS.projectRailWidthMax,
+        fallback: LAYOUT_BOUNDS.projectRailWidthDefault
+      }
+    : {
+        minimum: LAYOUT_BOUNDS.taskSidebarWidthMin,
+        maximum: LAYOUT_BOUNDS.taskSidebarWidthMax,
+        fallback: LAYOUT_BOUNDS.taskSidebarWidthDefault
+      }
+}
+
+/**
+ * Parse an assistant-provided layout width. Accepts only finite decimal
+ * integers within the persisted layout bounds: no signs, units, decimals,
+ * exponents, hexadecimal, or clamping. Returns null for invalid input.
+ */
+export function parsePublicLayoutWidth(key: PublicLayoutWidthKey, value: string): number | null {
+  const { minimum, maximum } = layoutWidthBounds(key)
+  if (!/^[0-9]+$/.test(value.trim())) return null
+  const parsed = Number(value.trim())
+  if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) return null
+  return parsed
+}
+
 export const DEFAULT_LAYOUT_PREFERENCES: LayoutPreferences = {
   version: 1,
-  projectRailWidth: 64,
-  taskSidebarWidth: 168
+  projectRailWidth: LAYOUT_BOUNDS.projectRailWidthDefault,
+  taskSidebarWidth: LAYOUT_BOUNDS.taskSidebarWidthDefault
 }
 
 export { DEFAULT_SHELL_PREFERENCES, parseShellPreferences }
@@ -97,24 +144,49 @@ export type { ShellPreferences }
 export const PUBLIC_SETTING_KEYS = [
   'appearance.skin',
   'appearance.language',
+  'layout.projectRailWidth',
+  'layout.taskSidebarWidth',
   'assistant.initializationCommand'
 ] as const
 
 export type PublicSettingKey = (typeof PUBLIC_SETTING_KEYS)[number]
 
-export const PUBLIC_SETTING_DEFINITIONS: Record<
-  PublicSettingKey,
-  { description: string; allowedValues?: readonly string[] }
-> = {
+export type PublicSettingDefinition = {
+  description: string
+  allowedValues?: readonly string[]
+  valueType?: 'string' | 'integer'
+  minimum?: number
+  maximum?: number
+  appliesTo?: string
+}
+
+export const PUBLIC_SETTING_DEFINITIONS: Record<PublicSettingKey, PublicSettingDefinition> = {
   'appearance.skin': {
-    description: 'Active skin id (builtin preset or a saved user skin)'
+    description: 'Active skin id (builtin preset or a saved user skin)',
+    appliesTo: 'settings'
   },
   'appearance.language': {
     description: 'Interface language of the application',
-    allowedValues: SUPPORTED_LANGUAGES
+    allowedValues: SUPPORTED_LANGUAGES,
+    appliesTo: 'settings'
+  },
+  'layout.projectRailWidth': {
+    description: 'Width in pixels of the project rail column in the main window',
+    valueType: 'integer',
+    minimum: LAYOUT_BOUNDS.projectRailWidthMin,
+    maximum: LAYOUT_BOUNDS.projectRailWidthMax,
+    appliesTo: 'immediate'
+  },
+  'layout.taskSidebarWidth': {
+    description: 'Width in pixels of the task sidebar column in the main window',
+    valueType: 'integer',
+    minimum: LAYOUT_BOUNDS.taskSidebarWidthMin,
+    maximum: LAYOUT_BOUNDS.taskSidebarWidthMax,
+    appliesTo: 'immediate'
   },
   'assistant.initializationCommand': {
-    description: 'CLI command (with optional arguments) executed after the assistant terminal starts'
+    description: 'CLI command (with optional arguments) executed after the assistant terminal starts',
+    appliesTo: 'next-assistant-session'
   }
 }
 
@@ -164,8 +236,18 @@ export function parseLayoutPreferences(value: unknown): LayoutPreferences {
   if (!isRecord(value) || value.version !== 1) return { ...DEFAULT_LAYOUT_PREFERENCES }
   return {
     version: 1,
-    projectRailWidth: clampNumber(value.projectRailWidth, 52, 220, 64),
-    taskSidebarWidth: clampNumber(value.taskSidebarWidth, 140, 380, 168)
+    projectRailWidth: clampNumber(
+      value.projectRailWidth,
+      LAYOUT_BOUNDS.projectRailWidthMin,
+      LAYOUT_BOUNDS.projectRailWidthMax,
+      LAYOUT_BOUNDS.projectRailWidthDefault
+    ),
+    taskSidebarWidth: clampNumber(
+      value.taskSidebarWidth,
+      LAYOUT_BOUNDS.taskSidebarWidthMin,
+      LAYOUT_BOUNDS.taskSidebarWidthMax,
+      LAYOUT_BOUNDS.taskSidebarWidthDefault
+    )
   }
 }
 

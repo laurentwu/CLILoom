@@ -62,6 +62,22 @@ cmd 使用延迟环境变量展开来隔离工作流值，因此有额外限制�
 
 独立助手窗口的设置页会显示当前全局终端环境。`cliloom doctor` 也会报告应用构建 ID、助手工作区格式和同步状态，以及平台、选择模式、实际终端环境、路径和可用性，但不会输出助手桥接令牌。
 
+### 助手配置终端环境
+
+内置 AI CLI 助手可以通过 `cliloom` 命令管理全局终端环境，执行与设置界面完全相同的检测和运行环境刷新链路：
+
+```sh
+cliloom shell list                                  # 查看选择模式、候选和实际目标
+cliloom shell refresh                               # 重新检测并重建运行时环境
+cliloom shell select automatic                      # 切回自动推荐
+cliloom shell select posix:%2Fbin%2Fbash            # 固定选择一个候选 ID
+```
+
+- 只接受 `automatic` 或最新检测到的候选 ID，不接受助手自行构造的可执行文件路径或 Shell 描述符。
+- 选择在保存前会重新检测候选并校验；无效输入不会改变原配置。
+- 保存后如果环境刷新或目标核验失败，命令返回稳定的 `SHELL_SELECTION_APPLIED_BUT_UNAVAILABLE` 错误（退出码 2）：选择已保存但当前不可用，可运行 `shell list`/`shell refresh` 检查或切回 `automatic`；不会回滚已保存的选择。
+- 与设置界面相同，修改只影响新工作流和下一次启动或重启的助手；已启动任务、历史会话及其 Shell 快照保持不变，现有进程不会被重启。
+
 ## 开发验证
 
 专用原生冒烟测试会使用真实 Shell、真实 PTY 和真实子进程：

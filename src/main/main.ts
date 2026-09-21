@@ -67,6 +67,7 @@ import {
 } from './instanceHandoff'
 import { InstanceHandoffCoordinator } from './instanceHandoffCoordinator'
 import { SettingsService } from './settingsService'
+import { ShellConfigurationService } from './shellConfigurationService'
 import { ShellService } from './shellService'
 import { isUnsupportedProjectPath } from '../shared/projectPath'
 import type { TerminalRetryMode } from '../shared/terminalSession'
@@ -108,6 +109,7 @@ let runner: ProcessRunner
 let workflowRuntime: WorkflowRuntimeService
 let settingsService: SettingsService
 let shellService: ShellService
+let shellConfigurationService: ShellConfigurationService
 let workflowConfigService: WorkflowConfigService
 let assistantTerminalService: AssistantTerminalService
 let assistantCommandHandler: AssistantCommandHandler
@@ -230,6 +232,10 @@ function startDesktopApplication(): void {
       consumers: [settingsService]
     })).environment
     workflowConfigService = new WorkflowConfigService(db)
+    shellConfigurationService = new ShellConfigurationService({
+      shellService,
+      refreshRuntimeEnvironment
+    })
     const runtimeDirectory = path.join(app.getPath('userData'), 'runtime')
     fs.mkdirSync(runtimeDirectory, { recursive: true, mode: 0o700 })
     runner = new ProcessRunner(
@@ -289,7 +295,9 @@ function startDesktopApplication(): void {
       appVersion: app.getVersion(),
       environment: runtimeEnvironment,
       shellService,
-      confirmDelete: confirmAssistantWorkflowDelete
+      confirmDelete: confirmAssistantWorkflowDelete,
+      shellConfiguration: shellConfigurationService,
+      listInstalledFontFamilies: () => installedFontService.list()
     })
     assistantTerminalService = new AssistantTerminalService({
       workspace,
@@ -722,14 +730,11 @@ function registerIpc(): void {
   })
   ipcMain.handle('settings:refresh-shells', async (event) => {
     assertSettingsSender(event)
-    return refreshRuntimeEnvironment()
+    return shellConfigurationService.refresh()
   })
   ipcMain.handle('settings:update-shell', async (event, shellId: unknown) => {
     assertSettingsSender(event)
-    shellService.select(shellId)
-    await refreshRuntimeEnvironment()
-    await shellService.resolveEffectiveTarget()
-    return shellService.getSnapshot()
+    return shellConfigurationService.select(shellId)
   })
   ipcMain.handle('updates:get-state', (event) => {
     assertMainSender(event)

@@ -98,7 +98,8 @@ export default {
     publicSetting: {
       inaccessible: '设置项不存在或不允许访问',
       notMutable: '设置项不存在或不允许修改',
-      valueMustBeString: '设置值必须是字符串'
+      valueMustBeString: '设置值必须是字符串',
+      layoutWidthInvalid: '布局宽度必须是 {{minimum}} 到 {{maximum}} 之间的十进制整数'
     },
     workflow: {
       revisionMissing: '缺少工作流修订号，请刷新后重试',
@@ -132,7 +133,8 @@ export default {
       cmdValueTooLarge: 'cmd 变量值超过 {{limit}} 字符限制',
       cmdEnvTooLarge: 'cmd 环境变量 {{name}} 超过 {{limit}} 字符限制',
       cmdCommandTooLarge: 'cmd 命令展开后超过 {{limit}} 字符限制',
-      cmdEnvBlockTooLarge: 'cmd 环境块超过 {{limit}} 字符限制'
+      cmdEnvBlockTooLarge: 'cmd 环境块超过 {{limit}} 字符限制',
+      selectionAppliedButUnavailable: 'Shell 选择已保存，但目标当前不可用。请运行 shell list 或 shell refresh 检查，或切回 automatic。'
     },
     assistantCommand: {
       absolutePath: '带路径的初始化命令必须使用绝对路径',
@@ -146,6 +148,7 @@ export default {
       stdinDuplicate: '--stdin 不能重复',
       fileRelative: '--file 需要一个相对路径',
       revisionPositive: '--expected-revision 必须是正整数',
+      revisionDuplicate: '--expected-revision 不能重复',
       unknownArgument: '未知参数：{{argument}}',
       stdinOrFile: '必须且只能选择 --stdin 或 --file',
       workflowJsonEmpty: '工作流 JSON 为空',
@@ -162,7 +165,16 @@ export default {
       initUnclosedQuote: '初始化命令包含未闭合的引号',
       initNoExecutable: '初始化命令必须包含可执行文件',
       cmdPercent: 'cmd.exe 模式下初始化命令和路径不能包含 %，请安装 PowerShell 或调整命令',
-      cmdInvalidChars: 'cmd.exe 模式下初始化命令和路径不能包含引号、换行或 NUL 字符'
+      cmdInvalidChars: 'cmd.exe 模式下初始化命令和路径不能包含引号、换行或 NUL 字符',
+      invalidShellSubcommand: 'shell 子命令无效',
+      invalidSkinSubcommand: 'skin 子命令无效',
+      inputJsonEmpty: '命令 JSON 输入为空',
+      inputJsonInvalid: '无法解析命令 JSON 输入',
+      inputJsonObjectRequired: '命令 JSON 输入必须是对象',
+      inputTooLarge: '命令输入超过 {{limit}} 字节限制',
+      nodeNotFound: '工作流中不存在该节点',
+      skinNotFound: '皮肤不存在',
+      skinBuiltinImmutable: '内置皮肤不能修改；请先用 skin duplicate 复制该皮肤'
     },
     bridge: {
       revoked: '助手命令桥已撤销',
@@ -202,13 +214,15 @@ export default {
       taskDraftInvalid: '新建任务草稿无效'
     },
     workflowConfig: {
-      cancelled: '用户取消了操作',
+      cancelled: '操作已被用户取消',
       workflowIdLabel: '工作流 ID',
+      nodeIdLabel: '节点 ID',
       projectIdLabel: '项目 ID',
       designerWorkflowIdLabel: '设计器中的工作流 ID',
       invalidDesignerState: '设计器状态无效',
       invalidDesignerWorkflowId: '设计器中的工作流 ID 无效',
       dirtyInDesigner: '该工作流正在设计器中编辑且有未保存的更改，请先保存或关闭设计器',
+      autoRetryNodeNotTerminal: '只有交互式和非交互式终端节点支持自动重试',
       labelInvalid: '{{label}} 无效'
     },
     workflowRuntime: {
@@ -356,7 +370,8 @@ export default {
       autoRetryInvalid: '{{name}}: 自动重试配置无效',
       autoRetryModeInvalid: '{{name}}: 自动重试模式必须是 recommended 或 cron',
       autoRetryMaxRetriesInvalid: '{{name}}: 最大自动重试次数必须是 1～9999 的整数',
-      autoRetryCronInvalid: '{{name}}: 自动重试的 Cron 表达式无效'
+      autoRetryCronInvalid: '{{name}}: 自动重试的 Cron 表达式无效',
+      autoRetryUnknownField: '{{name}}: 未知的自动重试字段：{{field}}'
     },
     cronSchedule: {
       empty: 'Cron 表达式不能为空',
@@ -654,6 +669,43 @@ export default {
     }
   },
   assistant: {
+    cli: {
+      contextShellLine: 'Shell：{{selection}}（实际目标：{{detail}}）',
+      contextShellUnavailable: '不可用（{{error}}）',
+      contextSkinsLine: '皮肤：{{builtinCount}} 个内置，{{userCount}} 个用户（当前：{{activeSkinId}}）',
+      contextCapabilitiesTitle: '配置能力：',
+      contextCapabilityWorkflowSchema: 'workflow schema —— 完整的工作流字段说明和有效示例',
+      contextCapabilityAutoRetry: 'workflow auto-retry —— 读取/设置终端节点自动重试（推荐或 Cron）',
+      contextCapabilityShell: 'shell list/refresh/select —— 列出、重新检测并选择全局 Shell',
+      contextCapabilitySkin: 'skin —— list/get/create/update/duplicate/rename/delete/import/export/fonts',
+      contextCapabilityLayout: 'settings set layout.* —— 项目栏和任务侧栏宽度',
+      schemaTitle: 'CLILoom 工作流结构说明（schemaVersion {{version}}）',
+      schemaNodes: '节点类型：',
+      schemaAutoRetryTitle: '自动重试（终端节点）：',
+      schemaSetLabel: '设置命令：{{command}}',
+      schemaModes: '模式：recommended（等待 {{delays}}）、cron（五段日历表达式）',
+      schemaMaxRetries: 'maxRetries：{{min}}-{{max}}，null 表示不限，默认 {{default}}',
+      schemaApplies: '生效范围：future-workflow-runs（运行中的任务保留其绑定版本）',
+      schemaNotes: '说明：',
+      schemaJsonHint: '使用 --json 获取完整字段结构、节点配置、Hook 和有效示例。',
+      autoRetryGetLine: '工作流 {{workflowId}} 修订版 {{revision}}，节点 {{nodeId}}（{{nodeType}}）。',
+      autoRetryNotConfigured: 'autoRetry：未配置（关闭）',
+      autoRetrySetSaved: '已保存工作流 {{workflowId}} 节点 {{nodeId}} 的自动重试（修订版 {{revision}}）：{{config}}。',
+      autoRetrySetRemoved: '已移除工作流 {{workflowId}} 节点 {{nodeId}} 的自动重试；新修订版 {{revision}}。',
+      shellSelection: '选择模式：{{selection}}',
+      shellEffective: '实际目标：{{detail}}',
+      shellUnavailable: '不可用',
+      shellCandidates: '候选：',
+      shellNoCandidates: '候选：（未检测到）',
+      shellSelectApplies: '作用于新工作流和下一次助手会话；运行中的任务保留其 Shell 快照。',
+      skinCreated: '已创建皮肤 {{id}}（{{name}}）。未激活；使用 settings set appearance.skin {{id}} 应用。',
+      skinUpdated: '已更新皮肤 {{id}}（{{name}}）。',
+      skinDuplicated: '已将 {{sourceId}} 复制为皮肤 {{id}}（{{name}}）。未激活。',
+      skinRenamed: '已将皮肤 {{id}} 重命名为 {{name}}。',
+      skinDeleted: '已删除皮肤 {{id}}。当前皮肤：{{activeId}}。',
+      skinImported: '已导入皮肤 {{id}}（{{name}}）。未激活。',
+      skinNoFonts: '未找到已安装的字体。'
+    },
     action: {
       open: '打开助手',
       settings: '助手设置',
