@@ -8,7 +8,7 @@ CLILoom itself is licensed under Apache License 2.0 as stated in `LICENSE`. This
 
 The Electron runtime also distributes its own `LICENSE` and `LICENSES.chromium.html` files for Electron, Chromium, Node.js, and their incorporated components. Those runtime files remain part of packaged Electron applications and are not duplicated in this Markdown document.
 
-This generated inventory contains 328 package versions and 103 distinct notice texts. Refresh it with `npm run licenses:generate`; builds verify it with `npm run licenses:check`.
+This generated inventory contains 329 package versions and 103 distinct notice texts. Refresh it with `npm run licenses:generate`; builds verify it with `npm run licenses:check`.
 
 ## Component index
 
@@ -234,6 +234,7 @@ This generated inventory contains 328 package versions and 103 distinct notice t
 | [isomorphic.js](https://www.npmjs.com/package/isomorphic.js) | `0.2.5` | MIT | [Notice 062](#notice-062) |
 | [js-tokens](https://www.npmjs.com/package/js-tokens) | `4.0.0` | MIT | [Notice 063](#notice-063) |
 | [js-yaml](https://www.npmjs.com/package/js-yaml) | `4.3.1` | MIT | [Notice 064](#notice-064) |
+| [js-yaml](https://www.npmjs.com/package/js-yaml) | `4.3.2` | MIT | [Notice 064](#notice-064) |
 | [jsonfile](https://www.npmjs.com/package/jsonfile) | `6.2.1` | MIT | [Notice 065](#notice-065) |
 | [kleur](https://www.npmjs.com/package/kleur) | `4.1.5` | MIT | [Notice 045](#notice-045) |
 | [lazy-val](https://www.npmjs.com/package/lazy-val) | `1.0.5` | MIT | [Notice 066](#notice-066) |
@@ -2661,7 +2662,7 @@ THE SOFTWARE.
 
 ### Notice 064
 
-Applies to: `js-yaml@4.3.1`
+Applies to: `js-yaml@4.3.1`, `js-yaml@4.3.2`
 
 Declared license: MIT
 
