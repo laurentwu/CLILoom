@@ -10,6 +10,7 @@ import {
   type AppDatabase
 } from './database'
 import {
+  cancelWaitingAutoRetriesInDb,
   persistWorkflowRuntimeState,
   reconcileRecoverableRuntimeState,
   restoreWorkflowRuntimeState
@@ -703,5 +704,153 @@ describe('runtime persistence', () => {
 
     const workflowRun = db.prepare('select status from workflow_runs where task_id = ?').get('task-1') as { status: string }
     expect(workflowRun.status).toBe('completed')
+  })
+})
+
+describe('terminal auto-retry persistence', () => {
+  it('round-trips waiting retry state and the run context', () => {
+    const db = createDb()
+    const waitingState = state({
+      status: 'failed',
+      autoRetryContext: { runId: 'run-9', timeZone: 'Asia/Shanghai' },
+      nodeRuns: {
+        start: { nodeId: 'start', status: 'completed' },
+        terminal: {
+          nodeId: 'terminal',
+          status: 'failed',
+          sessionId: 'session-1',
+          stdout: 'out',
+          stderr: 'err',
+          exitCode: 1,
+          failureSource: 'terminal',
+          autoRetry: {
+            version: 1,
+            cycleId: 'cycle-1',
+            phase: 'waiting',
+            attemptsStarted: 2,
+            lastFailureAt: 1234,
+            scheduleId: 'sched-7',
+            nextRetryAt: 5678
+          }
+        }
+      }
+    })
+    persistState(db, waitingState, 'failed')
+
+    const restored = restoreWorkflowRuntimeState(db, 'task-1').state
+    expect(restored?.autoRetryContext).toEqual({ runId: 'run-9', timeZone: 'Asia/Shanghai' })
+    expect(restored?.nodeRuns.terminal.autoRetry).toEqual(waitingState.nodeRuns.terminal.autoRetry)
+    expect(restored?.nodeRuns.terminal.failureSource).toBe('terminal')
+  })
+
+  it('drops corrupted retry metadata instead of scheduling it', () => {
+    const db = createDb()
+    persistState(db, state({
+      status: 'failed',
+      autoRetryContext: { runId: 'run-9', timeZone: 'UTC' },
+      nodeRuns: {
+        terminal: {
+          nodeId: 'terminal',
+          status: 'failed',
+          sessionId: 'session-1',
+          autoRetry: { version: 99, cycleId: 'x', phase: 'waiting' } as never
+        }
+      }
+    }), 'failed')
+
+    const restored = restoreWorkflowRuntimeState(db, 'task-1').state
+    expect(restored?.nodeRuns.terminal.autoRetry).toBeUndefined()
+  })
+
+  it('demotes waiting states on non-failed nodes and in-flight runs after restart', () => {
+    const db = createDb()
+    // Waiting metadata recorded against a completed node is invalid.
+    persistState(db, state({
+      status: 'completed',
+      autoRetryContext: { runId: 'run-9', timeZone: 'UTC' },
+      nodeRuns: {
+        terminal: {
+          nodeId: 'terminal',
+          status: 'completed',
+          sessionId: 'session-1',
+          autoRetry: {
+            version: 1,
+            cycleId: 'cycle-1',
+            phase: 'waiting',
+            attemptsStarted: 0,
+            scheduleId: 's',
+            nextRetryAt: 1
+          }
+        }
+      },
+      workflowCompleted: true
+    }), 'completed')
+    const demoted = restoreWorkflowRuntimeState(db, 'task-1').state
+    expect(demoted?.nodeRuns.terminal.autoRetry).toMatchObject({ phase: 'blocked', reason: 'invalid-state' })
+
+    // A run interrupted mid automatic-execution must not resume scheduling.
+    persistState(db, state({
+      status: 'running',
+      autoRetryContext: { runId: 'run-9', timeZone: 'UTC' },
+      nodeRuns: {
+        start: { nodeId: 'start', status: 'completed' },
+        terminal: {
+          nodeId: 'terminal',
+          status: 'running',
+          sessionId: 'session-1',
+          autoRetry: {
+            version: 1,
+            cycleId: 'cycle-1',
+            phase: 'running',
+            attemptsStarted: 1
+          }
+        }
+      }
+    }), 'running')
+
+    reconcileRecoverableRuntimeState(db, { isTerminalSessionLive: () => false })
+
+    const interrupted = db.prepare(
+      'select status, output_json from node_runs where node_id = ?'
+    ).get('terminal') as { status: string; output_json: string }
+    expect(interrupted.status).toBe('interrupted')
+    expect(JSON.parse(interrupted.output_json).autoRetry).toMatchObject({
+      phase: 'blocked',
+      reason: 'interrupted'
+    })
+  })
+
+  it('cancels persisted waiting plans for released engines on stop', () => {
+    const db = createDb()
+    persistState(db, state({
+      status: 'failed',
+      autoRetryContext: { runId: 'run-9', timeZone: 'UTC' },
+      nodeRuns: {
+        terminal: {
+          nodeId: 'terminal',
+          status: 'failed',
+          sessionId: 'session-1',
+          autoRetry: {
+            version: 1,
+            cycleId: 'cycle-1',
+            phase: 'waiting',
+            attemptsStarted: 0,
+            scheduleId: 's',
+            nextRetryAt: 1
+          }
+        }
+      }
+    }), 'failed')
+
+    const changed = cancelWaitingAutoRetriesInDb(db, 'task-1', 'task-stopped')
+    expect(changed).toBe(1)
+
+    const restored = restoreWorkflowRuntimeState(db, 'task-1').state
+    expect(restored?.nodeRuns.terminal.autoRetry).toMatchObject({
+      phase: 'blocked',
+      reason: 'task-stopped'
+    })
+    // Idempotent: a second sweep changes nothing.
+    expect(cancelWaitingAutoRetriesInDb(db, 'task-1', 'task-stopped')).toBe(0)
   })
 })

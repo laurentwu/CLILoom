@@ -352,7 +352,21 @@ export default {
       joinIncomingEdgeIdsMustTargetJoin: '{{name}}: joinIncomingEdgeIds may only reference edges targeting this join',
       joinIncomingEdgeIdsSharedByMultipleJoins: '{{name}}: joinIncomingEdgeIds cannot be shared by multiple join nodes',
       terminalCommandEmpty: '{{name}}: terminal command must not be empty',
-      workingDirEmpty: '{{name}}: working directory must not be empty'
+      workingDirEmpty: '{{name}}: working directory must not be empty',
+      autoRetryInvalid: '{{name}}: invalid automatic retry configuration',
+      autoRetryModeInvalid: '{{name}}: automatic retry mode must be recommended or cron',
+      autoRetryMaxRetriesInvalid: '{{name}}: maximum automatic retries must be an integer between 1 and 9999',
+      autoRetryCronInvalid: '{{name}}: invalid cron expression for automatic retry'
+    },
+    cronSchedule: {
+      empty: 'The cron expression must not be empty',
+      fieldCount: 'The cron expression must have exactly {{count}} fields: minute hour day-of-month month day-of-week',
+      fieldSyntax: 'The {{field}} field only supports numbers, "*", commas, hyphens and step values',
+      stepInvalid: 'The {{field}} field has an invalid step value (must be a positive integer)',
+      rangeInvalid: 'The {{field}} field has a reversed range',
+      rangeOutOfBounds: 'The {{field}} field must stay between {{min}} and {{max}}',
+      noFutureDate: 'The cron expression has no future trigger time',
+      invalid: 'Invalid cron expression'
     }
   },
   workflow: {
@@ -542,7 +556,55 @@ export default {
       modeSplit: 'Parallel branch (split)',
       modeJoin: 'Join (join)',
       joinIncoming: 'Incoming edges to wait for',
-      joinIncomingDescription: 'Connect branches to this join node, then select which incoming edges it must wait for.'
+      joinIncomingDescription: 'Connect branches to this join node, then select which incoming edges it must wait for.',
+      autoRetryTitle: 'Automatic retry on failure',
+      autoRetryEnable: 'Enable automatic retry',
+      autoRetryMode: 'Retry schedule',
+      autoRetryModeRecommended: 'Recommended',
+      autoRetryModeCron: 'Custom cron',
+      autoRetryRecommendedHint: 'Wait 1 → 2 → 5 → 10 → 30 minutes after each failure, then keep waiting 30 minutes.',
+      autoRetryMaxRetries: 'Maximum automatic retries',
+      autoRetryUnlimited: 'Unlimited',
+      autoRetryCountHint: 'The first execution and manual retries are not counted; a manual retry starts a new count.',
+      autoRetryCronLabel: 'Cron expression',
+      autoRetryCronAssistant: 'Expression assistant',
+      autoRetryCronAssistantAria: 'Open the cron expression assistant',
+      autoRetryCronFieldsHint: 'Five fields: minute hour day-of-month month day-of-week. When both day-of-month and day-of-week are restricted, either match triggers (Unix cron).',
+      autoRetryCronPreviewTitle: 'Next 5 candidate times',
+      autoRetryCronPreviewTimezone: 'Times shown in {{timezone}}; a running task uses the system time zone recorded when it started.',
+      autoRetryCronPreviewHint: 'Candidate calendar triggers: only failed, waiting nodes execute them.',
+      autoRetryCronInvalid: 'Invalid cron expression',
+      autoRetryCronPreviewUnavailable: 'Preview unavailable'
+    },
+    cronAssistant: {
+      title: 'Expression assistant',
+      description: 'Build a simple schedule and apply it to the cron field. The main input still accepts hand-written expressions.',
+      mode: 'Frequency',
+      modeEveryNMinutes: 'Every N minutes',
+      modeHourly: 'Hourly',
+      modeDaily: 'Daily',
+      modeWeekly: 'Weekly',
+      everyNMinutes: 'Interval (minutes)',
+      minuteOfHour: 'Minute',
+      timeOfDay: 'Time',
+      weekdays: 'Days of week',
+      weekdayShort: {
+        sun: 'Sun',
+        mon: 'Mon',
+        tue: 'Tue',
+        wed: 'Wed',
+        thu: 'Thu',
+        fri: 'Fri',
+        sat: 'Sat'
+      },
+      generated: 'Generated expression',
+      scheduleDescription: 'Description',
+      preview: 'Next 5 candidate times',
+      previewTimezone: 'Times shown in {{timezone}}',
+      unconvertible: 'The current expression cannot be converted to simple settings',
+      apply: 'Use expression',
+      applyUnavailable: 'Select a valid frequency to use the expression',
+      noPreview: 'Preview unavailable'
     },
     env: {
       title: 'Environment variables',
@@ -749,7 +811,38 @@ export default {
       retry: 'Retry node'
     },
     status: {
-      withExitCode: '{{label}} · exit {{code}}'
+      withExitCode: '{{label}} · exit {{code}}',
+      autoRetryWaiting: 'Failed · auto retry scheduled',
+      autoRetryRunning: 'Running · automatic retry',
+      autoRetryExhausted: 'Failed · automatic retries exhausted ({{count}})',
+      autoRetryCancelled: 'Failed · automatic retry cancelled',
+      autoRetryBlocked: 'Failed · automatic retry unavailable'
+    },
+    autoRetry: {
+      blockedReason: {
+        'hook-failed': 'A hook failed, so this cycle can no longer retry automatically.',
+        'interrupted': 'The execution was interrupted; retry manually to continue.',
+        'missing-session': 'No retryable terminal session was recorded for this node.',
+        'missing-workflow': 'The workflow version used by this task is no longer available.',
+        'invalid-state': 'The saved retry state is invalid.',
+        'schedule-error': 'The retry schedule could not be computed from the cron expression.',
+        'user-cancelled': 'Automatic retry was cancelled for this cycle.',
+        'task-stopped': 'The task was stopped, so automatic retries were cancelled.'
+      },
+      nextRetry: 'Automatic retry #{{attempt}} will run at {{time}}',
+      statsLimited: '{{started}} / {{max}} automatic retries used · {{timezone}} · {{remaining}} left',
+      statsUnlimited: '{{started}} automatic retries used · unlimited · {{timezone}}',
+      attemptsOnly: '{{started}} automatic retries used',
+      retryNow: 'Retry now',
+      cancel: 'Cancel automatic retry',
+      preparing: 'Preparing retry…',
+      running: 'Automatic retry #{{attempt}} in progress',
+      cancelling: 'Cancelling…',
+      cancelled: 'Automatic retry cancelled. Manual retry is still available.',
+      cancelledTitle: 'Automatic retry cancelled',
+      outcomeTitle: 'Automatic retry unavailable',
+      exhausted: 'Automatic retries exhausted ({{count}}). Manual retry starts a new count.',
+      nextAttemptLabel: 'Next automatic retry'
     },
     terminal: {
       selectSession: 'Select terminal session',

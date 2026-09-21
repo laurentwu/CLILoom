@@ -52,6 +52,7 @@
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",
+    "cron-parser": "^5.10.1",
     "electron-updater": "^6.8.9",
     "font-list": "^2.1.0",
     "i18next": "^26.3.6",

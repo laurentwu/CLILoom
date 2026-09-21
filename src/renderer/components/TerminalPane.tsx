@@ -60,6 +60,7 @@ export const TerminalPane = memo(function TerminalPane({
   onGetRetryDraft,
   onStop,
   workflowRole = 'history',
+  suppressRetryButton = false,
   className
 }: {
   session: TerminalSession
@@ -70,6 +71,7 @@ export const TerminalPane = memo(function TerminalPane({
   onGetRetryDraft?: (sessionId: string, mode: TerminalRetryMode) => Promise<TerminalRetryDraft>
   onStop: (sessionId: string) => Promise<void>
   workflowRole?: TerminalWorkflowRole
+  suppressRetryButton?: boolean
   className?: string
 }) {
   const persistent = isTerminalSessionRunning(session.status)
@@ -149,25 +151,27 @@ export const TerminalPane = memo(function TerminalPane({
           <CardAction className="flex items-center gap-2">
             {(action === 'retry-workflow' || action === 'rerun-command') && (
               <>
-                <Button
-                  aria-label={action === 'retry-workflow'
-                    ? t('terminal:retry.aria')
-                    : t('terminal:action.rerunCommand')}
-                  disabled={retrying}
-                  onClick={() => void retry(action === 'retry-workflow' ? 'workflow' : 'standalone')}
-                  size="sm"
-                  title={action === 'retry-workflow'
-                    ? t('terminal:retry.workflowTooltip')
-                    : targetLabel
-                      ? t('terminal:retry.rerunTooltipTarget', { target: targetLabel })
-                      : t('terminal:retry.rerunTooltip')}
-                  variant="outline"
-                >
-                  <RotateCcw data-icon="inline-start" />
-                  {action === 'retry-workflow'
-                    ? t('common:action.retry')
-                    : t('terminal:action.rerunCommand')}
-                </Button>
+                {!suppressRetryButton && (
+                  <Button
+                    aria-label={action === 'retry-workflow'
+                      ? t('terminal:retry.aria')
+                      : t('terminal:action.rerunCommand')}
+                    disabled={retrying}
+                    onClick={() => void retry(action === 'retry-workflow' ? 'workflow' : 'standalone')}
+                    size="sm"
+                    title={action === 'retry-workflow'
+                      ? t('terminal:retry.workflowTooltip')
+                      : targetLabel
+                        ? t('terminal:retry.rerunTooltipTarget', { target: targetLabel })
+                        : t('terminal:retry.rerunTooltip')}
+                    variant="outline"
+                  >
+                    <RotateCcw data-icon="inline-start" />
+                    {action === 'retry-workflow'
+                      ? t('common:action.retry')
+                      : t('terminal:action.rerunCommand')}
+                  </Button>
+                )}
                 {onGetRetryDraft && (
                   <Button
                     ref={editRetryButtonRef}

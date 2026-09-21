@@ -46,7 +46,9 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
+  type InteractiveTerminalConfig,
   type NodeRunStatus,
+  type NonInteractiveTerminalConfig,
   type VariableValue,
   type WorkflowDefinition,
   type WorkflowNode,
@@ -445,7 +447,11 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
   const activeRuntimeStatus = runtimeState?.taskId === activeTaskId ? runtimeState.status : null
   const isRunning = activeRuntimeStatus === 'running'
   const isWaitingForInput = activeRuntimeStatus === 'waiting-input'
-  const workflowAction = getWorkflowAction(activeRuntimeStatus)
+  const hasWaitingAutoRetry = Boolean(
+    runtimeState?.taskId === activeTaskId &&
+    Object.values(runtimeState.nodeRuns).some((run) => run.autoRetry?.phase === 'waiting')
+  )
+  const workflowAction = getWorkflowAction(activeRuntimeStatus, hasWaitingAutoRetry)
 
   const activeProject = projects.find((project) => project.id === activeProjectId) ?? null
   const availableWorkflows = bootstrap.workflows
@@ -1050,6 +1056,33 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
       if (state) applyRuntimeState(state, { source: 'command' })
     } catch (error) {
       handleError(error, 'retryWorkflowNode')
+    }
+  }
+
+  async function cancelTerminalAutoRetry(nodeId: string, autoRetry: {
+    cycleId: string
+    scheduleId?: string
+  }): Promise<void> {
+    const currentRuntimeState = runtimeStateRef.current
+    const runId = currentRuntimeState?.autoRetryContext?.runId
+    if (!currentRuntimeState ||
+      currentRuntimeState.taskId !== activeTaskIdRef.current ||
+      !runId ||
+      !autoRetry.scheduleId
+    ) {
+      throw new Error(t('errors:workflowRuntime.nodeStateChanged'))
+    }
+    try {
+      const state = (await window.cliLoom?.cancelTerminalAutoRetry({
+        taskId: activeTaskIdRef.current,
+        nodeId,
+        runId,
+        cycleId: autoRetry.cycleId,
+        scheduleId: autoRetry.scheduleId
+      })) as WorkflowRuntimeState | undefined
+      if (state) applyRuntimeState(state, { source: 'command' })
+    } catch (error) {
+      handleError(error, 'cancelTerminalAutoRetry')
     }
   }
 
@@ -2645,6 +2678,13 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
                   onSendTerminalInput={sendTerminalInput}
                   onGetTerminalRetryDraft={getTerminalRetryDraft}
                   onRetryTerminal={retryTerminal}
+                  autoRetryTimeZone={runtimeState?.taskId === activeTaskId ? runtimeState.autoRetryContext?.timeZone : undefined}
+                  autoRetryMaxRetries={(() => {
+                    if (!selectedNode || selectedNode.type !== 'interactive-terminal' && selectedNode.type !== 'non-interactive-terminal') return undefined
+                    const config = selectedNode.config as InteractiveTerminalConfig | NonInteractiveTerminalConfig
+                    return config.autoRetry?.maxRetries
+                  })()}
+                  onCancelAutoRetry={(nodeId, autoRetry) => cancelTerminalAutoRetry(nodeId, autoRetry)}
                   zoomTitle={getNodeDetailZoomTitle(nodeDetailZoomTarget)}
                 />
               ) : (

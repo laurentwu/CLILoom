@@ -5,6 +5,7 @@ import {
   type WorkflowRuntimeState
 } from './workflowRuntime'
 import type { WorkflowDefinition } from './workflow'
+import type { TerminalAutoRetryState } from './terminalAutoRetry'
 import { MAX_PROCESS_RESULT_CHARS } from './terminalBuffer'
 
 function cloneState(state: WorkflowRuntimeState): WorkflowRuntimeState {
@@ -2090,5 +2091,614 @@ describe('WorkflowRuntimeEngine', () => {
 
     expect(engine.getState().status).toBe('failed')
     expect(engine.getState().error).toMatch(/execution count exceeded the limit|infinite loop/)
+  })
+})
+
+describe('WorkflowRuntimeEngine automatic terminal retries', () => {
+  const runId = 'run-auto-1'
+  const baseTime = Date.UTC(2026, 8, 20, 10, 0, 0)
+
+  function createAutoRetryClock(startAt = baseTime) {
+    let current = startAt
+    let idCounter = 0
+    const clock = {
+      now: () => current,
+      advance: (ms: number) => {
+        current += ms
+      },
+      createScheduleId: () => `sched-${++idCounter}`,
+      createCycleId: () => `cycle-${++idCounter}`
+    }
+    return clock
+  }
+
+  function createAutoRetryWorkflow(options: {
+    type?: 'interactive-terminal' | 'non-interactive-terminal'
+    autoRetry?: { mode: 'recommended'; maxRetries: number | null } | { mode: 'cron'; cron: string; maxRetries: number | null }
+    retryCommand?: string
+    endHook?: boolean
+    startHook?: boolean
+    successExitCodes?: number[]
+  }): WorkflowDefinition {
+    const nodeType = options.type ?? 'non-interactive-terminal'
+    return {
+      id: 'wf-auto',
+      name: 'Auto retry workflow',
+      nodes: [
+        { id: 'start', type: 'start', name: 'Start', config: { variables: [] } },
+        {
+          id: 'cmd',
+          type: nodeType,
+          name: 'Command',
+          config: {
+            command: 'echo run',
+            ...(options.retryCommand ? { retryCommand: options.retryCommand } : {}),
+            cwd: '/repo',
+            ...(nodeType === 'non-interactive-terminal'
+              ? { successExitCodes: options.successExitCodes ?? [0] }
+              : { autoStart: true }),
+            autoRetry: {
+              enabled: true,
+              ...(options.autoRetry ?? { mode: 'recommended', maxRetries: 10 })
+            }
+          },
+          ...(options.startHook
+            ? { startHook: { enabled: true, command: 'false', cwd: '/repo', failPolicy: 'fail-node' as const } }
+            : {}),
+          ...(options.endHook
+            ? { endHook: { enabled: true, command: 'false', cwd: '/repo', failPolicy: 'fail-node' as const } }
+            : {})
+        },
+        { id: 'end', type: 'end', name: 'End', config: {} }
+      ],
+      edges: [
+        { id: 'e1', from: 'start', to: 'cmd' },
+        { id: 'e2', from: 'cmd', to: 'end' }
+      ]
+    }
+  }
+
+  function createAutoRetryEngine(
+    workflow: WorkflowDefinition,
+    adapter: WorkflowRuntimeAdapter,
+    clock = createAutoRetryClock()
+  ) {
+    const engine = new WorkflowRuntimeEngine({
+      taskId: 'task-auto',
+      projectId: 'project-1',
+      projectDir: '/repo',
+      workflow,
+      variables: {},
+      startNodeId: 'start',
+      autoRetryContext: { runId, timeZone: 'UTC' },
+      autoRetryClock: clock
+    }, adapter)
+    return { engine, clock }
+  }
+
+  function failingResult(sessionId: string) {
+    return { sessionId, stdout: '', stderr: 'boom', exitCode: 1, status: 'closed' as const }
+  }
+
+  it('schedules the recommended first retry sixty seconds after a failure', async () => {
+    const workflow = createAutoRetryWorkflow({})
+    const { adapter } = createAdapter({
+      runProcess: async () => failingResult('session-cmd')
+    })
+    const { engine, clock } = createAutoRetryEngine(workflow, adapter)
+    await engine.start()
+
+    const run = engine.getState().nodeRuns.cmd
+    expect(run.status).toBe('failed')
+    expect(run.failureSource).toBe('terminal')
+    expect(run.autoRetry).toMatchObject({
+      version: 1,
+      phase: 'waiting',
+      attemptsStarted: 0
+    })
+    expect(run.autoRetry?.nextRetryAt).toBe(clock.now() + 60_000)
+    expect(run.autoRetry?.cycleId).toBeTruthy()
+    expect(run.autoRetry?.scheduleId).toBeTruthy()
+  })
+
+  it('does not schedule retries for successful custom exit codes', async () => {
+    const workflow = createAutoRetryWorkflow({ successExitCodes: [1] })
+    const { adapter } = createAdapter({
+      runProcess: async () => ({ sessionId: 'session-cmd', stdout: '', stderr: '', exitCode: 1 })
+    })
+    const { engine } = createAutoRetryEngine(workflow, adapter)
+    await engine.start()
+    expect(engine.getState().nodeRuns.cmd.status).toBe('completed')
+    expect(engine.getState().nodeRuns.cmd.autoRetry).toBeUndefined()
+  })
+
+  it('treats interactive closes as success but failed executions as retryable', async () => {
+    const interactive = createAutoRetryWorkflow({ type: 'interactive-terminal' })
+    const { adapter: closedAdapter } = createAdapter({
+      runProcess: async () => ({ sessionId: 'session-cmd', stdout: '', stderr: '', exitCode: 1, status: 'closed' as const })
+    })
+    const closedEngine = createAutoRetryEngine(interactive, closedAdapter)
+    await closedEngine.engine.start()
+    expect(closedEngine.engine.getState().nodeRuns.cmd.status).toBe('completed')
+    expect(closedEngine.engine.getState().nodeRuns.cmd.autoRetry).toBeUndefined()
+
+    const { adapter: failedAdapter } = createAdapter({
+      runProcess: async () => ({ sessionId: 'session-cmd', stdout: '', stderr: 'no shell', exitCode: null, status: 'failed' as const })
+    })
+    const failedEngine = createAutoRetryEngine(interactive, failedAdapter)
+    await failedEngine.engine.start()
+    expect(failedEngine.engine.getState().nodeRuns.cmd.autoRetry?.phase).toBe('waiting')
+  })
+
+  it('never schedules after killed or interrupted results', async () => {
+    for (const status of ['killed', 'interrupted'] as const) {
+      const workflow = createAutoRetryWorkflow({})
+      const { adapter } = createAdapter({
+        runProcess: async () => ({ sessionId: 'session-cmd', stdout: '', stderr: '', exitCode: null, status })
+      })
+      const { engine } = createAutoRetryEngine(workflow, adapter)
+      await engine.start()
+      expect(engine.getState().nodeRuns.cmd.autoRetry).toBeUndefined()
+    }
+  })
+
+  it('blocks scheduling when hook failures fail the node', async () => {
+    const startHookWorkflow = createAutoRetryWorkflow({ startHook: true })
+    const { adapter: startAdapter } = createAdapter({
+      runProcess: async () => failingResult('session-cmd'),
+      runHook: async () => ({ hookRunId: 'h', stdout: '', stderr: 'hook fail', exitCode: 1, status: 'failed' as const })
+    })
+    const startEngine = createAutoRetryEngine(startHookWorkflow, startAdapter)
+    await startEngine.engine.start()
+    const startRun = startEngine.engine.getState().nodeRuns.cmd
+    expect(startRun.status).toBe('failed')
+    expect(startRun.failureSource).toBe('start-hook')
+    expect(startRun.autoRetry).toBeUndefined()
+  })
+
+  it('blocks an in-flight automatic cycle when the endHook fails after a success', async () => {
+    const workflow = createAutoRetryWorkflow({ endHook: true, autoRetry: { mode: 'recommended', maxRetries: 3 } })
+    let attempt = 0
+    const { adapter } = createAdapter({
+      runProcess: async () => {
+        attempt += 1
+        return attempt === 1
+          ? failingResult('session-cmd')
+          : { sessionId: 'session-cmd', stdout: 'ok', stderr: '', exitCode: 0 }
+      },
+      runHook: async () => ({ hookRunId: 'h', stdout: '', stderr: 'hook fail', exitCode: 1, status: 'failed' as const })
+    })
+    const { engine } = createAutoRetryEngine(workflow, adapter)
+    await engine.start()
+
+    const waiting = engine.getState().nodeRuns.cmd.autoRetry!
+    const accepted = await engine.beginTerminalRetry('cmd', 'session-cmd', undefined, {
+      runId, cycleId: waiting.cycleId, scheduleId: waiting.scheduleId!, dueAt: waiting.nextRetryAt!
+    })
+    expect(accepted).not.toBe(false)
+
+    await engine.completeTerminalRetry('cmd', 'session-cmd', {
+      sessionId: 'session-cmd', stdout: 'ok', stderr: '', exitCode: 0
+    })
+
+    const run = engine.getState().nodeRuns.cmd
+    expect(run.status).toBe('failed')
+    expect(run.failureSource).toBe('end-hook')
+    expect(run.autoRetry).toMatchObject({ phase: 'blocked', reason: 'hook-failed', attemptsStarted: 1 })
+  })
+
+  it('accepts a valid ticket, counts the attempt, and reschedules from the new failure', async () => {
+    const workflow = createAutoRetryWorkflow({})
+    const { adapter } = createAdapter({ runProcess: async () => failingResult('session-cmd') })
+    const { engine, clock } = createAutoRetryEngine(workflow, adapter)
+    await engine.start()
+
+    const first = engine.getState().nodeRuns.cmd.autoRetry!
+    const accepted = await engine.beginTerminalRetry('cmd', 'session-cmd', undefined, {
+      runId, cycleId: first.cycleId, scheduleId: first.scheduleId!, dueAt: first.nextRetryAt!
+    })
+    expect(accepted).toMatchObject({ started: true })
+    expect(engine.getState().nodeRuns.cmd.autoRetry).toMatchObject({
+      phase: 'running',
+      attemptsStarted: 1,
+      cycleId: first.cycleId
+    })
+
+    clock.advance(70_000)
+    await engine.completeTerminalRetry('cmd', 'session-cmd', failingResult('session-cmd'))
+
+    const second = engine.getState().nodeRuns.cmd.autoRetry!
+    expect(second.phase).toBe('waiting')
+    expect(second.attemptsStarted).toBe(1)
+    expect(second.cycleId).toBe(first.cycleId)
+    expect(second.scheduleId).not.toBe(first.scheduleId)
+    expect(second.nextRetryAt).toBe(clock.now() + 120_000)
+  })
+
+  it('rejects stale, mismatched and replayed tickets', async () => {
+    const workflow = createAutoRetryWorkflow({})
+    const { adapter } = createAdapter({ runProcess: async () => failingResult('session-cmd') })
+    const { engine } = createAutoRetryEngine(workflow, adapter)
+    await engine.start()
+    const waiting = engine.getState().nodeRuns.cmd.autoRetry!
+
+    expect(await engine.beginTerminalRetry('cmd', 'session-cmd', undefined, {
+      runId: 'other-run', cycleId: waiting.cycleId, scheduleId: waiting.scheduleId!, dueAt: waiting.nextRetryAt!
+    })).toBe(false)
+    expect(await engine.beginTerminalRetry('cmd', 'session-cmd', undefined, {
+      runId, cycleId: waiting.cycleId, scheduleId: 'stale-schedule', dueAt: waiting.nextRetryAt!
+    })).toBe(false)
+    expect(await engine.beginTerminalRetry('cmd', 'session-cmd', undefined, {
+      runId, cycleId: waiting.cycleId, scheduleId: waiting.scheduleId!, dueAt: waiting.nextRetryAt! + 1
+    })).toBe(false)
+
+    const accepted = await engine.beginTerminalRetry('cmd', 'session-cmd', undefined, {
+      runId, cycleId: waiting.cycleId, scheduleId: waiting.scheduleId!, dueAt: waiting.nextRetryAt!
+    })
+    expect(accepted).not.toBe(false)
+    // The old ticket cannot be replayed once consumed.
+    expect(await engine.beginTerminalRetry('cmd', 'session-cmd', undefined, {
+      runId, cycleId: waiting.cycleId, scheduleId: waiting.scheduleId!, dueAt: waiting.nextRetryAt!
+    })).toBe(false)
+  })
+
+  it('exhausts the plan after the configured attempt count', async () => {
+    const workflow = createAutoRetryWorkflow({ autoRetry: { mode: 'recommended', maxRetries: 1 } })
+    const { adapter } = createAdapter({ runProcess: async () => failingResult('session-cmd') })
+    const { engine } = createAutoRetryEngine(workflow, adapter)
+    await engine.start()
+    const waiting = engine.getState().nodeRuns.cmd.autoRetry!
+    expect(waiting.phase).toBe('waiting')
+
+    await engine.beginTerminalRetry('cmd', 'session-cmd', undefined, {
+      runId, cycleId: waiting.cycleId, scheduleId: waiting.scheduleId!, dueAt: waiting.nextRetryAt!
+    })
+    await engine.completeTerminalRetry('cmd', 'session-cmd', failingResult('session-cmd'))
+
+    expect(engine.getState().nodeRuns.cmd.autoRetry).toMatchObject({
+      phase: 'exhausted',
+      attemptsStarted: 1
+    })
+  })
+
+  it('keeps unlimited plans scheduling forever', async () => {
+    const workflow = createAutoRetryWorkflow({ autoRetry: { mode: 'recommended', maxRetries: null } })
+    const { adapter } = createAdapter({ runProcess: async () => failingResult('session-cmd') })
+    const { engine } = createAutoRetryEngine(workflow, adapter)
+    await engine.start()
+    let state = engine.getState().nodeRuns.cmd.autoRetry!
+    for (let round = 0; round < 12; round += 1) {
+      expect(state.phase).toBe('waiting')
+      expect(state.attemptsStarted).toBe(round)
+      await engine.beginTerminalRetry('cmd', 'session-cmd', undefined, {
+        runId, cycleId: state.cycleId, scheduleId: state.scheduleId!, dueAt: state.nextRetryAt!
+      })
+      await engine.completeTerminalRetry('cmd', 'session-cmd', failingResult('session-cmd'))
+      state = engine.getState().nodeRuns.cmd.autoRetry!
+    }
+    expect(state.attemptsStarted).toBe(12)
+  })
+
+  it('starts a fresh cycle with zero counts after a manual retry', async () => {
+    const workflow = createAutoRetryWorkflow({ autoRetry: { mode: 'recommended', maxRetries: 5 } })
+    const { adapter } = createAdapter({ runProcess: async () => failingResult('session-cmd') })
+    const { engine } = createAutoRetryEngine(workflow, adapter)
+    await engine.start()
+    const first = engine.getState().nodeRuns.cmd.autoRetry!
+
+    const manual = await engine.beginTerminalRetry('cmd', 'session-cmd')
+    expect(manual).not.toBe(false)
+    expect(engine.getState().nodeRuns.cmd.autoRetry).toBeUndefined()
+
+    await engine.completeTerminalRetry('cmd', 'session-cmd', failingResult('session-cmd'))
+    const second = engine.getState().nodeRuns.cmd.autoRetry!
+    expect(second.attemptsStarted).toBe(0)
+    expect(second.cycleId).not.toBe(first.cycleId)
+    expect(second.nextRetryAt).toBe(second.lastFailureAt! + 60_000)
+
+    // The old automatic ticket is dead after the manual cycle replaced it.
+    expect(await engine.beginTerminalRetry('cmd', 'session-cmd', undefined, {
+      runId, cycleId: first.cycleId, scheduleId: first.scheduleId!, dueAt: first.nextRetryAt!
+    })).toBe(false)
+  })
+
+  it('continues the workflow when an automatic retry succeeds', async () => {
+    const workflow = createAutoRetryWorkflow({})
+    let attempt = 0
+    const executedNodes: string[] = []
+    const { adapter } = createAdapter({
+      runProcess: async (request) => {
+        attempt += 1
+        executedNodes.push(request.nodeId)
+        return attempt === 1
+          ? failingResult('session-cmd')
+          : { sessionId: 'session-cmd', stdout: 'fixed', stderr: '', exitCode: 0 }
+      }
+    })
+    const { engine } = createAutoRetryEngine(workflow, adapter)
+    await engine.start()
+    expect(engine.getState().status).toBe('failed')
+
+    const waiting = engine.getState().nodeRuns.cmd.autoRetry!
+    await engine.beginTerminalRetry('cmd', 'session-cmd', undefined, {
+      runId, cycleId: waiting.cycleId, scheduleId: waiting.scheduleId!, dueAt: waiting.nextRetryAt!
+    })
+    await engine.completeTerminalRetry('cmd', 'session-cmd', {
+      sessionId: 'session-cmd', stdout: 'fixed', stderr: '', exitCode: 0
+    })
+
+    const state = engine.getState()
+    expect(state.status).toBe('completed')
+    expect(state.nodeRuns.cmd.status).toBe('completed')
+    expect(state.nodeRuns.cmd.autoRetry).toBeUndefined()
+    expect(state.nodeRuns.start.status).toBe('completed')
+    // The engine only accepts and completes retries; the main process owns
+    // process launching, so only the initial run went through runProcess and
+    // the start node was never re-executed.
+    expect(executedNodes).toEqual(['cmd'])
+  })
+
+  it('binds the configured retry command on automatic retries', async () => {
+    const workflow = createAutoRetryWorkflow({ retryCommand: 'echo retry ${sys_task_id}' })
+    const commands: string[] = []
+    const { adapter } = createAdapter({
+      runProcess: async (request) => {
+        commands.push(request.displayCommand ?? '')
+        return failingResult('session-cmd')
+      }
+    })
+    const { engine } = createAutoRetryEngine(workflow, adapter)
+    await engine.start()
+
+    const waiting = engine.getState().nodeRuns.cmd.autoRetry!
+    const started = await engine.beginTerminalRetry('cmd', 'session-cmd', undefined, {
+      runId, cycleId: waiting.cycleId, scheduleId: waiting.scheduleId!, dueAt: waiting.nextRetryAt!
+    })
+    expect(started).toMatchObject({
+      started: true,
+      commandOverride: { displayCommand: 'echo retry task-auto' }
+    })
+  })
+
+  it('schedules cron retries at the next calendar match', async () => {
+    const workflow = createAutoRetryWorkflow({ autoRetry: { mode: 'cron', cron: '*/5 * * * *', maxRetries: 10 } })
+    const { adapter } = createAdapter({ runProcess: async () => failingResult('session-cmd') })
+    const failureAt = Date.UTC(2026, 8, 20, 10, 4, 50)
+    const { engine } = createAutoRetryEngine(workflow, adapter, createAutoRetryClock(failureAt))
+    await engine.start()
+    const waiting = engine.getState().nodeRuns.cmd.autoRetry!
+    expect(waiting.phase).toBe('waiting')
+    expect(waiting.nextRetryAt).toBe(Date.UTC(2026, 8, 20, 10, 5, 0))
+  })
+
+  it('marks unusable cron expressions as blocked instead of throwing', async () => {
+    const workflow = createAutoRetryWorkflow({ autoRetry: { mode: 'cron', cron: '0 0 31 2 *', maxRetries: 10 } })
+    const { adapter } = createAdapter({ runProcess: async () => failingResult('session-cmd') })
+    const { engine } = createAutoRetryEngine(workflow, adapter)
+    await engine.start()
+    expect(engine.getState().nodeRuns.cmd.autoRetry).toMatchObject({
+      phase: 'blocked',
+      reason: 'schedule-error'
+    })
+  })
+
+  it('cancels a waiting plan and reports already-cancelled idempotently', async () => {
+    const workflow = createAutoRetryWorkflow({})
+    const { adapter } = createAdapter({ runProcess: async () => failingResult('session-cmd') })
+    const { engine } = createAutoRetryEngine(workflow, adapter)
+    await engine.start()
+    const waiting = engine.getState().nodeRuns.cmd.autoRetry!
+
+    const cancelled = await engine.cancelTerminalAutoRetry({
+      nodeId: 'cmd', runId, cycleId: waiting.cycleId, scheduleId: waiting.scheduleId!
+    })
+    expect(cancelled.status).toBe('cancelled')
+    expect(engine.getState().nodeRuns.cmd.autoRetry).toMatchObject({
+      phase: 'cancelled',
+      reason: 'user-cancelled'
+    })
+    expect(engine.getState().nodeRuns.cmd.autoRetry?.nextRetryAt).toBeUndefined()
+
+    const again = await engine.cancelTerminalAutoRetry({
+      nodeId: 'cmd', runId, cycleId: waiting.cycleId, scheduleId: waiting.scheduleId!
+    })
+    expect(again.status).toBe('already-cancelled')
+
+    const stale = await engine.cancelTerminalAutoRetry({
+      nodeId: 'cmd', runId, cycleId: 'other', scheduleId: 'other'
+    })
+    expect(stale.status).toBe('changed')
+  })
+
+  it('cancels waiting plans on user stop but keeps them on interrupt', async () => {
+    const build = async () => {
+      const workflow = createAutoRetryWorkflow({})
+      const { adapter } = createAdapter({ runProcess: async () => failingResult('session-cmd') })
+      const built = createAutoRetryEngine(workflow, adapter)
+      await built.engine.start()
+      return built.engine
+    }
+
+    const stoppedEngine = await build()
+    await stoppedEngine.stop()
+    expect(stoppedEngine.getState().nodeRuns.cmd.autoRetry).toMatchObject({
+      phase: 'blocked',
+      reason: 'task-stopped'
+    })
+
+    const interruptedEngine = await build()
+    await interruptedEngine.interrupt()
+    expect(interruptedEngine.getState().nodeRuns.cmd.autoRetry?.phase).toBe('waiting')
+  })
+
+  it('does not leak mutable nested retry state through getState', async () => {
+    const workflow = createAutoRetryWorkflow({})
+    const { adapter } = createAdapter({ runProcess: async () => failingResult('session-cmd') })
+    const { engine } = createAutoRetryEngine(workflow, adapter)
+    await engine.start()
+
+    const snapshot = engine.getState()
+    snapshot.nodeRuns.cmd.autoRetry!.phase = 'cancelled'
+    snapshot.nodeRuns.cmd.autoRetry!.nextRetryAt = 0
+    expect(engine.getState().nodeRuns.cmd.autoRetry?.phase).toBe('waiting')
+    expect(engine.getState().nodeRuns.cmd.autoRetry?.nextRetryAt).toBe(baseTime + 60_000)
+  })
+})
+
+describe('WorkflowRuntimeEngine automatic retry review regressions', () => {
+  const runId = 'run-regress'
+
+  function createClock(startAt = 0) {
+    let current = startAt
+    let idCounter = 0
+    return {
+      now: () => current,
+      createScheduleId: () => `sched-${++idCounter}`,
+      createCycleId: () => `cycle-${++idCounter}`
+    }
+  }
+
+  it('blocks an in-flight automatic execution when the user stops the task', async () => {
+    const workflow: WorkflowDefinition = {
+      id: 'wf-stop-running',
+      name: 'Stop while running',
+      nodes: [
+        { id: 'start', type: 'start', name: 'Start', config: { variables: [] } },
+        {
+          id: 'cmd',
+          type: 'non-interactive-terminal',
+          name: 'Command',
+          config: {
+            command: 'boom',
+            cwd: '/repo',
+            successExitCodes: [0],
+            autoRetry: { enabled: true, mode: 'recommended', maxRetries: 5 }
+          }
+        },
+        { id: 'end', type: 'end', name: 'End', config: {} }
+      ],
+      edges: [
+        { id: 'e1', from: 'start', to: 'cmd' },
+        { id: 'e2', from: 'cmd', to: 'end' }
+      ]
+    }
+    const { adapter } = createAdapter({
+      runProcess: async () => ({ sessionId: 'session-cmd', stdout: '', stderr: 'boom', exitCode: 1, status: 'closed' as const })
+    })
+    const engine = new WorkflowRuntimeEngine({
+      taskId: 'task-stop-running',
+      projectId: 'project-1',
+      projectDir: '/repo',
+      workflow,
+      variables: {},
+      startNodeId: 'start',
+      autoRetryContext: { runId, timeZone: 'UTC' },
+      autoRetryClock: createClock()
+    }, adapter)
+    await engine.start()
+
+    const waiting = engine.getState().nodeRuns.cmd.autoRetry!
+    const accepted = await engine.beginTerminalRetry('cmd', 'session-cmd', undefined, {
+      runId, cycleId: waiting.cycleId, scheduleId: waiting.scheduleId!, dueAt: waiting.nextRetryAt!
+    })
+    expect(accepted).not.toBe(false)
+    expect(engine.getState().nodeRuns.cmd.autoRetry?.phase).toBe('running')
+
+    await engine.stop()
+
+    const stopped = engine.getState().nodeRuns.cmd
+    expect(stopped.status).toBe('stopped')
+    expect(stopped.autoRetry).toMatchObject({ phase: 'blocked', reason: 'task-stopped' })
+    expect(stopped.autoRetry?.scheduleId).toBeUndefined()
+    expect(stopped.autoRetry?.nextRetryAt).toBeUndefined()
+  })
+
+  it('cancels a branch waiting plan while the workflow queue is occupied by a long sibling run', async () => {
+    const workflow: WorkflowDefinition = {
+      id: 'wf-cancel-branch',
+      name: 'Cancel branch plan',
+      nodes: [
+        { id: 'start', type: 'start', name: 'Start', config: { variables: [] } },
+        { id: 'split', type: 'parallel-gateway', name: 'Split', config: { mode: 'split' } },
+        {
+          id: 'long',
+          type: 'interactive-terminal',
+          name: 'Long',
+          config: { command: 'long', cwd: '/repo', autoStart: true }
+        },
+        {
+          id: 'flaky',
+          type: 'non-interactive-terminal',
+          name: 'Flaky',
+          config: {
+            command: 'boom',
+            cwd: '/repo',
+            successExitCodes: [0],
+            autoRetry: { enabled: true, mode: 'recommended', maxRetries: 5 }
+          }
+        },
+        {
+          id: 'join',
+          type: 'parallel-gateway',
+          name: 'Join',
+          config: { mode: 'join', joinIncomingEdgeIds: ['e-split-long', 'e-split-flaky'] }
+        },
+        { id: 'end', type: 'end', name: 'End', config: {} }
+      ],
+      edges: [
+        { id: 'e-start-split', from: 'start', to: 'split' },
+        { id: 'e-split-long', from: 'split', to: 'long' },
+        { id: 'e-split-flaky', from: 'split', to: 'flaky' },
+        { id: 'e-long-join', from: 'long', to: 'join' },
+        { id: 'e-flaky-join', from: 'flaky', to: 'join' },
+        { id: 'e-join-end', from: 'join', to: 'end' }
+      ]
+    }
+    // The sibling branch's interactive terminal never settles, so the global
+    // workflow queue stays occupied indefinitely.
+    let releaseLong: ((value: { sessionId: string; stdout: string; stderr: string; exitCode: number | null; status: 'closed' }) => void) | undefined
+    const { adapter } = createAdapter({
+      runProcess: async (request) => {
+        if (request.nodeId === 'long') {
+          return new Promise((resolve) => { releaseLong = resolve })
+        }
+        return { sessionId: 'session-flaky', stdout: '', stderr: 'boom', exitCode: 1, status: 'closed' as const }
+      }
+    })
+    const engine = new WorkflowRuntimeEngine({
+      taskId: 'task-cancel-branch',
+      projectId: 'project-1',
+      projectDir: '/repo',
+      workflow,
+      variables: {},
+      startNodeId: 'start',
+      autoRetryContext: { runId, timeZone: 'UTC' },
+      autoRetryClock: createClock()
+    }, adapter)
+    void engine.start()
+
+    let waiting: TerminalAutoRetryState | undefined
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      await Promise.resolve()
+      waiting = engine.getState().nodeRuns.flaky?.autoRetry
+      if (waiting?.phase === 'waiting') break
+    }
+    expect(waiting?.phase).toBe('waiting')
+
+    // The cancellation must complete even though the workflow-level operation
+    // queue is still blocked by the sibling branch.
+    const outcome = await engine.cancelTerminalAutoRetry({
+      nodeId: 'flaky',
+      runId,
+      cycleId: waiting!.cycleId,
+      scheduleId: waiting!.scheduleId!
+    })
+    expect(outcome.status).toBe('cancelled')
+    expect(engine.getState().nodeRuns.flaky.autoRetry).toMatchObject({
+      phase: 'cancelled',
+      reason: 'user-cancelled'
+    })
+
+    releaseLong?.({ sessionId: 'session-long', stdout: '', stderr: '', exitCode: 0, status: 'closed' })
   })
 })

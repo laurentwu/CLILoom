@@ -766,3 +766,84 @@ describe('validation issue localization', () => {
     expect(messages).toContain('工作流必须有且只有一个 start 节点')
   })
 })
+
+describe('terminal auto-retry configuration', () => {
+  function workflowWithAutoRetry(autoRetry: unknown): unknown {
+    return {
+      id: 'wf-auto-retry',
+      name: 'Auto retry',
+      nodes: [
+        { id: 'start', type: 'start', name: 'Start', config: { variables: [] } },
+        { id: 'cmd', type: 'non-interactive-terminal', name: 'Command', config: { command: 'echo ok', cwd: '/repo', successExitCodes: [0], autoRetry } },
+        { id: 'end', type: 'end', name: 'End', config: {} }
+      ],
+      edges: [
+        { id: 'e1', from: 'start', to: 'cmd' },
+        { id: 'e2', from: 'cmd', to: 'end' }
+      ]
+    }
+  }
+
+  it('keeps old workflows unchanged when the field is missing', () => {
+    const parsed = parseWorkflowDefinition(workflowWithAutoRetry(undefined))
+    expect(parsed.nodes[1].config).not.toHaveProperty('autoRetry')
+  })
+
+  it('normalizes a missing maxRetries to the default', () => {
+    const parsed = parseWorkflowDefinition(workflowWithAutoRetry({ enabled: true, mode: 'recommended' }))
+    expect(parsed.nodes[1].config).toMatchObject({
+      autoRetry: { enabled: true, mode: 'recommended', maxRetries: 10 }
+    })
+  })
+
+  it('parses explicit cron and unlimited configurations on both terminal types', () => {
+    const parsed = parseWorkflowDefinition(workflowWithAutoRetry({ enabled: true, mode: 'cron', cron: '*/5 * * * *', maxRetries: null }))
+    expect(parsed.nodes[1].config).toMatchObject({
+      autoRetry: { enabled: true, mode: 'cron', cron: '*/5 * * * *', maxRetries: null }
+    })
+
+    const interactiveWorkflow = workflowWithAutoRetry({ enabled: false, mode: 'cron', cron: 'draft', maxRetries: 3 }) as WorkflowDefinition
+    interactiveWorkflow.nodes = interactiveWorkflow.nodes.map((node) => (
+      node.id === 'cmd'
+        ? {
+            ...node,
+            type: 'interactive-terminal' as const,
+            config: {
+              command: 'sh',
+              cwd: '/repo',
+              autoStart: true,
+              autoRetry: { enabled: false, mode: 'cron' as const, cron: 'draft', maxRetries: 3 }
+            }
+          }
+        : node
+    ))
+    const parsedInteractive = parseWorkflowDefinitionStructure(interactiveWorkflow)
+    expect(parsedInteractive.nodes[1].config).toMatchObject({
+      autoRetry: { enabled: false, mode: 'cron', cron: 'draft', maxRetries: 3 }
+    })
+  })
+
+  it('rejects invalid auto-retry configurations', () => {
+    expect(() => parseWorkflowDefinition(workflowWithAutoRetry({ enabled: true }))).toThrow()
+    expect(() => parseWorkflowDefinition(workflowWithAutoRetry({ enabled: 1, mode: 'recommended' }))).toThrow()
+    expect(() => parseWorkflowDefinition(workflowWithAutoRetry({ enabled: true, mode: 'daily' }))).toThrow()
+    expect(() => parseWorkflowDefinition(workflowWithAutoRetry({ enabled: true, mode: 'recommended', maxRetries: 0 }))).toThrow()
+    expect(() => parseWorkflowDefinition(workflowWithAutoRetry({ enabled: true, mode: 'recommended', maxRetries: 10000 }))).toThrow()
+    expect(() => parseWorkflowDefinition(workflowWithAutoRetry({ enabled: true, mode: 'cron' }))).toThrow()
+  })
+
+  it('validates enabled cron expressions but allows disabled drafts', () => {
+    const enabled = validateWorkflow(workflowWithAutoRetry({ enabled: true, mode: 'cron', cron: 'not valid', maxRetries: 5 }) as WorkflowDefinition)
+    expect(enabled.map((issue) => issue.key)).toContain('errors:workflowValidation.autoRetryCronInvalid')
+
+    const disabled = validateWorkflow(workflowWithAutoRetry({ enabled: false, mode: 'cron', cron: 'not valid', maxRetries: 5 }) as WorkflowDefinition)
+    expect(disabled).toEqual([])
+  })
+
+  it('round-trips configurations through structure parsing', () => {
+    const raw = workflowWithAutoRetry({ enabled: true, mode: 'recommended', maxRetries: 42 })
+    const once = parseWorkflowDefinitionStructure(raw)
+    const twice = parseWorkflowDefinitionStructure(once)
+    expect(twice).toEqual(once)
+  })
+})

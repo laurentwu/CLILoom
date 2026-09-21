@@ -5,6 +5,11 @@ import {
   referencedVariableNames,
   type TerminalCommandTemplateSnapshot
 } from './terminalRetry'
+import {
+  getAutoRetryCronIssue,
+  parseTerminalAutoRetryConfig,
+  type TerminalAutoRetryConfig
+} from './terminalAutoRetry'
 import type { TranslationKey } from './i18n/types'
 import type { TranslationIssue } from './i18n/translator'
 
@@ -50,6 +55,7 @@ export type InteractiveTerminalConfig = {
   env?: Record<string, string>
   shell?: string
   autoStart: boolean
+  autoRetry?: TerminalAutoRetryConfig
 }
 
 export type NonInteractiveTerminalConfig = {
@@ -59,6 +65,7 @@ export type NonInteractiveTerminalConfig = {
   env?: Record<string, string>
   timeoutMs?: number
   successExitCodes: number[]
+  autoRetry?: TerminalAutoRetryConfig
 }
 
 export type InputNodeConfig = {
@@ -248,9 +255,11 @@ function parseNodeConfig(type: NodeType, value: unknown, nodeId: string): Workfl
   }
   if (type === 'interactive-terminal') {
     const retryCommand = parseOptionalRetryCommand(config.retryCommand, `${nodeId}: retryCommand`)
+    const autoRetry = parseTerminalAutoRetryConfig(config.autoRetry)
     return {
       command: requireBoundedString(config.command, `${nodeId}: command`, 1, MAX_WORKFLOW_STRING),
       ...(retryCommand === undefined ? {} : { retryCommand }),
+      ...(autoRetry === undefined ? {} : { autoRetry }),
       cwd: requireBoundedString(config.cwd, `${nodeId}: cwd`, 1, 4_096),
       ...(config.env === undefined ? {} : { env: parseStringRecord(config.env, `${nodeId}: env`) }),
       ...(config.shell === undefined ? {} : {
@@ -261,11 +270,13 @@ function parseNodeConfig(type: NodeType, value: unknown, nodeId: string): Workfl
   }
   if (type === 'non-interactive-terminal') {
     const retryCommand = parseOptionalRetryCommand(config.retryCommand, `${nodeId}: retryCommand`)
+    const autoRetry = parseTerminalAutoRetryConfig(config.autoRetry)
     const successExitCodes = requireArray(config.successExitCodes, `${nodeId}: successExitCodes`, 256)
       .map((code) => requireInteger(code, `${nodeId}: successExitCodes`, -255, 255))
     return {
       command: requireBoundedString(config.command, `${nodeId}: command`, 1, MAX_WORKFLOW_STRING),
       ...(retryCommand === undefined ? {} : { retryCommand }),
+      ...(autoRetry === undefined ? {} : { autoRetry }),
       cwd: requireBoundedString(config.cwd, `${nodeId}: cwd`, 1, 4_096),
       ...(config.env === undefined ? {} : { env: parseStringRecord(config.env, `${nodeId}: env`) }),
       ...(config.timeoutMs === undefined ? {} : {
@@ -1019,6 +1030,12 @@ export function validateWorkflow(definition: WorkflowDefinition): TranslationIss
       }
       if (typeof config.retryCommand === 'string' && config.retryCommand.trim() && config.retryCommand.includes('\0')) {
         errors.push({ key: 'errors:workflowValidation.terminalRetryCommandNul', params: { name: node.name } })
+      }
+      if (config.autoRetry) {
+        const cronIssue = getAutoRetryCronIssue(config.autoRetry, Date.now())
+        if (cronIssue) {
+          errors.push({ ...cronIssue, params: { ...cronIssue.params, name: node.name } })
+        }
       }
     }
   }

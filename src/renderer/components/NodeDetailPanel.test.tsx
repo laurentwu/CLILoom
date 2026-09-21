@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { I18nextProvider } from 'react-i18next'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { WorkflowNode } from '../../shared/workflow'
@@ -42,6 +42,9 @@ function renderPanel(options: {
   node?: WorkflowNode
   run?: Parameters<typeof NodeDetailPanel>[0]['run']
   sessions?: TerminalSession[]
+  onRetryNode?: () => void
+  onRetryTerminal?: (sessionId: string, mode: string) => Promise<void>
+  onCancelAutoRetry?: (nodeId: string) => Promise<void>
 }) {
   const node = options.node ?? terminalNode
   return render(
@@ -56,13 +59,14 @@ function renderPanel(options: {
         isWaitingForInput={options.run?.status === 'waiting-input'}
         onVariableChange={vi.fn()}
         onRun={vi.fn()}
-        onRetryNode={vi.fn()}
+        onRetryNode={options.onRetryNode ?? vi.fn()}
         onContinue={vi.fn()}
         onStopTerminal={vi.fn()}
         onShowGraph={vi.fn()}
         onLoadTerminalTranscript={vi.fn()}
         onSendTerminalInput={vi.fn()}
-        onRetryTerminal={vi.fn()}
+        onRetryTerminal={options.onRetryTerminal ?? vi.fn()}
+        {...(options.onCancelAutoRetry ? { onCancelAutoRetry: options.onCancelAutoRetry } : {})}
       />
     </I18nextProvider>
   )
@@ -130,5 +134,72 @@ describe('NodeDetailPanel execution actions', () => {
 
     expect(screen.getByRole('button', { name: 'Retry node' })).toBeTruthy()
     expect(screen.getByTestId('terminal-pane').getAttribute('data-workflow-role')).toBe('history')
+  })
+})
+
+describe('NodeDetailPanel automatic retry banner', () => {
+  it('routes banner retry-now through the workflow terminal retry entry', async () => {
+    const onRetryNode = vi.fn()
+    const onRetryTerminal = vi.fn(async () => undefined)
+    renderPanel({
+      run: {
+        nodeId: terminalNode.id,
+        status: 'failed',
+        sessionId: 'session-current',
+        autoRetry: {
+          version: 1,
+          cycleId: 'cycle-1',
+          phase: 'waiting',
+          attemptsStarted: 0,
+          lastFailureAt: 1,
+          scheduleId: 'sched-1',
+          nextRetryAt: Date.now() + 60_000
+        }
+      },
+      sessions: [interruptedSession],
+      onRetryNode,
+      onRetryTerminal
+    })
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry now' }))
+    expect(onRetryTerminal).toHaveBeenCalledWith('session-current', 'workflow')
+    expect(onRetryNode).not.toHaveBeenCalled()
+  })
+
+  it('keeps the cancelling state until the cancel promise settles', async () => {
+    let resolveCancel: () => void = () => {}
+    const onCancelAutoRetry = vi.fn(async () => {
+      await new Promise<void>((resolve) => { resolveCancel = resolve })
+    })
+    renderPanel({
+      run: {
+        nodeId: terminalNode.id,
+        status: 'failed',
+        sessionId: 'session-current',
+        autoRetry: {
+          version: 1,
+          cycleId: 'cycle-1',
+          phase: 'waiting',
+          attemptsStarted: 0,
+          lastFailureAt: 1,
+          scheduleId: 'sched-1',
+          nextRetryAt: Date.now() + 60_000
+        }
+      },
+      sessions: [interruptedSession],
+      onCancelAutoRetry
+    })
+
+    const cancelButton = screen.getByRole('button', { name: 'Cancel automatic retry' })
+    await fireEvent.click(cancelButton)
+    expect((cancelButton as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.getByText('Cancelling…')).toBeTruthy()
+    expect(onCancelAutoRetry).toHaveBeenCalledWith(terminalNode.id, expect.objectContaining({
+      cycleId: 'cycle-1',
+      scheduleId: 'sched-1'
+    }))
+
+    resolveCancel()
+    await waitFor(() => expect((cancelButton as HTMLButtonElement).disabled).toBe(false))
   })
 })

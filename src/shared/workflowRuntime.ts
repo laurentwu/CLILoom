@@ -22,6 +22,14 @@ import {
   type WorkflowNode
 } from './workflow'
 import type { TerminalCommandTemplateSnapshot } from './terminalRetry'
+import {
+  computeNextAutoRetryTime,
+  createAutoRetryId,
+  isAutoRetryExhausted,
+  type AutoRetryClock,
+  type TerminalAutoRetryState,
+  type WorkflowAutoRetryContext
+} from './terminalAutoRetry'
 import type {
   ExecutionTargetDescriptor,
   ShellNeutralCommand,
@@ -39,6 +47,8 @@ export type WorkflowRuntimeNodeRun = {
   stdout?: string
   stderr?: string
   exitCode?: number | null
+  failureSource?: 'terminal' | 'start-hook' | 'end-hook' | 'runtime'
+  autoRetry?: TerminalAutoRetryState
 }
 
 export type WorkflowRuntimeBranchRun = {
@@ -90,6 +100,7 @@ export type WorkflowRuntimeState = {
   projectId: string
   projectDir: string
   executionContext?: WorkflowExecutionContext
+  autoRetryContext?: WorkflowAutoRetryContext
   workflowId: string
   status: WorkflowRuntimeStatus
   currentNodeId: string
@@ -143,6 +154,19 @@ export type WorkflowTerminalRetryEditInput = {
   replaySnapshot?: TerminalCommandTemplateSnapshot
 }
 
+/** Identity of one scheduled automatic retry, validated on acceptance. */
+export type WorkflowTerminalAutoRetryTicket = {
+  runId: string
+  cycleId: string
+  scheduleId: string
+  dueAt: number
+}
+
+export type CancelTerminalAutoRetryOutcome =
+  | { status: 'cancelled' }
+  | { status: 'already-cancelled' }
+  | { status: 'changed' }
+
 type WorkflowRuntimeHookRequest = {
   taskId: string
   nodeId: string
@@ -183,7 +207,15 @@ export type WorkflowRuntimeStartOptions = {
   startNodeId?: string
   initialState?: WorkflowRuntimeState
   executionContext?: WorkflowExecutionContext
+  autoRetryContext?: WorkflowAutoRetryContext
+  autoRetryClock?: AutoRetryClock
   translator?: Translator
+}
+
+const defaultAutoRetryClock: AutoRetryClock = {
+  now: () => Date.now(),
+  createScheduleId: () => createAutoRetryId(),
+  createCycleId: () => createAutoRetryId()
 }
 
 export class WorkflowRuntimeEngine {
@@ -191,6 +223,7 @@ export class WorkflowRuntimeEngine {
   private readonly workflow: WorkflowDefinition
   private readonly adapter: WorkflowRuntimeAdapter
   private readonly translator?: Translator
+  private readonly autoRetryClock: AutoRetryClock
   private stopped = false
   private readonly submittedInputScopes = new Set<string>()
   private state: WorkflowRuntimeState
@@ -203,6 +236,7 @@ export class WorkflowRuntimeEngine {
     this.workflow = options.workflow
     this.adapter = adapter
     this.translator = options.translator
+    this.autoRetryClock = options.autoRetryClock ?? defaultAutoRetryClock
     this.state = options.initialState
       ? cloneRuntimeState(options.initialState)
       : {
@@ -210,6 +244,7 @@ export class WorkflowRuntimeEngine {
           projectId: options.projectId,
           projectDir: options.projectDir,
           ...(options.executionContext ? { executionContext: deepClone(options.executionContext) } : {}),
+          ...(options.autoRetryContext ? { autoRetryContext: { ...options.autoRetryContext } } : {}),
           workflowId: options.workflow.id,
           status: 'running',
           currentNodeId: options.startNodeId ?? options.workflow.nodes[0]?.id ?? '',
@@ -229,9 +264,12 @@ export class WorkflowRuntimeEngine {
       executionContext: this.state.executionContext
         ? deepClone(this.state.executionContext)
         : undefined,
+      autoRetryContext: this.state.autoRetryContext
+        ? { ...this.state.autoRetryContext }
+        : undefined,
       variables: { ...this.state.variables },
       nodeRuns: Object.fromEntries(
-        Object.entries(this.state.nodeRuns).map(([key, value]) => [key, { ...value }])
+        Object.entries(this.state.nodeRuns).map(([key, value]) => [key, cloneNodeRun(value)])
       ),
       executionOrder: [...this.state.executionOrder],
       activeBranches: [...this.state.activeBranches],
@@ -244,6 +282,28 @@ export class WorkflowRuntimeEngine {
       parallelResults: deepClone(this.state.parallelResults),
       task: this.state.task ? { ...this.state.task } : undefined
     }
+  }
+
+  /** True when any terminal node in the bound workflow enables auto retry. */
+  hasAutoRetryEnabledNodes(): boolean {
+    return this.workflow.nodes.some((node) => (
+      (node.type === 'interactive-terminal' || node.type === 'non-interactive-terminal') &&
+      (node.config as InteractiveTerminalConfig | NonInteractiveTerminalConfig).autoRetry?.enabled === true
+    ))
+  }
+
+  /**
+   * Backfill the per-run automatic retry context for legacy tasks that were
+   * first launched before the feature existed. Called only on explicit user
+   * recovery paths; the context is then fixed for the remainder of the run.
+   */
+  ensureAutoRetryContext(timeZone: string): boolean {
+    if (this.state.autoRetryContext) return false
+    this.state.autoRetryContext = {
+      runId: this.autoRetryClock.createCycleId(),
+      timeZone
+    }
+    return true
   }
 
   private tr(key: TranslationKey, params: Record<string, unknown>, english: string): string {
@@ -346,17 +406,18 @@ export class WorkflowRuntimeEngine {
   async beginTerminalRetry(
     nodeId: string,
     sessionId: string,
-    edit?: WorkflowTerminalRetryEditInput
+    edit?: WorkflowTerminalRetryEditInput,
+    automatic?: WorkflowTerminalAutoRetryTicket
   ): Promise<WorkflowTerminalRetryStart | false> {
     const branch = this.findBranchForNode(nodeId)
     if (!branch || !isRetryableRunStatus(branch.status)) {
-      return this.serialize(() => this.beginTerminalRetryInternal(nodeId, sessionId, undefined, edit))
+      return this.serialize(() => this.beginTerminalRetryInternal(nodeId, sessionId, undefined, edit, automatic))
     }
 
     // The workflow queue remains occupied while sibling branches run. Waiting
     // only for this branch lets its failed terminal restart immediately.
     return this.serializeBranch(branch.branchId, async () => {
-      const started = await this.beginTerminalRetryInternal(nodeId, sessionId, branch.branchId, edit)
+      const started = await this.beginTerminalRetryInternal(nodeId, sessionId, branch.branchId, edit, automatic)
       if (started !== false) this.parallelTerminalRetryBranches.set(sessionId, branch.branchId)
       return started
     })
@@ -366,10 +427,12 @@ export class WorkflowRuntimeEngine {
     nodeId: string,
     sessionId: string,
     branchId?: string,
-    edit?: WorkflowTerminalRetryEditInput
+    edit?: WorkflowTerminalRetryEditInput,
+    automatic?: WorkflowTerminalAutoRetryTicket
   ): Promise<WorkflowTerminalRetryStart | false> {
     const node = this.findNode(nodeId)
     if (!node?.type.includes('terminal') || !this.canRetryNode(nodeId, branchId)) return false
+    if (automatic && !this.validateAutoRetryTicket(nodeId, sessionId, automatic)) return false
     const branch = this.findBranchForNode(nodeId, branchId)
     const config = node.config as InteractiveTerminalConfig | NonInteractiveTerminalConfig
     const retryCommand = config.retryCommand?.trim() ? config.retryCommand : undefined
@@ -400,7 +463,12 @@ export class WorkflowRuntimeEngine {
       }
     }
 
-    const started = await this.beginNodeRetryInternal(nodeId, branchId, sessionId)
+    const started = await this.beginNodeRetryInternal(
+      nodeId,
+      branchId,
+      sessionId,
+      automatic ? this.consumeAutoRetryTicket(nodeId) : undefined
+    )
     if (!started) return false
     return {
       started: true,
@@ -408,10 +476,93 @@ export class WorkflowRuntimeEngine {
     }
   }
 
+  private validateAutoRetryTicket(
+    nodeId: string,
+    sessionId: string,
+    ticket: WorkflowTerminalAutoRetryTicket
+  ): boolean {
+    if (this.stopped) return false
+    if (this.state.autoRetryContext?.runId !== ticket.runId) return false
+    const run = this.state.nodeRuns[nodeId]
+    const autoRetry = run?.autoRetry
+    if (!run || run.status !== 'failed') return false
+    if (!autoRetry || autoRetry.phase !== 'waiting') return false
+    if (autoRetry.cycleId !== ticket.cycleId) return false
+    if (autoRetry.scheduleId !== ticket.scheduleId) return false
+    if (autoRetry.nextRetryAt !== ticket.dueAt) return false
+    return run.sessionId === sessionId
+  }
+
+  private consumeAutoRetryTicket(
+    nodeId: string
+  ): TerminalAutoRetryState | undefined {
+    const run = this.state.nodeRuns[nodeId]
+    const autoRetry = run?.autoRetry
+    if (!run || !autoRetry || autoRetry.phase !== 'waiting') return undefined
+    const next: TerminalAutoRetryState = {
+      version: 1,
+      cycleId: autoRetry.cycleId,
+      phase: 'running',
+      attemptsStarted: autoRetry.attemptsStarted + 1,
+      lastFailureAt: autoRetry.lastFailureAt
+    }
+    run.autoRetry = next
+    return next
+  }
+
+  async cancelTerminalAutoRetry(request: {
+    nodeId: string
+    runId: string
+    cycleId: string
+    scheduleId: string
+  }): Promise<CancelTerminalAutoRetryOutcome & { state: WorkflowRuntimeState }> {
+    // Mirror beginTerminalRetry: while sibling branches run, the workflow
+    // queue stays occupied for a long time, so a cancellation for a node in
+    // a retryable branch must use that branch's queue to stay responsive.
+    const branch = this.findBranchForNode(request.nodeId)
+    if (!branch || !isRetryableRunStatus(branch.status)) {
+      return this.serialize(() => this.cancelTerminalAutoRetryInternal(request))
+    }
+    return this.serializeBranch(branch.branchId, () => this.cancelTerminalAutoRetryInternal(request))
+  }
+
+  private async cancelTerminalAutoRetryInternal(request: {
+    nodeId: string
+    runId: string
+    cycleId: string
+    scheduleId: string
+  }): Promise<CancelTerminalAutoRetryOutcome & { state: WorkflowRuntimeState }> {
+    const run = this.state.nodeRuns[request.nodeId]
+    const autoRetry = run?.autoRetry
+    if (!run || !autoRetry) return { status: 'changed', state: this.getState() }
+    if (this.state.autoRetryContext?.runId !== request.runId) {
+      return { status: 'changed', state: this.getState() }
+    }
+    if (autoRetry.phase === 'cancelled') {
+      return {
+        status: autoRetry.cycleId === request.cycleId ? 'already-cancelled' : 'changed',
+        state: this.getState()
+      }
+    }
+    if (autoRetry.phase !== 'waiting' ||
+      autoRetry.cycleId !== request.cycleId ||
+      autoRetry.scheduleId !== request.scheduleId
+    ) {
+      return { status: 'changed', state: this.getState() }
+    }
+    autoRetry.phase = 'cancelled'
+    autoRetry.reason = 'user-cancelled'
+    delete autoRetry.scheduleId
+    delete autoRetry.nextRetryAt
+    await this.persistAndEmit(this.state.status)
+    return { status: 'cancelled', state: this.getState() }
+  }
+
   private async beginNodeRetryInternal(
     nodeId: string,
     branchId?: string,
-    sessionId?: string
+    sessionId?: string,
+    autoRetry?: TerminalAutoRetryState
   ): Promise<boolean> {
     if (!this.canRetryNode(nodeId, branchId)) return false
 
@@ -420,7 +571,8 @@ export class WorkflowRuntimeEngine {
     this.state.nodeRuns[nodeId] = {
       nodeId,
       status: 'running',
-      ...(sessionId ? { sessionId } : {})
+      ...(sessionId ? { sessionId } : {}),
+      ...(autoRetry ? { autoRetry: { ...autoRetry } } : {})
     }
     this.state.status = 'running'
     this.state.workflowCompleted = false
@@ -566,6 +718,19 @@ export class WorkflowRuntimeEngine {
           run.stderr = run.stderr ?? this.tr('status:runtime.userStopped', {}, 'User stopped')
         }
       }
+      // A user stop cancels every waiting automatic-retry plan for this task
+      // and blocks an in-flight automatic execution: its process is being
+      // killed, so the cycle must not continue or present itself as running.
+      // An interrupt (shutdown or system sleep) keeps waiting plans so they
+      // can be recovered on the next launch.
+      if (status === 'stopped' &&
+        (run.autoRetry?.phase === 'waiting' || run.autoRetry?.phase === 'running')
+      ) {
+        run.autoRetry.phase = 'blocked'
+        run.autoRetry.reason = 'task-stopped'
+        delete run.autoRetry.scheduleId
+        delete run.autoRetry.nextRetryAt
+      }
     }
     for (const branch of Object.values(this.state.branchRuns)) {
       if (branch.status === 'running' || branch.status === 'waiting-input') {
@@ -600,7 +765,7 @@ export class WorkflowRuntimeEngine {
         const outcome = await this.runHook(node, node.startHook, 'start')
         if (this.stopped) return
         if (!outcome.ok) {
-          await this.failCurrentNode(outcome.error ?? this.tr('errors:runtime.startHookFailed', {}, 'startHook failed'))
+          await this.failCurrentNode(outcome.error ?? this.tr('errors:runtime.startHookFailed', {}, 'startHook failed'), 'start-hook')
           return
         }
       }
@@ -667,10 +832,10 @@ export class WorkflowRuntimeEngine {
       if (this.stopped) return false
       if (!outcome.ok) {
         if (branch) {
-          this.failBranch(branch, outcome.error ?? this.tr('errors:runtime.endHookFailed', {}, 'endHook failed'))
+          this.failBranch(branch, outcome.error ?? this.tr('errors:runtime.endHookFailed', {}, 'endHook failed'), 'end-hook')
           await this.persistAndEmit(this.state.status)
         } else {
-          await this.failCurrentNode(outcome.error ?? this.tr('errors:runtime.endHookFailed', {}, 'endHook failed'))
+          await this.failCurrentNode(outcome.error ?? this.tr('errors:runtime.endHookFailed', {}, 'endHook failed'), 'end-hook')
         }
         return false
       }
@@ -697,7 +862,7 @@ export class WorkflowRuntimeEngine {
       const outcome = await this.runHook(node, node.endHook, 'end')
       if (this.stopped) return
       if (!outcome.ok) {
-        await this.failCurrentNode(outcome.error ?? this.tr('errors:runtime.endHookFailed', {}, 'endHook failed'))
+        await this.failCurrentNode(outcome.error ?? this.tr('errors:runtime.endHookFailed', {}, 'endHook failed'), 'end-hook')
         return
       }
     }
@@ -713,7 +878,7 @@ export class WorkflowRuntimeEngine {
       const outcome = await this.runHook(node, node.endHook, 'end')
       if (this.stopped) return false
       if (!outcome.ok) {
-        await this.failCurrentNode(outcome.error ?? this.tr('errors:runtime.endHookFailed', {}, 'endHook failed'))
+        await this.failCurrentNode(outcome.error ?? this.tr('errors:runtime.endHookFailed', {}, 'endHook failed'), 'end-hook')
         return false
       }
     }
@@ -791,7 +956,7 @@ export class WorkflowRuntimeEngine {
         const outcome = await this.runHook(node, node.startHook, 'start', branch)
         if (this.stopped) return
         if (!outcome.ok) {
-          this.failBranch(branch, outcome.error ?? this.tr('errors:runtime.startHookFailed', {}, 'startHook failed'))
+          this.failBranch(branch, outcome.error ?? this.tr('errors:runtime.startHookFailed', {}, 'startHook failed'), 'start-hook')
           await this.persistAndEmit(this.state.status)
           return
         }
@@ -820,7 +985,7 @@ export class WorkflowRuntimeEngine {
           const outcome = await this.runHook(node, node.endHook, 'end', branch)
           if (this.stopped) return
           if (!outcome.ok) {
-            this.failBranch(branch, outcome.error ?? this.tr('errors:runtime.endHookFailed', {}, 'endHook failed'))
+            this.failBranch(branch, outcome.error ?? this.tr('errors:runtime.endHookFailed', {}, 'endHook failed'), 'end-hook')
             await this.persistAndEmit(this.state.status)
             return
           }
@@ -841,7 +1006,7 @@ export class WorkflowRuntimeEngine {
           const outcome = await this.runHook(node, node.endHook, 'end', branch)
           if (this.stopped) return
           if (!outcome.ok) {
-            this.failBranch(branch, outcome.error ?? this.tr('errors:runtime.endHookFailed', {}, 'endHook failed'))
+            this.failBranch(branch, outcome.error ?? this.tr('errors:runtime.endHookFailed', {}, 'endHook failed'), 'end-hook')
             await this.persistAndEmit(this.state.status)
             return
           }
@@ -961,7 +1126,7 @@ export class WorkflowRuntimeEngine {
       branch.nodeIds
         .map((nodeId) => [nodeId, this.state.nodeRuns[nodeId]])
         .filter((entry): entry is [string, WorkflowRuntimeNodeRun] => Boolean(entry[1]))
-        .map(([nodeId, run]) => [nodeId, { ...run }])
+        .map(([nodeId, run]) => [nodeId, cloneNodeRun(run)])
     )
     const last = this.lastCommandRun(branch.nodeIds)
     const status = branch.status === 'failed' || branch.status === 'stopped' || branch.status === 'interrupted'
@@ -982,13 +1147,18 @@ export class WorkflowRuntimeEngine {
     }
   }
 
-  private failBranch(branch: WorkflowRuntimeBranchRun, message: string): void {
+  private failBranch(
+    branch: WorkflowRuntimeBranchRun,
+    message: string,
+    failureSource: 'runtime' | 'start-hook' | 'end-hook' = 'runtime'
+  ): void {
     branch.status = 'failed'
     branch.error = message
     this.state.nodeRuns[branch.currentNodeId] = {
       nodeId: branch.currentNodeId,
       status: 'failed',
-      stderr: message
+      stderr: message,
+      failureSource
     }
   }
 
@@ -998,7 +1168,7 @@ export class WorkflowRuntimeEngine {
       const outcome = await this.runHook(node, node.endHook, 'end')
       if (this.stopped) return
       if (!outcome.ok) {
-        await this.failCurrentNode(outcome.error ?? this.tr('errors:runtime.endHookFailed', {}, 'endHook failed'))
+        await this.failCurrentNode(outcome.error ?? this.tr('errors:runtime.endHookFailed', {}, 'endHook failed'), 'end-hook')
         return
       }
     }
@@ -1066,7 +1236,9 @@ export class WorkflowRuntimeEngine {
     const completed = result.status !== 'failed' && result.status !== 'interrupted' && (
       result.status === 'killed' || isInteractive || successCodes.includes(result.exitCode ?? -1)
     )
-    this.state.nodeRuns[node.id] = {
+    const priorRun = this.state.nodeRuns[node.id]
+    const priorAutoRetry = priorRun?.status === 'running' ? priorRun.autoRetry : undefined
+    const run: WorkflowRuntimeNodeRun = {
       nodeId: node.id,
       status: completed ? 'completed' : 'failed',
       sessionId: result.sessionId,
@@ -1074,6 +1246,12 @@ export class WorkflowRuntimeEngine {
       stderr: tailText(result.stderr, MAX_PROCESS_RESULT_CHARS),
       exitCode: result.exitCode
     }
+    if (!completed) {
+      run.failureSource = 'terminal'
+      const planned = this.planTerminalAutoRetry(node, result, priorAutoRetry)
+      if (planned) run.autoRetry = planned
+    }
+    this.state.nodeRuns[node.id] = run
 
     if (!completed) {
       if (options.branch) {
@@ -1092,18 +1270,109 @@ export class WorkflowRuntimeEngine {
       const outcome = await this.runHook(node, node.endHook, 'end', options.branch)
       if (this.stopped) return false
       if (!outcome.ok) {
-        if (options.branch) {
-          this.failBranch(options.branch, outcome.error ?? this.tr('errors:runtime.endHookFailed', {}, 'endHook failed'))
-          await this.persistAndEmit(this.state.status)
-        } else {
-          await this.failCurrentNode(outcome.error ?? this.tr('errors:runtime.endHookFailed', {}, 'endHook failed'))
-        }
+        await this.recordTerminalHookFailure(
+          node,
+          options.branch,
+          outcome.error ?? this.tr('errors:runtime.endHookFailed', {}, 'endHook failed'),
+          'end-hook',
+          priorAutoRetry
+        )
         return false
       }
     }
     if (options.moveNext) this.selectNextNode(node.id)
     await this.persistAndEmit(this.state.status)
     return true
+  }
+
+  /**
+   * Plan the next automatic retry after a failed terminal execution. Returns
+   * undefined when automatic retries do not apply to this failure.
+   */
+  private planTerminalAutoRetry(
+    node: WorkflowNode,
+    result: WorkflowRuntimeProcessResult,
+    priorAutoRetry: TerminalAutoRetryState | undefined
+  ): TerminalAutoRetryState | undefined {
+    const config = node.config as InteractiveTerminalConfig | NonInteractiveTerminalConfig
+    const autoRetryConfig = config.autoRetry
+    const context = this.state.autoRetryContext
+    if (!autoRetryConfig?.enabled || !context) return undefined
+    if (result.status === 'killed' || result.status === 'interrupted') return undefined
+
+    const continuingCycle = priorAutoRetry?.phase === 'running' ? priorAutoRetry : undefined
+    const cycleId = continuingCycle?.cycleId ?? this.autoRetryClock.createCycleId()
+    const attemptsStarted = continuingCycle?.attemptsStarted ?? 0
+    const lastFailureAt = this.autoRetryClock.now()
+
+    const state: TerminalAutoRetryState = {
+      version: 1,
+      cycleId,
+      phase: 'waiting',
+      attemptsStarted,
+      lastFailureAt
+    }
+    if (!result.sessionId) {
+      state.phase = 'blocked'
+      state.reason = 'missing-session'
+      return state
+    }
+    if (isAutoRetryExhausted(attemptsStarted, autoRetryConfig.maxRetries)) {
+      state.phase = 'exhausted'
+      return state
+    }
+    try {
+      state.nextRetryAt = computeNextAutoRetryTime({
+        config: autoRetryConfig,
+        attemptsStarted,
+        lastFailureAt,
+        timeZone: context.timeZone
+      })
+      state.scheduleId = this.autoRetryClock.createScheduleId()
+    } catch {
+      state.phase = 'blocked'
+      state.reason = 'schedule-error'
+    }
+    return state
+  }
+
+  /**
+   * Record a hook failure after a terminal execution. Terminal successes are
+   * never retried automatically, and an in-flight automatic cycle is blocked.
+   */
+  private async recordTerminalHookFailure(
+    node: WorkflowNode,
+    branch: WorkflowRuntimeBranchRun | undefined,
+    message: string,
+    failureSource: 'start-hook' | 'end-hook',
+    priorAutoRetry: TerminalAutoRetryState | undefined
+  ): Promise<void> {
+    const blockedAutoRetry = priorAutoRetry?.phase === 'running'
+      ? {
+          version: 1 as const,
+          cycleId: priorAutoRetry.cycleId,
+          phase: 'blocked' as const,
+          attemptsStarted: priorAutoRetry.attemptsStarted,
+          lastFailureAt: priorAutoRetry.lastFailureAt,
+          reason: 'hook-failed' as const
+        }
+      : undefined
+    this.state.nodeRuns[node.id] = {
+      nodeId: node.id,
+      status: 'failed',
+      stderr: message,
+      failureSource,
+      ...(blockedAutoRetry ? { autoRetry: blockedAutoRetry } : {})
+    }
+    if (branch) {
+      branch.status = 'failed'
+      branch.error = message
+      await this.persistAndEmit(this.state.status)
+    } else {
+      this.state.status = 'failed'
+      this.state.error = message
+      await this.persistAndEmit('failed')
+    }
   }
 
   private async runHook(
@@ -1178,11 +1447,15 @@ export class WorkflowRuntimeEngine {
     return branch ? `${branch.branchId}:${nodeId}` : `workflow:${nodeId}`
   }
 
-  private async failCurrentNode(message: string): Promise<void> {
+  private async failCurrentNode(
+    message: string,
+    failureSource: 'runtime' | 'start-hook' | 'end-hook' = 'runtime'
+  ): Promise<void> {
     this.state.nodeRuns[this.state.currentNodeId] = {
       nodeId: this.state.currentNodeId,
       status: 'failed',
-      stderr: message
+      stderr: message,
+      failureSource
     }
     this.state.status = 'failed'
     this.state.error = message
@@ -1295,6 +1568,19 @@ function coerceValue(value: unknown, type: string): VariableValue {
   if (value === undefined || value === null) return ''
   if (typeof value === 'boolean') return value
   return String(value)
+}
+
+function cloneNodeRun(run: WorkflowRuntimeNodeRun): WorkflowRuntimeNodeRun {
+  return {
+    ...run,
+    ...(run.autoRetry
+      ? {
+          autoRetry: {
+            ...run.autoRetry
+          }
+        }
+      : {})
+  }
 }
 
 function cloneRuntimeState(state: WorkflowRuntimeState): WorkflowRuntimeState {

@@ -1,9 +1,10 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import type { BrowserWindow } from 'electron'
 import { ensureWorkflowVersion, type AppDatabase } from './database'
 import { t } from './i18n'
 import type { ProcessRunner } from './processRunner'
 import {
+  cancelWaitingAutoRetriesInDb,
   persistWorkflowRuntimeState,
   readWorkflowRuntimeState,
   restoreWorkflowRuntimeState,
@@ -14,7 +15,8 @@ import {
   type WorkflowRuntimeAdapter,
   type WorkflowRuntimeState,
   type WorkflowRuntimeStatus,
-  type WorkflowRuntimeStartOptions
+  type WorkflowRuntimeStartOptions,
+  type WorkflowTerminalRetryStart
 } from '../shared/workflowRuntime'
 import {
   parseWorkflowDefinition,
@@ -28,6 +30,7 @@ import {
   type ResolvedExecutionTarget,
   type WorkflowExecutionContext
 } from '../shared/shell'
+import { getSystemTimeZone } from '../shared/cronSchedule'
 import type { TerminalRetryMode } from '../shared/terminalSession'
 import {
   bindTerminalCommandTemplate,
@@ -37,7 +40,17 @@ import {
   type TerminalRetryDraft,
   type TerminalRetryEdit
 } from '../shared/terminalRetry'
+import { TerminalAutoRetryScheduler, type AutoRetryTicket } from './terminalAutoRetryScheduler'
+import type { TerminalAutoRetryReason } from '../shared/terminalAutoRetry'
 import type { ProcessRetrySource } from './processRunner'
+
+export type CancelTerminalAutoRetryRequest = {
+  taskId: string
+  nodeId: string
+  runId: string
+  cycleId: string
+  scheduleId: string
+}
 
 type WorkflowExecutionTargetService = {
   resolveEffectiveTarget: () => Promise<ResolvedExecutionTarget>
@@ -61,6 +74,7 @@ export class WorkflowRuntimeService {
   private readonly pendingTerminalRetries = new Set<string>()
   private readonly taskOperations = new Map<string, Promise<void>>()
   private readonly cancelledTaskLaunches = new Set<string>()
+  private readonly autoRetryScheduler: TerminalAutoRetryScheduler
   private shuttingDown = false
   private shutdownPromise: Promise<void> | null = null
 
@@ -70,7 +84,23 @@ export class WorkflowRuntimeService {
     private readonly getWindow: () => BrowserWindow | null,
     private readonly onTaskTerminal?: () => void,
     private readonly executionTargets?: WorkflowExecutionTargetService
-  ) {}
+  ) {
+    this.autoRetryScheduler = new TerminalAutoRetryScheduler({
+      dispatch: (ticket) => {
+        void this.retryScheduledTerminal(ticket)
+      }
+    })
+  }
+
+  /**
+   * The system time zone is read when a task is launched (and when a legacy
+   * task is explicitly recovered), not when the service is constructed, so
+   * tasks started after a system time-zone change use the new value. Already
+   * running tasks keep the persisted zone.
+   */
+  private currentSystemTimeZone(): string {
+    return getSystemTimeZone()
+  }
 
   async start(options: WorkflowRuntimeStartRequest): Promise<WorkflowRuntimeState> {
     return this.serializeTask(options.taskId, () => this.startInternal(options))
@@ -106,6 +136,10 @@ export class WorkflowRuntimeService {
       workflow,
       projectDir: targetProjectDir,
       ...(executionContext ? { executionContext } : {}),
+      autoRetryContext: {
+        runId: randomUUID(),
+        timeZone: this.currentSystemTimeZone()
+      },
       translator: t
     }
     const active = this.engines.get(options.taskId)
@@ -172,9 +206,23 @@ export class WorkflowRuntimeService {
 
   private async stopInternal(taskId: string): Promise<WorkflowRuntimeState | null> {
     this.cancelledTaskLaunches.add(taskId)
+    this.autoRetryScheduler.removeTask(taskId)
     const engine = this.engines.get(taskId)
     if (!engine) {
       await this.processRunner.killByTask(taskId)
+      // The engine may have been released after a failure; persisted waiting
+      // plans must still be cancelled so restarts never resume them.
+      const changed = cancelWaitingAutoRetriesInDb(this.db, taskId, 'task-stopped')
+      if (changed > 0) {
+        // Broadcast the refreshed snapshot so renderers drop stale waiting
+        // banners and countdowns instead of showing a plan that no longer
+        // exists.
+        const refreshed = this.restoreWithoutActiveEngine(taskId)
+        if (refreshed.state) {
+          this.getWindow()?.webContents.send('workflow:state', refreshed.state)
+          return refreshed.state
+        }
+      }
       return null
     }
     try {
@@ -207,7 +255,8 @@ export class WorkflowRuntimeService {
   hasActiveTasks(): boolean {
     return this.engines.size > 0 ||
       this.taskOperations.size > 0 ||
-      this.pendingTerminalRetries.size > 0
+      this.pendingTerminalRetries.size > 0 ||
+      this.autoRetryScheduler.hasWaitingTickets()
   }
 
   async retryNode(
@@ -227,6 +276,7 @@ export class WorkflowRuntimeService {
     this.cancelledTaskLaunches.delete(taskId)
     const engine = this.getEngineForNodeRetry(taskId, nodeId, branchId)
     if (!engine) throw new Error(t('errors:workflowRuntime.nodeStateChanged'))
+    if (engine.hasAutoRetryEnabledNodes()) engine.ensureAutoRetryContext(this.currentSystemTimeZone())
 
     const started = await engine.beginNodeRetry(nodeId, branchId)
     if (!started) {
@@ -303,6 +353,7 @@ export class WorkflowRuntimeService {
 
     let retryStart: Awaited<ReturnType<WorkflowRuntimeEngine['beginTerminalRetry']>>
     try {
+      if (engine.hasAutoRetryEnabledNodes()) engine.ensureAutoRetryContext(this.currentSystemTimeZone())
       retryStart = await engine.beginTerminalRetry(
         target.nodeId,
         target.sessionId,
@@ -322,8 +373,31 @@ export class WorkflowRuntimeService {
       this.releaseEngineIfTerminal(target.taskId, engine)
       throw new Error(t('errors:workflowRuntime.nodeStateChanged'))
     }
+    return this.launchAcceptedTerminalRetry({
+      taskId: target.taskId,
+      nodeId: target.nodeId,
+      sessionId,
+      engine,
+      retryStart,
+      commandEdited
+    })
+  }
+
+  /**
+   * Start the retry process for a terminal retry that the engine already
+   * accepted, and wire the process result back into the engine.
+   */
+  private async launchAcceptedTerminalRetry(args: {
+    taskId: string
+    nodeId: string
+    sessionId: string
+    engine: WorkflowRuntimeEngine
+    retryStart: WorkflowTerminalRetryStart
+    commandEdited: boolean
+  }): Promise<string> {
+    const { taskId, nodeId, sessionId, engine, retryStart, commandEdited } = args
     this.assertRuntimeAvailable()
-    this.engines.set(target.taskId, engine)
+    this.engines.set(taskId, engine)
 
     let retried: ReturnType<ProcessRunner['retry']>
     try {
@@ -338,14 +412,14 @@ export class WorkflowRuntimeService {
         : this.processRunner.retry(sessionId)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      await engine.completeTerminalRetry(target.nodeId, target.sessionId, {
-        sessionId: target.sessionId,
+      await engine.completeTerminalRetry(nodeId, sessionId, {
+        sessionId,
         stdout: '',
         stderr: message,
         exitCode: -1,
         status: 'failed'
       })
-      this.releaseEngineIfTerminal(target.taskId, engine)
+      this.releaseEngineIfTerminal(taskId, engine)
       throw error
     }
 
@@ -541,6 +615,173 @@ export class WorkflowRuntimeService {
     return this.serializeTask(taskId, () => this.restoreInternal(taskId))
   }
 
+  /**
+   * Execute one scheduled automatic retry. Everything is re-validated against
+   * current runtime and persisted state; a rejected ticket is dropped without
+   * consuming anything. This entry never clears stop markers and never falls
+   * back to a standalone rerun.
+   */
+  private async retryScheduledTerminal(ticket: AutoRetryTicket): Promise<void> {
+    if (this.shuttingDown || this.cancelledTaskLaunches.has(ticket.taskId)) return
+    if (this.pendingTerminalRetries.has(ticket.sessionId)) return
+    try {
+      await this.serializeTask(ticket.taskId, () => this.retryScheduledTerminalInternal(ticket))
+    } catch (error) {
+      console.error('[WorkflowRuntimeService] automatic terminal retry failed:', error)
+    }
+  }
+
+  private async retryScheduledTerminalInternal(ticket: AutoRetryTicket): Promise<void> {
+    this.assertRuntimeAvailable()
+    if (this.shuttingDown || this.cancelledTaskLaunches.has(ticket.taskId)) return
+    if (this.pendingTerminalRetries.has(ticket.sessionId)) return
+    // A still-live session means the node is executing; skip this trigger
+    // without consuming the attempt.
+    if (this.processRunner.hasLiveSession(ticket.sessionId)) return
+
+    // A retryable session that actually belongs to this task and node must
+    // exist before an attempt may be accepted; otherwise the plan is blocked
+    // instead of being consumed as a failed execution.
+    let sessionTarget: ReturnType<ProcessRunner['getRetryTarget']> | null = null
+    try {
+      sessionTarget = this.processRunner.getRetryTarget(ticket.sessionId)
+    } catch {
+      this.markAutoRetryBlocked(ticket, 'missing-session')
+      return
+    }
+    if (sessionTarget.taskId !== ticket.taskId || sessionTarget.nodeId !== ticket.nodeId) {
+      this.markAutoRetryBlocked(ticket, 'invalid-state')
+      return
+    }
+
+    // Automatic executions must use the workflow version the task is bound
+    // to; falling back to the current template is reserved for manual
+    // retries (Plan 6.1).
+    const engine = this.getEngineForTerminalRetry(ticket.taskId, ticket.nodeId, {
+      requireBoundVersion: true
+    })
+    if (!engine) {
+      this.markAutoRetryBlocked(ticket, 'missing-workflow')
+      return
+    }
+
+    let retryStart: Awaited<ReturnType<WorkflowRuntimeEngine['beginTerminalRetry']>>
+    try {
+      retryStart = await engine.beginTerminalRetry(
+        ticket.nodeId,
+        ticket.sessionId,
+        undefined,
+        {
+          runId: ticket.runId,
+          cycleId: ticket.cycleId,
+          scheduleId: ticket.scheduleId,
+          dueAt: ticket.dueAt
+        }
+      )
+    } catch (error) {
+      console.error('[WorkflowRuntimeService] automatic terminal retry was rejected:', error)
+      this.releaseEngineIfTerminal(ticket.taskId, engine)
+      return
+    }
+    if (retryStart === false) {
+      this.releaseEngineIfTerminal(ticket.taskId, engine)
+      return
+    }
+    await this.launchAcceptedTerminalRetry({
+      taskId: ticket.taskId,
+      nodeId: ticket.nodeId,
+      sessionId: ticket.sessionId,
+      engine,
+      retryStart,
+      commandEdited: false
+    })
+  }
+
+  /** Mark one node's waiting plan as blocked directly in persisted output. */
+  private markAutoRetryBlocked(ticket: AutoRetryTicket, reason: TerminalAutoRetryReason): void {
+    const rows = this.db.prepare(
+      `select node_runs.id, node_runs.output_json
+      from node_runs
+      where node_runs.run_id = ? and node_runs.node_id = ?`,
+    ).all(ticket.taskId, ticket.nodeId) as Array<{ id: string; output_json: string | null }>
+    const update = this.db.prepare('update node_runs set output_json = ? where id = ?')
+    for (const row of rows) {
+      let output: Record<string, unknown>
+      try {
+        output = row.output_json ? JSON.parse(row.output_json) as Record<string, unknown> : {}
+      } catch {
+        continue
+      }
+      const autoRetry = output.autoRetry
+      if (typeof autoRetry !== 'object' || autoRetry === null) continue
+      const state = autoRetry as Record<string, unknown>
+      if (state.phase !== 'waiting' || state.scheduleId !== ticket.scheduleId) continue
+      output.autoRetry = {
+        ...state,
+        phase: 'blocked',
+        reason,
+        scheduleId: undefined,
+        nextRetryAt: undefined
+      }
+      update.run(JSON.stringify(output), row.id)
+    }
+  }
+
+  async cancelTerminalAutoRetry(request: CancelTerminalAutoRetryRequest): Promise<WorkflowRuntimeState> {
+    return this.serializeTask(request.taskId, async () => {
+      this.assertRuntimeAvailable()
+      let engine = this.engines.get(request.taskId)
+      if (!engine) {
+        const restored = this.restoreEngineForRetry(request.taskId)
+        if (!restored) throw new Error(t('errors:workflowRuntime.nodeStateChanged'))
+        engine = restored
+        this.engines.set(request.taskId, engine)
+      }
+      const outcome = await engine.cancelTerminalAutoRetry({
+        nodeId: request.nodeId,
+        runId: request.runId,
+        cycleId: request.cycleId,
+        scheduleId: request.scheduleId
+      })
+      if (outcome.status === 'changed') {
+        this.releaseEngineIfTerminal(request.taskId, engine)
+        throw new Error(t('errors:workflowRuntime.nodeStateChanged'))
+      }
+      this.releaseEngineIfTerminal(request.taskId, engine)
+      this.autoRetryScheduler.reconcileTask(outcome.state)
+      return outcome.state
+    })
+  }
+
+  /**
+   * Reload persisted waiting plans after startup or restore. Overdue plans
+   * dispatch exactly once through the scheduler; future plans keep their
+   * original due time, cycle, and attempt count.
+   */
+  async recoverAutoRetries(): Promise<void> {
+    const taskRows = this.db.prepare(
+      `select distinct task_id from workflow_runs
+      where exists (
+        select 1 from node_runs
+        where node_runs.run_id = workflow_runs.id
+          and node_runs.status = 'failed'
+          and json_valid(node_runs.output_json)
+          and json_extract(node_runs.output_json, '$.autoRetry.phase') = 'waiting'
+      )`
+    ).all() as Array<{ task_id: string }>
+    for (const row of taskRows) {
+      const restored = this.restoreWithoutActiveEngine(row.task_id)
+      if (!restored.state) continue
+      this.autoRetryScheduler.reconcileTask(restored.state)
+    }
+    this.autoRetryScheduler.resume()
+  }
+
+  /** Re-check overdue plans, e.g. after the system wakes from sleep. */
+  resumeAutoRetryScheduler(): void {
+    this.autoRetryScheduler.resume()
+  }
+
   private async restoreInternal(taskId: string): Promise<RuntimeRestoreResult> {
     this.assertRuntimeAvailable()
     const active = this.engines.get(taskId)
@@ -591,6 +832,9 @@ export class WorkflowRuntimeService {
   async shutdown(): Promise<void> {
     if (this.shutdownPromise) return this.shutdownPromise
     this.shuttingDown = true
+    // Shutdown differs from a user stop: timers are cleared and dispatch is
+    // forbidden, but waiting plans stay persisted for the next launch.
+    this.autoRetryScheduler.dispose()
     const taskIds = new Set([
       ...this.engines.keys(),
       ...this.taskOperations.keys()
@@ -671,11 +915,15 @@ export class WorkflowRuntimeService {
     }
   }
 
-  private getEngineForTerminalRetry(taskId: string, nodeId: string): WorkflowRuntimeEngine | null {
+  private getEngineForTerminalRetry(
+    taskId: string,
+    nodeId: string,
+    options: { requireBoundVersion?: boolean } = {}
+  ): WorkflowRuntimeEngine | null {
     const active = this.engines.get(taskId)
     if (active) return active
 
-    const engine = this.restoreEngineForRetry(taskId)
+    const engine = this.restoreEngineForRetry(taskId, options)
     if (!engine?.canRetryTerminalNode(nodeId)) return null
 
     this.engines.set(taskId, engine)
@@ -697,7 +945,10 @@ export class WorkflowRuntimeService {
     return engine
   }
 
-  private restoreEngineForRetry(taskId: string): WorkflowRuntimeEngine | null {
+  private restoreEngineForRetry(
+    taskId: string,
+    options: { requireBoundVersion?: boolean } = {}
+  ): WorkflowRuntimeEngine | null {
     const restored = restoreWorkflowRuntimeState(this.db, taskId, {
       isTerminalSessionLive: (session) => this.processRunner.hasLiveSession(session.id),
       getLiveTerminalTranscript: (session) => (
@@ -705,6 +956,13 @@ export class WorkflowRuntimeService {
       )
     })
     if (!restored.state) return null
+
+    // Manual retries keep the legacy compatibility path that falls back to
+    // the current workflow template. Automatic executions must not: without
+    // the task's bound workflow version the plan is blocked instead.
+    if (options.requireBoundVersion && (!restored.workflow || restored.workflowVersion === null)) {
+      return null
+    }
 
     const workflow = restored.workflow ?? this.getWorkflow(restored.state.workflowId)
     if (!workflow) return null
@@ -733,13 +991,17 @@ export class WorkflowRuntimeService {
         state: WorkflowRuntimeState,
         taskStatus: WorkflowRuntimeStatus
       ) => {
-        return persistWorkflowRuntimeState(
+        const task = persistWorkflowRuntimeState(
           this.db,
           state,
           taskStatus,
           workflow,
           workflowVersion
         )
+        // Only plans committed to storage may be scheduled; the scheduler
+        // derives its ticket set from the persisted snapshot.
+        this.autoRetryScheduler.reconcileTask(state)
+        return task
       },
       runProcess: async (request) => {
         if (this.isTaskLaunchCancelled(request.taskId)) return cancelledProcessResult()

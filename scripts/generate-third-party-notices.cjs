@@ -23,6 +23,7 @@ const distributedRoots = [
   'class-variance-authority',
   'clsx',
   'cmdk',
+  'cron-parser',
   'electron-updater',
   'font-list',
   'i18next',

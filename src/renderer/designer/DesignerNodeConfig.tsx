@@ -10,6 +10,7 @@ import type {
 } from '../../shared/workflow'
 import { VariableListEditor } from './VariableListEditor'
 import { EnvEditor } from './EnvEditor'
+import { TerminalAutoRetrySettings } from './TerminalAutoRetrySettings'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Field, FieldDescription, FieldGroup, FieldLabel, FieldLegend, FieldSet } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
@@ -98,6 +99,12 @@ export function DesignerNodeConfig({
             />
           </Field>
         </FieldGroup>
+        <TerminalAutoRetrySettings
+          key={node.id}
+          nodeId={node.id}
+          config={config.autoRetry}
+          onChange={(autoRetry) => set({ autoRetry })}
+        />
         <ConfigSection
           title={t('designer:nodeConfig.interactiveMode')}
           description={t('designer:nodeConfig.interactiveModeDescription')}
@@ -180,6 +187,12 @@ export function DesignerNodeConfig({
             </Field>
           </FieldGroup>
         </ConfigSection>
+        <TerminalAutoRetrySettings
+          key={node.id}
+          nodeId={node.id}
+          config={config.autoRetry}
+          onChange={(autoRetry) => set({ autoRetry })}
+        />
         <EnvEditor
           env={env}
           onChange={(e) => {
