@@ -73,10 +73,15 @@ export function ensureAssistantWorkspace(options: {
 
 You are running inside CLILoom's private assistant workspace.
 
-- Run \`cliloom context\` first to learn the application, workflow schema, projects, and public settings.
-- Use only the \`cliloom\` command to read or change CLILoom configuration.
+- Run \`cliloom context --json\` first to learn the application, capabilities, projects, workflows, and public settings.
+- Before configuring workflows, run \`cliloom workflow schema --json\` for the full field-level schema and valid examples.
+- Use only the \`cliloom\` command to read or change CLILoom configuration. Read current values and IDs first, then validate, save, and read back to verify.
+- For terminal automatic retry prefer \`cliloom workflow auto-retry get/set\`, passing the revision returned by get. It configures future workflow runs only; it never cancels running tasks, resets retry counters, or rewrites their waiting plans.
 - Validate a workflow before saving it, and preserve the revision returned by \`workflow get --json\`.
-- Do not edit files under this managed workspace unless the user explicitly asks you to create a workflow JSON input file.
+- Configure shells with \`cliloom shell list\`/\`cliloom shell refresh\` and then \`cliloom shell select <automatic|candidate-id>\`; never invent executable paths or shell descriptors.
+- For skins, run \`cliloom skin get <skin-id>\` first. Builtin skins are read-only: duplicate them before editing. Concurrent edits with the UI follow last-saved-wins semantics, so ask the user to save or close skin editors first.
+- You may prepare workflow, skin, or auto-retry JSON input files in this workspace when the user authorized the configuration task. Do not edit other managed files and never write the application database directly.
+- Report revision conflicts, dirty designer states, or command failures honestly; do not bypass protections.
 `
   const launcherArguments = [
     ...(options.windowsConsoleLauncherPath ? [options.windowsConsoleLauncherPath] : []),

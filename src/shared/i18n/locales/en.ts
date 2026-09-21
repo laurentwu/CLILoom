@@ -98,7 +98,8 @@ export default {
     publicSetting: {
       inaccessible: 'Setting does not exist or is not accessible',
       notMutable: 'Setting does not exist or is not mutable',
-      valueMustBeString: 'Setting value must be a string'
+      valueMustBeString: 'Setting value must be a string',
+      layoutWidthInvalid: 'Layout width must be a decimal integer between {{minimum}} and {{maximum}}'
     },
     workflow: {
       revisionMissing: 'Missing workflow revision, refresh and retry',
@@ -132,7 +133,8 @@ export default {
       cmdValueTooLarge: 'cmd variable value exceeds the {{limit}} character limit',
       cmdEnvTooLarge: 'cmd environment variable {{name}} exceeds the {{limit}} character limit',
       cmdCommandTooLarge: 'cmd command exceeds the {{limit}} character limit after expansion',
-      cmdEnvBlockTooLarge: 'cmd environment block exceeds the {{limit}} character limit'
+      cmdEnvBlockTooLarge: 'cmd environment block exceeds the {{limit}} character limit',
+      selectionAppliedButUnavailable: 'The shell selection was saved, but the selected shell is currently unavailable. Run shell list or shell refresh to inspect candidates, or switch back to automatic.'
     },
     assistantCommand: {
       absolutePath: 'Initialization commands with a path must use an absolute path',
@@ -146,6 +148,7 @@ export default {
       stdinDuplicate: '--stdin cannot be repeated',
       fileRelative: '--file requires a relative path',
       revisionPositive: '--expected-revision must be a positive integer',
+      revisionDuplicate: '--expected-revision cannot be repeated',
       unknownArgument: 'Unknown argument: {{argument}}',
       stdinOrFile: 'Choose exactly one of --stdin or --file',
       workflowJsonEmpty: 'Workflow JSON is empty',
@@ -162,7 +165,16 @@ export default {
       initUnclosedQuote: 'The initialization command contains an unclosed quote',
       initNoExecutable: 'The initialization command must contain an executable',
       cmdPercent: 'Under cmd.exe the initialization command and path must not contain %. Install PowerShell or adjust the command.',
-      cmdInvalidChars: 'Under cmd.exe the initialization command and path must not contain quotes, newlines, or NUL characters'
+      cmdInvalidChars: 'Under cmd.exe the initialization command and path must not contain quotes, newlines, or NUL characters',
+      invalidShellSubcommand: 'Invalid shell subcommand',
+      invalidSkinSubcommand: 'Invalid skin subcommand',
+      inputJsonEmpty: 'Command JSON input is empty',
+      inputJsonInvalid: 'Command JSON input could not be parsed',
+      inputJsonObjectRequired: 'Command JSON input must be an object',
+      inputTooLarge: 'Command input exceeds the {{limit}} byte limit',
+      nodeNotFound: 'Node not found in the workflow',
+      skinNotFound: 'Skin not found',
+      skinBuiltinImmutable: 'Built-in skins cannot be modified; duplicate the skin first with skin duplicate'
     },
     bridge: {
       revoked: 'Assistant command bridge revoked',
@@ -204,11 +216,13 @@ export default {
     workflowConfig: {
       cancelled: 'The operation was cancelled by the user',
       workflowIdLabel: 'Workflow ID',
+      nodeIdLabel: 'Node ID',
       projectIdLabel: 'Project ID',
       designerWorkflowIdLabel: 'Designer workflow ID',
       invalidDesignerState: 'Invalid designer state',
       invalidDesignerWorkflowId: 'Invalid designer workflow ID',
       dirtyInDesigner: 'This workflow is being edited in the designer with unsaved changes; save or close the designer first',
+      autoRetryNodeNotTerminal: 'Only interactive-terminal and non-interactive-terminal nodes support automatic retry',
       labelInvalid: 'Invalid {{label}}'
     },
     workflowRuntime: {
@@ -356,7 +370,8 @@ export default {
       autoRetryInvalid: '{{name}}: invalid automatic retry configuration',
       autoRetryModeInvalid: '{{name}}: automatic retry mode must be recommended or cron',
       autoRetryMaxRetriesInvalid: '{{name}}: maximum automatic retries must be an integer between 1 and 9999',
-      autoRetryCronInvalid: '{{name}}: invalid cron expression for automatic retry'
+      autoRetryCronInvalid: '{{name}}: invalid cron expression for automatic retry',
+      autoRetryUnknownField: '{{name}}: unknown automatic retry field: {{field}}'
     },
     cronSchedule: {
       empty: 'The cron expression must not be empty',
@@ -654,6 +669,43 @@ export default {
     }
   },
   assistant: {
+    cli: {
+      contextShellLine: 'Shell: {{selection}} (effective: {{detail}})',
+      contextShellUnavailable: 'unavailable ({{error}})',
+      contextSkinsLine: 'Skins: {{builtinCount}} builtin, {{userCount}} user (active: {{activeSkinId}})',
+      contextCapabilitiesTitle: 'Configuration capabilities:',
+      contextCapabilityWorkflowSchema: 'workflow schema — full workflow field documentation and valid examples',
+      contextCapabilityAutoRetry: 'workflow auto-retry — get/set terminal node automatic retry (recommended or cron)',
+      contextCapabilityShell: 'shell list/refresh/select — list, re-detect, and choose the global shell',
+      contextCapabilitySkin: 'skin — list/get/create/update/duplicate/rename/delete/import/export/fonts',
+      contextCapabilityLayout: 'settings set layout.* — project rail and task sidebar widths',
+      schemaTitle: 'CLILoom workflow schema (schemaVersion {{version}})',
+      schemaNodes: 'Nodes:',
+      schemaAutoRetryTitle: 'Automatic retry (terminal nodes):',
+      schemaSetLabel: 'set: {{command}}',
+      schemaModes: 'modes: recommended (waits {{delays}}), cron (five-field calendar)',
+      schemaMaxRetries: 'maxRetries: {{min}}-{{max}}, null for unlimited, default {{default}}',
+      schemaApplies: 'appliesTo: future-workflow-runs (running tasks keep their bound version)',
+      schemaNotes: 'Notes:',
+      schemaJsonHint: 'Use --json for the full field-level schema, node configs, hooks, and valid examples.',
+      autoRetryGetLine: 'Workflow {{workflowId}} revision {{revision}}, node {{nodeId}} ({{nodeType}}).',
+      autoRetryNotConfigured: 'autoRetry: not configured (disabled)',
+      autoRetrySetSaved: 'Saved autoRetry for node {{nodeId}} of workflow {{workflowId}} at revision {{revision}}: {{config}}.',
+      autoRetrySetRemoved: 'Removed autoRetry from node {{nodeId}} of workflow {{workflowId}}; new revision {{revision}}.',
+      shellSelection: 'Selection: {{selection}}',
+      shellEffective: 'Effective: {{detail}}',
+      shellUnavailable: 'unavailable',
+      shellCandidates: 'Candidates:',
+      shellNoCandidates: 'Candidates: (none detected)',
+      shellSelectApplies: 'Applies to new workflows and the next assistant session; running tasks keep their shell snapshot.',
+      skinCreated: 'Created skin {{id}} ({{name}}). Not activated; use settings set appearance.skin {{id}} to apply it.',
+      skinUpdated: 'Updated skin {{id}} ({{name}}).',
+      skinDuplicated: 'Duplicated {{sourceId}} as skin {{id}} ({{name}}). Not activated.',
+      skinRenamed: 'Renamed skin {{id}} to {{name}}.',
+      skinDeleted: 'Deleted skin {{id}}. Active skin: {{activeId}}.',
+      skinImported: 'Imported skin {{id}} ({{name}}). Not activated.',
+      skinNoFonts: 'No installed font families found.'
+    },
     action: {
       open: 'Open assistant',
       settings: 'Assistant settings',

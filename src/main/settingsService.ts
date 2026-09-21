@@ -14,11 +14,13 @@ import {
   isPublicSkinId,
   isPublicSettingKey,
   isSupportedLanguage,
+  layoutWidthBounds,
   parseAppearancePreferences,
   parseAssistantConfig,
   parseAssistantWindowState,
   parseLayoutPreferences,
   parseMainWindowState,
+  parsePublicLayoutWidth,
   parseShellPreferences,
   parseSkinLibrarySetting,
   resolveActiveSkin,
@@ -336,6 +338,8 @@ export class SettingsService {
     return {
       'appearance.skin': snapshot.appearance.activeSkinId,
       'appearance.language': snapshot.appearance.language,
+      'layout.projectRailWidth': snapshot.layout.projectRailWidth.toString(10),
+      'layout.taskSidebarWidth': snapshot.layout.taskSidebarWidth.toString(10),
       'assistant.initializationCommand': snapshot.assistant.initializationCommand
     }
   }
@@ -350,7 +354,32 @@ export class SettingsService {
     if (typeof value !== 'string') throw new Error(t('errors:publicSetting.valueMustBeString'))
     if (key === 'appearance.skin') return this.setActiveSkin(value)
     if (key === 'appearance.language') return this.setLanguage(value)
+    if (key === 'layout.projectRailWidth' || key === 'layout.taskSidebarWidth') {
+      return this.setLayoutWidth(key, value)
+    }
     return this.setAssistantInitializationCommand(value).config.initializationCommand
+  }
+
+  private setLayoutWidth(
+    key: 'layout.projectRailWidth' | 'layout.taskSidebarWidth',
+    value: string
+  ): string {
+    const bounds = layoutWidthBounds(key)
+    const parsed = parsePublicLayoutWidth(key, value)
+    if (parsed === null) {
+      throw new Error(t('errors:publicSetting.layoutWidthInvalid', {
+        minimum: bounds.minimum,
+        maximum: bounds.maximum
+      }))
+    }
+    const current = this.getSnapshot().layout
+    const merged = key === 'layout.projectRailWidth'
+      ? { ...current, projectRailWidth: parsed }
+      : { ...current, taskSidebarWidth: parsed }
+    const saved = this.setLayout(merged)
+    return (key === 'layout.projectRailWidth'
+      ? saved.projectRailWidth
+      : saved.taskSidebarWidth).toString(10)
   }
 
   onChanged(listener: SettingsChangedListener): () => void {

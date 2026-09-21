@@ -31,6 +31,8 @@ Use the `@/` alias only in renderer code. Prefer existing `components/ui/` primi
 
 Update both `src/shared/i18n/locales/en.ts` and `zh.ts` for user-facing text, preserving matching keys and interpolation placeholders. Keep `README.md` and `README.zh-CN.md` aligned; update `SHELLS.md`, `PACKAGING.md`, or `SECURITY_MODEL.md` when their documented behavior changes.
 
+Whenever adding or changing user-configurable behavior, update the corresponding cliloom assistant commands or capability documentation in the same change. If existing commands already support the configuration, update the relevant context, help, schema, assistant workspace instructions, and examples to describe its fields, defaults, constraints, and when changes take effect. Otherwise, add or extend the command support as well. Keep behavior and capability descriptions covered by focused tests. For configuration intentionally unavailable to the assistant, explicitly document that boundary instead of implying support.
+
 ## Testing Guidelines
 
 Vitest tests use `*.test.{ts,tsx}` and live beside covered code or in `scripts/`; Playwright tests use `*.e2e.ts` in `e2e/`. Add focused regression tests for changed behavior, especially workflow/runtime logic, IPC and persistence, process/session lifecycle, renderer helpers, and designer geometry.

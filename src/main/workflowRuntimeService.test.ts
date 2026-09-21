@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { addProject, ensureWorkflowVersion, openDatabase, type AppDatabase } from './database'
+import { addProject, ensureWorkflowVersion, openDatabase, saveWorkflowWithRevision, type AppDatabase } from './database'
 import type { ResolvedExecutionTarget } from '../shared/shell'
 import { isUnsupportedProjectPath } from '../shared/projectPath'
 import { persistWorkflowRuntimeState, readWorkflowRuntimeState } from './runtimePersistence'
@@ -2312,6 +2312,79 @@ describe('WorkflowRuntimeService automatic terminal retries', () => {
       expect(state?.status).toBe('completed')
       expect(state?.nodeRuns.cmd.status).toBe('completed')
       expect(state?.nodeRuns.end.status).toBe('completed')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps a waiting task on its bound workflow version after the definition changes', async () => {
+    vi.useFakeTimers()
+    try {
+      const db = createDb()
+      const { runner, retryCalls } = createAutoRetryRunner({
+        results: [{ sessionId: 'session-cmd', stdout: '', stderr: 'boom', exitCode: 1, status: 'closed' }]
+      })
+      const service = new WorkflowRuntimeService(db, runner as never, () => null)
+      expect(saveWorkflowWithRevision(db, autoRetryWorkflow, undefined).revision).toBe(1)
+      await service.start({
+        taskId: 'task-auto',
+        projectId: 'project-1',
+        projectDir: '/repo',
+        workflow: autoRetryWorkflow,
+        variables: {},
+        startNodeId: 'start'
+      })
+      await flushAsync()
+      const persisted = readWorkflowRuntimeState(db, 'task-auto')
+      const plan = persisted.state?.nodeRuns.cmd.autoRetry
+      expect(plan?.phase).toBe('waiting')
+
+      // Update the workflow definition: the automatic retry is disabled and
+      // the retry command changes for future runs.
+      const updated: WorkflowDefinition = {
+        ...autoRetryWorkflow,
+        nodes: autoRetryWorkflow.nodes.map((node) => (
+          node.id === 'cmd'
+            ? {
+                ...node,
+                config: {
+                  command: 'boom',
+                  retryCommand: 'boom-retry-v2',
+                  cwd: '/repo',
+                  successExitCodes: [0]
+                }
+              }
+            : node
+        ))
+      }
+      expect(saveWorkflowWithRevision(db, updated, 1).revision).toBe(2)
+
+      // The already-started task keeps its persisted plan and bound version.
+      const afterChange = readWorkflowRuntimeState(db, 'task-auto')
+      expect(afterChange.workflowVersion).toBe(1)
+      expect(afterChange.state?.nodeRuns.cmd.autoRetry).toEqual(plan)
+      expect(afterChange.workflow?.nodes.find((node) => node.id === 'cmd')?.config)
+        .toMatchObject({ retryCommand: 'boom-retry' })
+
+      // The waiting plan still fires on its original schedule.
+      await vi.advanceTimersByTimeAsync(60_500)
+      await flushAsync()
+      expect(retryCalls).toHaveLength(1)
+
+      // A task started with the updated definition does not schedule retries.
+      await service.start({
+        taskId: 'task-new',
+        projectId: 'project-1',
+        projectDir: '/repo',
+        workflow: updated,
+        variables: {},
+        startNodeId: 'start'
+      })
+      await vi.waitFor(() => {
+        const newState = readWorkflowRuntimeState(db, 'task-new').state
+        expect(newState?.status).toBe('failed')
+        expect(newState?.nodeRuns.cmd.autoRetry).toBeUndefined()
+      })
     } finally {
       vi.useRealTimers()
     }

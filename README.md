@@ -77,6 +77,8 @@ Configure your preferred AI CLI and run it in a dedicated interactive terminal w
   - Validate and launch a custom initialization command.
   - Start, stop, and restart the assistant in its own terminal window.
   - Share shell, language, and appearance settings with the main application.
+  - Configure the application through the private `cliloom` command: read the detailed workflow schema, set terminal-node automatic retry, list/refresh/select the global shell, manage user skins (create, update, duplicate, rename, delete, import, export, list fonts), and set the project rail and task sidebar widths.
+  - Changes report their actual saved values and scope: workflow definitions apply to future runs (running tasks keep their bound version), shell selection applies to new workflows and the next assistant session, skins and widths apply immediately through the existing settings broadcast.
 
 - **Cross-platform and customizable**
   - Build targets for macOS, Windows, and glibc-based Linux on x64 and ARM64.
