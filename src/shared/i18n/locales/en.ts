@@ -172,7 +172,6 @@ export default {
       inputJsonInvalid: 'Command JSON input could not be parsed',
       inputJsonObjectRequired: 'Command JSON input must be an object',
       inputTooLarge: 'Command input exceeds the {{limit}} byte limit',
-      nodeNotFound: 'Node not found in the workflow',
       skinNotFound: 'Skin not found',
       skinBuiltinImmutable: 'Built-in skins cannot be modified; duplicate the skin first with skin duplicate'
     },
@@ -216,13 +215,11 @@ export default {
     workflowConfig: {
       cancelled: 'The operation was cancelled by the user',
       workflowIdLabel: 'Workflow ID',
-      nodeIdLabel: 'Node ID',
       projectIdLabel: 'Project ID',
       designerWorkflowIdLabel: 'Designer workflow ID',
       invalidDesignerState: 'Invalid designer state',
       invalidDesignerWorkflowId: 'Invalid designer workflow ID',
       dirtyInDesigner: 'This workflow is being edited in the designer with unsaved changes; save or close the designer first',
-      autoRetryNodeNotTerminal: 'Only interactive-terminal and non-interactive-terminal nodes support automatic retry',
       labelInvalid: 'Invalid {{label}}'
     },
     workflowRuntime: {
@@ -370,8 +367,7 @@ export default {
       autoRetryInvalid: '{{name}}: invalid automatic retry configuration',
       autoRetryModeInvalid: '{{name}}: automatic retry mode must be recommended or cron',
       autoRetryMaxRetriesInvalid: '{{name}}: maximum automatic retries must be an integer between 1 and 9999',
-      autoRetryCronInvalid: '{{name}}: invalid cron expression for automatic retry',
-      autoRetryUnknownField: '{{name}}: unknown automatic retry field: {{field}}'
+      autoRetryCronInvalid: '{{name}}: invalid cron expression for automatic retry'
     },
     cronSchedule: {
       empty: 'The cron expression must not be empty',
@@ -674,24 +670,12 @@ export default {
       contextShellUnavailable: 'unavailable ({{error}})',
       contextSkinsLine: 'Skins: {{builtinCount}} builtin, {{userCount}} user (active: {{activeSkinId}})',
       contextCapabilitiesTitle: 'Configuration capabilities:',
-      contextCapabilityWorkflowSchema: 'workflow schema — full workflow field documentation and valid examples',
-      contextCapabilityAutoRetry: 'workflow auto-retry — get/set terminal node automatic retry (recommended or cron)',
+      contextCapabilityWorkflowSchema: 'workflow schema — complete workflow save field documentation and valid examples',
+      contextCapabilityAutoRetry: 'workflow get/save — edit nodes[].config.autoRetry to configure terminal node automatic retry (recommended or cron)',
       contextCapabilityShell: 'shell list/refresh/select — list, re-detect, and choose the global shell',
       contextCapabilitySkin: 'skin — list/get/create/update/duplicate/rename/delete/import/export/fonts',
       contextCapabilityLayout: 'settings set layout.* — project rail and task sidebar widths',
-      schemaTitle: 'CLILoom workflow schema (schemaVersion {{version}})',
-      schemaNodes: 'Nodes:',
-      schemaAutoRetryTitle: 'Automatic retry (terminal nodes):',
-      schemaSetLabel: 'set: {{command}}',
-      schemaModes: 'modes: recommended (waits {{delays}}), cron (five-field calendar)',
-      schemaMaxRetries: 'maxRetries: {{min}}-{{max}}, null for unlimited, default {{default}}',
-      schemaApplies: 'appliesTo: future-workflow-runs (running tasks keep their bound version)',
-      schemaNotes: 'Notes:',
-      schemaJsonHint: 'Use --json for the full field-level schema, node configs, hooks, and valid examples.',
-      autoRetryGetLine: 'Workflow {{workflowId}} revision {{revision}}, node {{nodeId}} ({{nodeType}}).',
-      autoRetryNotConfigured: 'autoRetry: not configured (disabled)',
-      autoRetrySetSaved: 'Saved autoRetry for node {{nodeId}} of workflow {{workflowId}} at revision {{revision}}: {{config}}.',
-      autoRetrySetRemoved: 'Removed autoRetry from node {{nodeId}} of workflow {{workflowId}}; new revision {{revision}}.',
+      helpSaveNote: 'workflow save takes one complete workflow definition; run `cliloom workflow schema` for the full field documentation.',
       shellSelection: 'Selection: {{selection}}',
       shellEffective: 'Effective: {{detail}}',
       shellUnavailable: 'unavailable',
@@ -705,6 +689,153 @@ export default {
       skinDeleted: 'Deleted skin {{id}}. Active skin: {{activeId}}.',
       skinImported: 'Imported skin {{id}} ({{name}}). Not activated.',
       skinNoFonts: 'No installed font families found.'
+    },
+    workflowSchema: {
+      title: 'CLILoom workflow schema (schemaVersion {{version}})',
+      saveTitle: 'Saving workflows (workflow save)',
+      saveSemanticsTitle: 'semantics',
+      workflowTitle: 'Workflow root fields',
+      nodeTitle: 'Node common fields (nodes[] entries)',
+      nodeConfigsTitle: 'Node config fields (nodes[].config by node type)',
+      variablesTitle: 'Variable definitions (start/input config.variables[] entries)',
+      hooksTitle: 'Hooks (startHook/endHook objects)',
+      edgesTitle: 'Edges (edges[] entries)',
+      layoutTitle: 'Layout (layout.nodes.<node-id>)',
+      autoRetryTitle: 'Terminal automatic retry (config.autoRetry)',
+      autoRetryFieldsTitle: 'fields',
+      autoRetrySemanticsTitle: 'semantics',
+      autoRetrySaveRulesTitle: 'save rules',
+      autoRetryExamplesTitle: 'autoRetry field value examples',
+      systemVariablesTitle: 'System variables (provided by the runtime)',
+      examplesTitle: 'Complete workflow examples',
+      notesTitle: 'Notes',
+      save: {
+        usage: 'cliloom workflow save (--stdin | --file <relative-path>) [--expected-revision <revision>] [--json]',
+        input: 'Input is one complete workflow definition object: the workflow member of a workflow get --json response with your edits applied. The get response wrapper ({ version, command, workflow, revision }) is not a valid save input; submit only the workflow object.',
+        create: 'Create: submit a complete definition with a new id and omit --expected-revision. The initial revision is 1.',
+        update: 'Update: keep the id, include every part of the definition you want to retain, and pass the revision returned by workflow get through --expected-revision. A successful save increments the revision by one. The revision is a command option, not a field of the workflow JSON.',
+        readback: 'Read back with workflow get <workflow-id> --json to confirm the normalized stored definition and the new revision.',
+        semantics: {
+          fullReplacement: 'Save replaces the whole definition. Optional fields omitted from the input are not retained from the stored version: get the current definition, modify it, then submit the complete JSON.',
+          revisionOption: 'A missing revision for an existing id, an outdated revision, or a revision for an id that no longer exists fails with a revision conflict (exit code 5). Nothing is overwritten, merged, or retried automatically. A new id without a revision creates the workflow.',
+          validateBoundary: 'validate checks only the submitted definition; it does not check the database revision or the designer state and does not guarantee that a later save succeeds.',
+          noExecution: 'Reading or saving never executes the workflow. Saved definitions affect future runs only; running tasks keep the workflow version they started with, and waiting automatic-retry plans, retry counters, and history are untouched.',
+          dirtyDesigner: 'If the same workflow has unsaved changes in the designer, save fails (validation error, exit code 2). Save or close the designer first; the draft is never closed or overwritten for you.',
+          sizeLimits: 'Workflow input is limited to 2 MiB of UTF-8 JSON. stdin additionally shares the 2 MiB bridge request body limit including JSON escaping overhead, so not every stdin payload of exactly 2 MiB can be sent.',
+          partialInput: 'Partial objects are not valid input: a bare autoRetry object is not a workflow, and a top-level null (the whole input being null) is not the same as autoRetry: null inside a node config.',
+          transportFailure: 'If the transport fails after a save was submitted, the database may still have been written. Re-run workflow get to verify before retrying; do not blindly re-save.'
+        }
+      },
+      workflow: {
+        id: 'Required string, 1-512 characters, no NUL. Identifies the workflow; create and update resolve the target by this id and it is never generated automatically.',
+        name: 'Required string, 1-512 characters, no NUL. Display name.',
+        description: 'Optional string, 0-{{maxString}} characters, no NUL. Omitted means nothing is stored.',
+        nodes: 'Required array of nodes, at most {{maxNodes}} entries. Node ids must be unique and exactly one start node must exist. See the node sections.',
+        edges: 'Required array of edges, at most {{maxEdges}} entries. Edge ids must be unique and both endpoints must reference existing nodes.',
+        layout: 'Optional layout object describing canvas positions only; it never affects execution order. Omitted means no layout is stored.'
+      },
+      node: {
+        id: 'Required string, 1-512 characters, no NUL. Unique within this workflow.',
+        type: 'Required. One of the seven supported node types; it determines the config shape. See the node config fields section.',
+        name: 'Required string, 1-512 characters, no NUL. Node display name.',
+        config: 'Required object whose shape depends on the node type; null is not accepted in place of an object. See the per-type fields.',
+        startHook: 'Optional hook object executed before the node runs; omitted means no start hook. See the hooks section.',
+        endHook: 'Optional hook object executed after the node completes; omitted means no end hook. See the hooks section.'
+      },
+      variables: {
+        variables: 'Required array, may be empty, at most 1000 entries. On start nodes it defines the task starting variables; on input nodes the existing manual input flow collects them when execution reaches the node.',
+        key: 'Required string, 1-512 characters matching [A-Za-z_][A-Za-z0-9_]*. The sys_ prefix is reserved and keys must be unique within the same list.',
+        label: 'Required string, 1-512 characters. Display name of the input field.',
+        type: "Required: 'text' or 'number'. Determines input handling and default-value conversion.",
+        required: 'Required boolean. Marks the input as required at runtime; a value does not need to exist when saving the definition.',
+        order: 'Optional integer 1-1000000. Lower values sort first; entries without order sort last and equal orders keep definition order.',
+        defaultValue: 'Optional JSON scalar: string of at most {{maxString}} characters, finite number, boolean, or null; objects and arrays are rejected. Omitted means no default is injected, and an existing variable value is never overwritten by a default. Existing conversion: for number variables Number() conversion applies and null or unconvertible values become 0; for text variables null becomes an empty string, booleans stay booleans, and other scalars convert to strings. Prefer values matching the declared type.',
+        options: 'Optional string array, at most 1000 entries of 0-10000 characters each. Currently accepted and stored, but input components and the runtime do not use it as a dropdown list and do not validate values against it.'
+      },
+      terminalShared: {
+        command: 'Required string, 1-{{maxString}} characters, not whitespace-only, no NUL. Command template for the first execution; supports ${variable} references.',
+        retryCommand: 'Optional string, at most {{maxString}} characters. Used for manual and automatic retries; omitted or whitespace-only normalizes to no configuration and retries fall back to command. A valid value must not contain NUL. It does not affect automatic retries only.',
+        cwd: 'Required string, 1-4096 characters, not whitespace-only. Working-directory template; supports ${variable}, commonly ${sys_project_dir}. Saving does not require the directory to exist or be reachable at runtime.',
+        env: 'Optional string-to-string map, at most 1000 entries; keys 1-512 characters without NUL, values 0-{{maxString}} characters without NUL. Omitted means no node-specific environment overrides. Values follow the existing environment passing flow; workflow template interpolation is not applied to them automatically.',
+        autoRetry: 'Optional automatic retry configuration; see the terminal automatic retry section. Applies to both terminal node types only.'
+      },
+      interactive: {
+        shell: 'Legacy compatibility field accepted only in the interactive-terminal config: string, 1-4096 characters. It does not override the actual global shell selection; use the shell commands to change it.',
+        autoStart: 'Required boolean with no save default. Currently parsed and persisted only: at runtime, reaching an interactive terminal still executes directly and does not wait based on this field.'
+      },
+      nonInteractive: {
+        timeoutMs: 'Optional integer 1-86400000 (non-interactive terminals only), in milliseconds. Omitted means no per-node timeout timer is set.',
+        successExitCodes: 'Required integer array (non-interactive terminals only), at most 256 entries, each -255-255. No save default; [0] is the common value. An empty array is currently accepted and matches no exit code.'
+      },
+      gatewayExclusive: {
+        defaultEdgeId: "Optional string, 1-512 characters. When present it must reference one of this gateway's outgoing edges at save time. The runtime default-branch lookup uses each edge's isDefault flag, so marking the edge with isDefault: true is what selects the fallback; keep both consistent if you keep defaultEdgeId. Setting defaultEdgeId alone does not guarantee the fallback branch."
+      },
+      gatewayParallel: {
+        mode: "Required: 'split' opens parallel branches; 'join' waits for the branches carried by the listed incoming edges to merge.",
+        joinIncomingEdgeIds: 'Required non-empty list in join mode; at most {{maxEdges}} ids of 1-512 characters each. Ids must be unique within the list, must reference existing edges that target this join node, and the same edge must not be listed by more than one join node. Omit in split mode: the parser may store it but never gives it join meaning there.'
+      },
+      endConfig: {
+        config: 'Use the empty object {} as the config of end nodes.'
+      },
+      hooks: {
+        enabled: 'Required boolean. Controls whether the hook executes.',
+        command: 'Required string, 0-{{maxString}} characters, no NUL. The current structure accepts an empty string; saving does not reject it.',
+        cwd: 'Optional string, 1-4096 characters; supports directory templates such as ${sys_project_dir}. Omitted uses the project directory; it does not automatically inherit the node cwd.',
+        env: 'Optional string-to-string map with the same shape and size limits as the terminal env field.',
+        failPolicy: "Required: 'continue' or 'fail-node'. Controls whether a hook failure fails the node. No implicit save default.",
+        absence: 'Hooks are absent by default: omitted means not executed. An enabled: false hook still requires a structurally valid configuration.'
+      },
+      edges: {
+        id: 'Required string, 1-512 characters, no NUL. Unique among edges.',
+        from: 'Required string, 1-512 characters; must reference an existing node id.',
+        to: 'Required string, 1-512 characters; must reference an existing node id.',
+        condition: 'Optional string, 0-{{maxString}} characters. Exclusive gateways pick the first outgoing edge in edges array order whose condition holds, then fall back to the first outgoing edge marked isDefault. With no match and no default edge the run fails. Other node types do not choose paths by condition.',
+        isDefault: 'Optional boolean; omitted equals unmarked. Each exclusive gateway may have at most one default outgoing edge.',
+        expression: 'Condition expressions support variable names, strings, numbers, booleans, null, == != > >= < <=, and/or/not, parentheses, and contains/startsWith/endsWith. Example: environment == "production". ${...}, JavaScript &&/||, and arbitrary JavaScript execution are not supported. Save validation does not pre-check that a stored expression is evaluable.'
+      },
+      layout: {
+        nodes: 'Required when layout is present: map of node id to position, at most {{maxNodes}} entries. It may cover only some of the existing nodes but must not reference missing ones.',
+        x: 'Required finite number, absolute value at most 10000000. Negative and fractional values are allowed.',
+        y: 'Required finite number, absolute value at most 10000000. Negative and fractional values are allowed.'
+      },
+      autoRetry: {
+        storage: 'Stored at nodes[].config.autoRetry on interactive-terminal and non-interactive-terminal nodes only. Absence (field omitted or null) means the configuration is not persisted and retrying is off.',
+        saveCommand: 'cliloom workflow save (--stdin | --file <relative-path>) [--expected-revision <revision>] with the complete workflow definition containing the edited config.autoRetry value. Reading uses cliloom workflow get <workflow-id> --json.',
+        recommendedDelays: 'recommended mode waits {{delays}} minutes after each failure, then {{later}} minutes for every later attempt. Delays are measured from the failure, not accumulated from task start.',
+        fields: {
+          enabled: 'Required boolean. false disables retrying while keeping the strategy fields for later re-enable.',
+          mode: "Required: 'recommended' (fixed backoff delays) or 'cron' (calendar schedule).",
+          maxRetries: 'Optional integer {{min}}-{{max}}; omitted defaults to {{default}} and null means unlimited. 0, fractional numbers, and strings are invalid.',
+          cron: 'Required in cron mode: string, at most {{limit}} characters, no NUL, five fields (minute hour day-of-month month day-of-week). In recommended mode the general workflow parser drops the field.'
+        },
+        semantics: {
+          countOnly: 'maxRetries counts automatic retries only: the first execution is not counted and a manual retry starts a fresh cycle.',
+          cronCalendar: 'cron mode retries at the next calendar match after the failure, not after a fixed delay. Weekdays 0-7 are accepted; when both day-of-month and weekday are restricted, classic Unix any-match semantics apply.',
+          cronLimits: 'Seconds fields, @macros, English month/weekday names, and Quartz extensions are not supported.',
+          cronDraft: 'An enabled cron configuration must have a computable future trigger time. A disabled one may keep an unfinished string draft, still subject to the type, length, and NUL limits.',
+          timezone: 'The time zone comes from the system IANA zone captured when the task starts, with the existing UTC fallback when no valid zone is available. There is no configurable timezone field.',
+          retryCommand: 'Automatic retries run retryCommand when configured, otherwise command.',
+          failureScope: 'Whether hook failures, stops, and interruptions trigger a retry follows the current runtime rules; not every failure retries.',
+          persistence: 'Saving a workflow does not cancel waiting plans, reset counters of running tasks, or rewrite history.'
+        },
+        saveRules: {
+          fullReplace: 'save replaces the entire workflow: get the definition, edit config.autoRetry inside nodes, and submit the complete JSON with the current revision.',
+          removal: 'Remove the configuration by deleting the autoRetry field or setting it to null; after normalization neither form is stored. This is unrelated to submitting a top-level null as the whole save input.',
+          disabledKeeps: 'enabled: false keeps the strategy fields stored for later re-enable.',
+          unknownKeys: 'Unknown keys inside fixed structures are ignored by the general workflow parser (cron inside recommended mode is dropped), and autoRetry under other node types is dropped rather than enabling retries. The strict unknown-key rejection of the removed dedicated command does not apply to workflow save.'
+        }
+      },
+      notes: {
+        graph: 'Graph constraints checked on save: the start node has no incoming edge and exactly one outgoing edge; end nodes have no outgoing edge and at least one incoming edge; every non-gateway node has at least one incoming edge and exactly one outgoing edge; gateways are exempt from that single-outgoing-edge limit — exclusive gateways may have several outgoing edges (at most one marked isDefault), parallel splits need at least two, and parallel joins need at least one (the validator accepts multiple outgoing edges on a join, but the runtime then continues along the first one in edges order).',
+        noGlobalGuarantees: 'The validators do not guarantee that every node is reachable, that the graph is acyclic, or that an end node exists.',
+        normalization: 'Normalization ignores unknown fields inside fixed structures, drops cron in recommended-mode autoRetry, and removes the autoRetry field when it is omitted or null. For other optional fields, omission leaves them unset; submitting null fails validation instead of removing the field (variables[].defaultValue is the documented scalar where null is a valid stored value).',
+        templates: 'Use ${variable} in command and cwd templates; condition expressions use bare variable names (see the edges section).',
+        systemVariables: 'System variables are provided by the runtime and cannot be redefined; they are not fields of the save root object. ${name} substitution applies to command and directory templates, while condition expressions use bare variable names.',
+        shellLegacy: 'The legacy per-node shell field is parsed for compatibility but does not replace the global shell selection (shell select).',
+        revisionHint: 'The revision is not part of the workflow JSON; pass it with --expected-revision on update. Updates require the revision read at workflow get.',
+        validateHint: 'Use cliloom workflow validate before save. A valid validation alone does not mean the command ran or will save successfully.',
+        exampleFileUsage: 'Prepare the definition as workflow.json inside the assistant workspace and submit it with --file workflow.json (cross-platform, no shell quoting issues); --stdin works too, but the payload must follow the host shell\u0027s quoting rules.'
+      }
     },
     action: {
       open: 'Open assistant',

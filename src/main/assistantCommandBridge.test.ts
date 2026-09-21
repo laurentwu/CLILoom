@@ -170,7 +170,7 @@ describe('assistant command bridge with the real handler', () => {
     return { exitCode, stdout: stdout.read(), stderr: stderr.read() }
   }
 
-  it('drives a terminal auto-retry change end to end', async () => {
+  it('drives a terminal auto-retry change end to end through full saves', async () => {
     const bridge = await createRealHandlerBridge()
     try {
       const workflow = {
@@ -195,17 +195,34 @@ describe('assistant command bridge with the real handler', () => {
       expect(saved.exitCode).toBe(0)
       expect(saved.stderr).toBe('')
 
-      const read = await runCli(bridge, ['workflow', 'auto-retry', 'get', 'bridge-auto-retry', 'term'])
+      const read = await runCli(bridge, ['workflow', 'get', 'bridge-auto-retry', '--json'])
       expect(read.exitCode).toBe(0)
-      expect(read.stdout).toContain('not configured')
+      const record = JSON.parse(read.stdout) as {
+        revision: number
+        workflow: typeof workflow
+      }
+      expect(record.revision).toBe(1)
+      expect(
+        record.workflow.nodes.find((node) => node.id === 'term')?.config
+      ).toMatchObject({ command: 'run', cwd: '/tmp', successExitCodes: [0] })
 
       const set = await runCli(
         bridge,
-        [
-          'workflow', 'auto-retry', 'set', 'bridge-auto-retry', 'term',
-          '--stdin', '--expected-revision', '1'
-        ],
-        JSON.stringify({ enabled: true, mode: 'recommended', maxRetries: 5 })
+        ['workflow', 'save', '--stdin', '--expected-revision', String(record.revision)],
+        JSON.stringify({
+          ...record.workflow,
+          nodes: record.workflow.nodes.map((node) => (
+            node.id === 'term'
+              ? {
+                  ...node,
+                  config: {
+                    ...node.config,
+                    autoRetry: { enabled: true, mode: 'recommended', maxRetries: 5 }
+                  }
+                }
+              : node
+          ))
+        })
       )
       expect(set.exitCode).toBe(0)
       expect(set.stderr).toBe('')
@@ -213,15 +230,21 @@ describe('assistant command bridge with the real handler', () => {
 
       const conflict = await runCli(
         bridge,
-        [
-          'workflow', 'auto-retry', 'set', 'bridge-auto-retry', 'term',
-          '--stdin', '--expected-revision', '1', '--json'
-        ],
-        'null'
+        ['workflow', 'save', '--stdin', '--expected-revision', '1', '--json'],
+        JSON.stringify(record.workflow)
       )
       expect(conflict.exitCode).toBe(5)
       expect(conflict.stdout).toBe('')
       expect(conflict.stderr).toContain('WORKFLOW_REVISION_CONFLICT')
+
+      const legacy = await runCli(
+        bridge,
+        ['workflow', 'auto-retry', 'set', 'bridge-auto-retry', 'term', '--stdin', '--expected-revision', '2'],
+        JSON.stringify({ enabled: true, mode: 'recommended' })
+      )
+      expect(legacy.exitCode).toBe(2)
+      expect(legacy.stdout).toBe('')
+      expect(legacy.stderr).toContain('Invalid workflow subcommand')
     } finally {
       await bridge.close()
     }

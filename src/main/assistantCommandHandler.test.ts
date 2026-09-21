@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -282,7 +282,7 @@ describe('assistant capability discovery', () => {
     expect(skinSetting?.allowedValues).toContain('builtin.dark.neutral')
   })
 
-  it('exposes the new capability groups in help, context text, and JSON', async () => {
+  it('exposes the capability groups in help, context text, and JSON', async () => {
     const { handler } = createMockHandler({
       platform: 'linux',
       preferences: DEFAULT_SHELL_PREFERENCES,
@@ -293,7 +293,7 @@ describe('assistant capability discovery', () => {
     const help = await handler.handle({ version: 1, command: 'help', args: [] })
     for (const usage of [
       'cliloom workflow schema [--json]',
-      'cliloom workflow auto-retry get <workflow-id> <node-id> [--json]',
+      'cliloom workflow save (--stdin | --file <relative-path>) [--expected-revision <revision>] [--json]',
       'cliloom shell select <automatic|detected-shell-id> [--json]',
       'cliloom skin export <skin-id> [--json]',
       'cliloom settings set <public-key> <value> [--json]'
@@ -301,6 +301,11 @@ describe('assistant capability discovery', () => {
       expect(help.text).toContain(usage)
       expect((help.data as { commands: string[] }).commands).toContain(usage)
     }
+    expect(help.text).not.toContain('auto-retry')
+    expect(JSON.stringify(help.data)).not.toContain('auto-retry')
+    const helpNotes = (help.data as { notes: string[] }).notes
+    expect(helpNotes.length).toBeGreaterThan(0)
+    expect(helpNotes.join('\n')).toContain('workflow schema')
 
     const context = await handler.handle({ version: 1, command: 'context', args: [] })
     const data = context.data as {
@@ -309,34 +314,45 @@ describe('assistant capability discovery', () => {
       shell: { selection: string; candidates: Array<{ id: string }> }
       skins: { activeSkinId: string }
       layout: { keys: string[] }
-      workflowSchema: { schemaCommand: string; terminalAutoRetry: { modes: string[] } }
+      workflowSchema: {
+        schemaCommand: string
+        terminalAutoRetry: { modes: string[]; storage: string }
+      }
     }
-    expect(data.schemaVersion).toBe(1)
-    expect(data.commandDescriptors.map((descriptor) => descriptor.id)).toContain('shell.select')
-    expect(data.commandDescriptors.map((descriptor) => descriptor.id)).toContain('skin.fonts')
+    expect(data.schemaVersion).toBe(2)
+    const descriptorIds = data.commandDescriptors.map((descriptor) => descriptor.id)
+    expect(descriptorIds).toContain('workflow.save')
+    expect(descriptorIds).not.toContain('workflow.auto-retry.get')
+    expect(descriptorIds).not.toContain('workflow.auto-retry.set')
+    expect(descriptorIds.length).toBe(27)
+    expect(JSON.stringify(data)).not.toContain('workflow.auto-retry')
     expect(data.shell.candidates.map((candidate) => candidate.id)).toContain(detectedShell.id)
     expect(data.skins.activeSkinId).toBe('builtin.light.neutral')
     expect(data.layout.keys).toContain('layout.projectRailWidth')
     expect(data.workflowSchema.schemaCommand).toBe('cliloom workflow schema --json')
     expect(data.workflowSchema.terminalAutoRetry.modes).toEqual(['recommended', 'cron'])
+    expect(data.workflowSchema.terminalAutoRetry.storage).toContain('nodes[].config.autoRetry')
     expect(context.text).toContain('workflow schema')
     expect(context.text).toContain('shell list/refresh/select')
     expect(context.text).toContain('layout.projectRailWidth')
     expect(JSON.stringify(context)).not.toContain('must-not-leak')
   })
 
-  it('serves the detailed workflow schema with validating examples', async () => {
+  it('serves the complete workflow save schema with validating examples', async () => {
     const { handler } = createHarness()
 
     const result = await handler.handle({ version: 1, command: 'workflow', args: ['schema'] })
     const data = result.data as {
       schemaVersion: number
+      save: { usage: string; semantics: string[] }
       nodeConfigs: Record<string, unknown>
       terminalAutoRetry: { examples: Record<string, unknown> }
       examples: Record<string, unknown>
       notes: string[]
     }
-    expect(data.schemaVersion).toBe(1)
+    expect(data.schemaVersion).toBe(2)
+    expect(data.save.usage).toContain('cliloom workflow save')
+    expect(data.save.semantics.length).toBeGreaterThanOrEqual(8)
     expect(Object.keys(data.nodeConfigs)).toEqual([
       'start',
       'interactive-terminal',
@@ -354,11 +370,13 @@ describe('assistant capability discovery', () => {
     for (const example of Object.values(data.examples)) {
       expect(() => parseWorkflowDefinition(example)).not.toThrow()
     }
-    expect(result.text).toContain('future-workflow-runs')
+    expect(result.text).toContain('affect future runs only')
+    expect(result.text).toContain('environment == "production"')
+    expect(result.text).toContain('"id": "example-all-node-types"')
   })
 })
 
-describe('assistant auto-retry commands', () => {
+describe('assistant workflow save auto-retry configuration', () => {
   const workflowInput = {
     id: 'auto-retry-workflow',
     name: 'Auto retry workflow',
@@ -395,203 +413,300 @@ describe('assistant auto-retry commands', () => {
     ]
   }
 
-  it('reads the saved configuration with null meaning not configured', async () => {
+  function readNodeConfig(record: { workflow: ReturnType<typeof parseWorkflowDefinition> }, nodeId: string) {
+    const node = record.workflow.nodes.find((candidate) => candidate.id === nodeId)
+    if (!node) throw new Error(`missing node ${nodeId}`)
+    return node.config as Record<string, unknown>
+  }
+
+  it('configures both terminal types via get → validate → save (stdin) → get', async () => {
     const { handler, workflowService } = createHarness()
     workflowService.save(workflowInput, undefined, 'renderer')
 
-    const result = await handler.handle({
+    const got = await handler.handle({
       version: 1,
       command: 'workflow',
-      args: ['auto-retry', 'get', 'auto-retry-workflow', 'batch']
+      args: ['get', 'auto-retry-workflow', '--json']
     })
-    expect(result.data).toMatchObject({
-      command: 'workflow.auto-retry.get',
-      workflowId: 'auto-retry-workflow',
-      nodeId: 'batch',
-      nodeType: 'non-interactive-terminal',
+    expect(got.data).toMatchObject({
+      command: 'workflow.get',
       revision: 1,
-      autoRetry: null,
-      appliesTo: 'future-workflow-runs'
+      workflow: expect.objectContaining({ id: 'auto-retry-workflow' })
     })
-    expect(result.text).toContain('not configured')
+    const definition = (got.data as { workflow: typeof workflowInput }).workflow
+
+    const modified = {
+      ...definition,
+      nodes: definition.nodes.map((node) => {
+        if (node.id === 'term') {
+          return {
+            ...node,
+            config: {
+              ...node.config,
+              autoRetry: { enabled: true, mode: 'recommended', maxRetries: 5 }
+            }
+          }
+        }
+        if (node.id === 'batch') {
+          return {
+            ...node,
+            config: {
+              ...node.config,
+              autoRetry: { enabled: true, mode: 'cron', cron: '*/15 * * * *', maxRetries: null }
+            }
+          }
+        }
+        return node
+      })
+    }
+
+    const validated = await handler.handle({
+      version: 1,
+      command: 'workflow',
+      args: ['validate', '--stdin'],
+      stdin: JSON.stringify(modified)
+    })
+    expect(validated.data).toMatchObject({ valid: true, workflowId: 'auto-retry-workflow' })
+
+    const saved = await handler.handle({
+      version: 1,
+      command: 'workflow',
+      args: ['save', '--stdin', '--expected-revision', '1'],
+      stdin: JSON.stringify(modified)
+    })
+    expect(saved.data).toMatchObject({
+      command: 'workflow.save',
+      created: false,
+      revision: 2
+    })
+
+    const readBack = await handler.handle({
+      version: 1,
+      command: 'workflow',
+      args: ['get', 'auto-retry-workflow', '--json']
+    })
+    expect(readBack.data).toMatchObject({ revision: 2 })
+    const stored = (readBack.data as { workflow: ReturnType<typeof parseWorkflowDefinition> }).workflow
+    expect(readNodeConfig({ workflow: stored }, 'term')).toMatchObject({
+      command: 'watch logs',
+      retryCommand: 'watch logs --from-start',
+      autoStart: false,
+      autoRetry: { enabled: true, mode: 'recommended', maxRetries: 5 }
+    })
+    expect(readNodeConfig({ workflow: stored }, 'batch')).toMatchObject({
+      command: 'sync-data',
+      successExitCodes: [0],
+      autoRetry: { enabled: true, mode: 'cron', cron: '*/15 * * * *', maxRetries: null }
+    })
+    expect(stored.edges).toEqual(workflowInput.edges)
   })
 
-  it('replaces the configuration, bumps the revision, and preserves other nodes', async () => {
-    const { handler, workflowService } = createHarness()
+  it('disables with a kept draft, removes via omission through --file, and creates new workflows', async () => {
+    const { handler, workflowService, workspace } = createHarness()
     workflowService.save(workflowInput, undefined, 'renderer')
 
-    const result = await handler.handle({
+    const afterFirst = workflowService.get('auto-retry-workflow')!
+    const disabledInput = {
+      ...afterFirst.workflow,
+      nodes: afterFirst.workflow.nodes.map((node) => (
+        node.id === 'term'
+          ? {
+              ...node,
+              config: {
+                ...node.config,
+                autoRetry: { enabled: false, mode: 'cron', cron: '*/15 * * *', maxRetries: 5 }
+              }
+            }
+          : node
+      ))
+    }
+    writeFileSync(
+      path.join(workspace.rootPath, 'auto-retry-disabled.json'),
+      JSON.stringify(disabledInput)
+    )
+    const disabled = await handler.handle({
+      version: 1,
+      command: 'workflow',
+      args: ['save', '--file', 'auto-retry-disabled.json', '--expected-revision', '1']
+    })
+    expect(disabled.data).toMatchObject({ command: 'workflow.save', revision: 2 })
+    let stored = workflowService.get('auto-retry-workflow')!
+    expect(readNodeConfig(stored, 'term').autoRetry).toEqual({
+      enabled: false,
+      mode: 'cron',
+      cron: '*/15 * * *',
+      maxRetries: 5
+    })
+
+    const removedInput = {
+      ...stored.workflow,
+      nodes: stored.workflow.nodes.map((node) => {
+        if (node.id !== 'term') return node
+        const config = { ...(node.config as Record<string, unknown>) }
+        delete config.autoRetry
+        return { ...node, config }
+      })
+    }
+    writeFileSync(
+      path.join(workspace.rootPath, 'auto-retry-removed.json'),
+      JSON.stringify(removedInput)
+    )
+    const removed = await handler.handle({
+      version: 1,
+      command: 'workflow',
+      args: ['save', '--file', 'auto-retry-removed.json', '--expected-revision', '2']
+    })
+    expect(removed.data).toMatchObject({ revision: 3 })
+    stored = workflowService.get('auto-retry-workflow')!
+    expect(readNodeConfig(stored, 'term').autoRetry).toBeUndefined()
+    expect(readNodeConfig(stored, 'term').retryCommand).toBe('watch logs --from-start')
+    expect(readNodeConfig(stored, 'batch')).toMatchObject({
+      command: 'sync-data',
+      successExitCodes: [0]
+    })
+    expect(stored.workflow.edges).toEqual(workflowInput.edges)
+
+    const brandNew = {
+      ...removedInput,
+      id: 'auto-retry-workflow-new',
+      name: 'Fresh workflow'
+    }
+    const createdResult = await handler.handle({
+      version: 1,
+      command: 'workflow',
+      args: ['save', '--stdin'],
+      stdin: JSON.stringify(brandNew)
+    })
+    expect(createdResult.data).toMatchObject({
+      command: 'workflow.save',
+      created: true,
+      revision: 1
+    })
+  })
+
+  it('rejects invalid definitions and revisions without writing', async () => {
+    const { handler, workflowService } = createHarness()
+    const created = workflowService.save(workflowInput, undefined, 'renderer')
+    const base = workflowService.get('auto-retry-workflow')!
+
+    const withAutoRetry = (autoRetry: unknown) => ({
+      ...base.workflow,
+      nodes: base.workflow.nodes.map((node) => (
+        node.id === 'term' ? { ...node, config: { ...node.config, autoRetry } } : node
+      ))
+    })
+
+    await expect(handler.handle({
+      version: 1,
+      command: 'workflow',
+      args: ['save', '--stdin', '--expected-revision', '1'],
+      stdin: JSON.stringify({ enabled: true, mode: 'recommended', maxRetries: 5 })
+    })).rejects.toThrow()
+
+    await expect(handler.handle({
+      version: 1,
+      command: 'workflow',
+      args: ['save', '--stdin', '--expected-revision', '1'],
+      stdin: 'null'
+    })).rejects.toThrow()
+
+    await expect(handler.handle({
+      version: 1,
+      command: 'workflow',
+      args: ['save', '--stdin', '--expected-revision', '1'],
+      stdin: JSON.stringify(withAutoRetry({ enabled: true, mode: 'recommended', maxRetries: 0 }))
+    })).rejects.toThrow()
+
+    await expect(handler.handle({
+      version: 1,
+      command: 'workflow',
+      args: ['save', '--stdin', '--expected-revision', '1'],
+      stdin: JSON.stringify(withAutoRetry({ enabled: true, mode: 'cron', cron: '* * * * * * *' }))
+    })).rejects.toThrow()
+
+    await expect(handler.handle({
+      version: 1,
+      command: 'workflow',
+      args: ['save', '--stdin', '--expected-revision', '1'],
+      stdin: JSON.stringify(withAutoRetry({ enabled: 'true', mode: 'recommended' }))
+    })).rejects.toThrow()
+
+    await expect(handler.handle({
+      version: 1,
+      command: 'workflow',
+      args: ['save', '--stdin'],
+      stdin: JSON.stringify(withAutoRetry({ enabled: true, mode: 'recommended' }))
+    })).rejects.toMatchObject({ code: 'WORKFLOW_REVISION_CONFLICT' })
+
+    await expect(handler.handle({
+      version: 1,
+      command: 'workflow',
+      args: ['save', '--stdin', '--expected-revision', '99'],
+      stdin: JSON.stringify(withAutoRetry({ enabled: true, mode: 'recommended' }))
+    })).rejects.toMatchObject({ code: 'WORKFLOW_REVISION_CONFLICT' })
+
+    await expect(handler.handle({
+      version: 1,
+      command: 'workflow',
+      args: ['save', '--stdin', '--expected-revision', '1'],
+      stdin: '{not json'
+    })).rejects.toMatchObject({ code: 'INVALID_JSON' })
+
+    await expect(handler.handle({
+      version: 1,
+      command: 'workflow',
+      args: ['save', '--stdin', '--stdin'],
+      stdin: JSON.stringify(base.workflow)
+    })).rejects.toBeInstanceOf(AssistantCommandError)
+
+    await expect(handler.handle({
+      version: 1,
+      command: 'workflow',
+      args: ['save', '--stdin', '--unknown'],
+      stdin: JSON.stringify(base.workflow)
+    })).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' })
+
+    await expect(handler.handle({
+      version: 1,
+      command: 'workflow',
+      args: ['get', 'missing-workflow']
+    })).rejects.toMatchObject({ code: 'NOT_FOUND' })
+
+    const unchanged = workflowService.get('auto-retry-workflow')!
+    expect(unchanged.revision).toBe(created.revision)
+    expect(readNodeConfig(unchanged, 'term').autoRetry).toEqual({
+      enabled: true,
+      mode: 'recommended',
+      maxRetries: 3
+    })
+  })
+
+  it('fails the removed auto-retry subcommands without writing', async () => {
+    const { handler, workflowService } = createHarness()
+    const created = workflowService.save(workflowInput, undefined, 'renderer')
+
+    await expect(handler.handle({
+      version: 1,
+      command: 'workflow',
+      args: ['auto-retry', 'get', 'auto-retry-workflow', 'term']
+    })).rejects.toMatchObject({ code: 'INVALID_ARGUMENT', exitCode: 2 })
+
+    await expect(handler.handle({
       version: 1,
       command: 'workflow',
       args: [
         'auto-retry', 'set', 'auto-retry-workflow', 'term',
         '--stdin', '--expected-revision', '1'
       ],
-      stdin: JSON.stringify({ enabled: true, mode: 'recommended', maxRetries: 5 })
-    })
-
-    expect(result.data).toMatchObject({
-      command: 'workflow.auto-retry.set',
-      nodeId: 'term',
-      nodeType: 'interactive-terminal',
-      revision: 2,
-      autoRetry: { enabled: true, mode: 'recommended', maxRetries: 5 },
-      appliesTo: 'future-workflow-runs'
-    })
-
-    const saved = workflowService.get('auto-retry-workflow')!
-    const term = saved.workflow.nodes.find((node) => node.id === 'term')
-    const batch = saved.workflow.nodes.find((node) => node.id === 'batch')
-    expect(term?.config).toMatchObject({
-      command: 'watch logs',
-      retryCommand: 'watch logs --from-start',
-      autoStart: false,
-      autoRetry: { enabled: true, mode: 'recommended', maxRetries: 5 }
-    })
-    expect(batch?.config).toMatchObject({
-      command: 'sync-data',
-      successExitCodes: [0]
-    })
-    expect(saved.workflow.edges).toEqual(workflowInput.edges)
-  })
-
-  it('supports cron mode, unlimited retries, removal via null, and re-read', async () => {
-    const { handler, workflowService } = createHarness()
-    workflowService.save(workflowInput, undefined, 'renderer')
-
-    await handler.handle({
-      version: 1,
-      command: 'workflow',
-      args: ['auto-retry', 'set', 'auto-retry-workflow', 'batch', '--stdin', '--expected-revision', '1'],
-      stdin: JSON.stringify({ enabled: true, mode: 'cron', cron: '*/15 * * * *', maxRetries: null })
-    })
-    await handler.handle({
-      version: 1,
-      command: 'workflow',
-      args: ['auto-retry', 'set', 'auto-retry-workflow', 'term', '--stdin', '--expected-revision', '2'],
-      stdin: JSON.stringify({ enabled: false, mode: 'cron', cron: 'not-a-cron', maxRetries: 5 })
-    })
-
-    let saved = workflowService.get('auto-retry-workflow')!
-    expect(
-      (saved.workflow.nodes.find((node) => node.id === 'batch')?.config as { autoRetry: unknown }).autoRetry
-    ).toEqual({ enabled: true, mode: 'cron', cron: '*/15 * * * *', maxRetries: null })
-    expect(
-      (saved.workflow.nodes.find((node) => node.id === 'term')?.config as { autoRetry: unknown }).autoRetry
-    ).toEqual({ enabled: false, mode: 'cron', cron: 'not-a-cron', maxRetries: 5 })
-
-    const removed = await handler.handle({
-      version: 1,
-      command: 'workflow',
-      args: ['auto-retry', 'set', 'auto-retry-workflow', 'term', '--stdin', '--expected-revision', '3'],
-      stdin: 'null'
-    })
-    expect(removed.data).toMatchObject({ revision: 4, autoRetry: null })
-    saved = workflowService.get('auto-retry-workflow')!
-    expect(
-      (saved.workflow.nodes.find((node) => node.id === 'term')?.config as Record<string, unknown>).autoRetry
-    ).toBeUndefined()
-  })
-
-  it('rejects invalid targets, revisions, and unknown fields without writing', async () => {
-    const { handler, workflowService } = createHarness()
-    const created = workflowService.save(workflowInput, undefined, 'renderer')
-
-    await expect(handler.handle({
-      version: 1,
-      command: 'workflow',
-      args: ['auto-retry', 'get', 'missing-workflow', 'term']
-    })).rejects.toMatchObject({ code: 'NOT_FOUND' })
-
-    await expect(handler.handle({
-      version: 1,
-      command: 'workflow',
-      args: ['auto-retry', 'get', 'auto-retry-workflow', 'missing-node']
-    })).rejects.toMatchObject({ code: 'NOT_FOUND' })
-
-    await expect(handler.handle({
-      version: 1,
-      command: 'workflow',
-      args: ['auto-retry', 'set', 'auto-retry-workflow', 'end', '--stdin', '--expected-revision', '1'],
-      stdin: 'null'
-    })).rejects.toThrow(/interactive-terminal/)
-
-    await expect(handler.handle({
-      version: 1,
-      command: 'workflow',
-      args: ['auto-retry', 'set', 'auto-retry-workflow', 'term', '--stdin'],
-      stdin: 'null'
-    })).rejects.toBeInstanceOf(AssistantCommandError)
-
-    await expect(handler.handle({
-      version: 1,
-      command: 'workflow',
-      args: ['auto-retry', 'set', 'auto-retry-workflow', 'term', '--stdin', '--expected-revision', '99'],
-      stdin: JSON.stringify({ enabled: true, mode: 'recommended' })
-    })).rejects.toMatchObject({ code: 'WORKFLOW_REVISION_CONFLICT' })
-
-    await expect(handler.handle({
-      version: 1,
-      command: 'workflow',
-      args: ['auto-retry', 'set', 'auto-retry-workflow', 'term', '--stdin', '--expected-revision', '1'],
-      stdin: JSON.stringify({ enabled: true, mode: 'recommended', cron: '*/5 * * * *' })
-    })).rejects.toThrow()
-
-    await expect(handler.handle({
-      version: 1,
-      command: 'workflow',
-      args: ['auto-retry', 'set', 'auto-retry-workflow', 'term', '--stdin', '--expected-revision', '1'],
-      stdin: JSON.stringify({ enabled: true, mode: 'cron', cron: '*/5 * * * *', maxRetries: 0 })
-    })).rejects.toThrow()
-
-    await expect(handler.handle({
-      version: 1,
-      command: 'workflow',
-      args: ['auto-retry', 'set', 'auto-retry-workflow', 'term', '--stdin', '--expected-revision', '1'],
-      stdin: JSON.stringify({ enabled: true, mode: 'cron', cron: '* * * * * * *' })
-    })).rejects.toThrow()
-
-    await expect(handler.handle({
-      version: 1,
-      command: 'workflow',
-      args: ['auto-retry', 'set', 'auto-retry-workflow', 'term', '--stdin', '--expected-revision', '1'],
-      stdin: '{not json'
-    })).rejects.toMatchObject({ code: 'INVALID_JSON' })
+      stdin: JSON.stringify({ enabled: true, mode: 'recommended', maxRetries: 7 })
+    })).rejects.toMatchObject({ code: 'INVALID_ARGUMENT', exitCode: 2 })
 
     expect(workflowService.get('auto-retry-workflow')!.revision).toBe(created.revision)
-    expect(
-      (workflowService.get('auto-retry-workflow')!.workflow.nodes
-        .find((node) => node.id === 'term')?.config as { autoRetry: unknown }).autoRetry
-    ).toEqual({ enabled: true, mode: 'recommended', maxRetries: 3 })
-  })
-
-  it('rejects extra arguments and duplicate revision flags without writing', async () => {
-    const { handler, workflowService } = createHarness()
-    const created = workflowService.save(workflowInput, undefined, 'renderer')
-
-    await expect(handler.handle({
-      version: 1,
-      command: 'workflow',
-      args: ['auto-retry', 'get', 'auto-retry-workflow', 'term', 'extra']
-    })).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' })
-
-    await expect(handler.handle({
-      version: 1,
-      command: 'workflow',
-      args: ['auto-retry', 'get', 'auto-retry-workflow', 'term', '--expected-revision', '1']
-    })).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' })
-
-    await expect(handler.handle({
-      version: 1,
-      command: 'workflow',
-      args: [
-        'auto-retry', 'set', 'auto-retry-workflow', 'term',
-        '--stdin', '--expected-revision', '1', '--expected-revision', '2'
-      ],
-      stdin: 'null'
-    })).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' })
-
-    expect(workflowService.get('auto-retry-workflow')!.revision).toBe(created.revision)
+    expect(readNodeConfig(workflowService.get('auto-retry-workflow')!, 'term').autoRetry).toEqual({
+      enabled: true,
+      mode: 'recommended',
+      maxRetries: 3
+    })
   })
 
   it('respects the dirty designer protection and reports assistant events', async () => {
@@ -603,11 +718,26 @@ describe('assistant auto-retry commands', () => {
       dirty: true
     })
 
+    const current = workflowService.get('auto-retry-workflow')!
+    const modified = {
+      ...current.workflow,
+      nodes: current.workflow.nodes.map((node) => (
+        node.id === 'term'
+          ? {
+              ...node,
+              config: {
+                ...node.config,
+                autoRetry: { enabled: true, mode: 'recommended', maxRetries: 7 }
+              }
+            }
+          : node
+      ))
+    }
     await expect(handler.handle({
       version: 1,
       command: 'workflow',
-      args: ['auto-retry', 'set', 'auto-retry-workflow', 'term', '--stdin', '--expected-revision', '1'],
-      stdin: JSON.stringify({ enabled: true, mode: 'recommended', maxRetries: 7 })
+      args: ['save', '--stdin', '--expected-revision', '1'],
+      stdin: JSON.stringify(modified)
     })).rejects.toThrow(/designer/)
 
     const events: Array<{ source: string }> = []
@@ -616,8 +746,8 @@ describe('assistant auto-retry commands', () => {
     await handler.handle({
       version: 1,
       command: 'workflow',
-      args: ['auto-retry', 'set', 'auto-retry-workflow', 'term', '--stdin', '--expected-revision', '1'],
-      stdin: JSON.stringify({ enabled: true, mode: 'recommended', maxRetries: 7 })
+      args: ['save', '--stdin', '--expected-revision', '1'],
+      stdin: JSON.stringify(modified)
     })
     expect(events).toEqual([
       expect.objectContaining({ source: 'assistant', operation: 'updated' })

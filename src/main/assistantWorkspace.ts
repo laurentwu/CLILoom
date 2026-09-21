@@ -74,13 +74,13 @@ export function ensureAssistantWorkspace(options: {
 You are running inside CLILoom's private assistant workspace.
 
 - Run \`cliloom context --json\` first to learn the application, capabilities, projects, workflows, and public settings.
-- Before configuring workflows, run \`cliloom workflow schema --json\` for the full field-level schema and valid examples.
+- Before configuring workflows, run \`cliloom workflow schema\` (or \`cliloom workflow schema --json\`) for the complete field-level save documentation and valid examples.
 - Use only the \`cliloom\` command to read or change CLILoom configuration. Read current values and IDs first, then validate, save, and read back to verify.
-- For terminal automatic retry prefer \`cliloom workflow auto-retry get/set\`, passing the revision returned by get. It configures future workflow runs only; it never cancels running tasks, resets retry counters, or rewrites their waiting plans.
-- Validate a workflow before saving it, and preserve the revision returned by \`workflow get --json\`.
+- Configure workflows with the full save flow: \`cliloom workflow get <workflow-id> --json\`, take the \`workflow\` object and its \`revision\` from the response, edit the complete JSON (terminal node automatic retry lives at \`nodes[].config.autoRetry\`), then \`cliloom workflow validate\`, \`cliloom workflow save\` with \`--expected-revision <revision>\`, and \`workflow get\` again to confirm. Save replaces the whole definition; configure future workflow runs only and never cancels running tasks, resets retry counters, or rewrites their waiting plans.
+- Validate a workflow before saving it, and pass the revision returned by \`workflow get --json\` to save. Do not submit the get response wrapper or a partial object such as a bare autoRetry value.
 - Configure shells with \`cliloom shell list\`/\`cliloom shell refresh\` and then \`cliloom shell select <automatic|candidate-id>\`; never invent executable paths or shell descriptors.
 - For skins, run \`cliloom skin get <skin-id>\` first. Builtin skins are read-only: duplicate them before editing. Concurrent edits with the UI follow last-saved-wins semantics, so ask the user to save or close skin editors first.
-- You may prepare workflow, skin, or auto-retry JSON input files in this workspace when the user authorized the configuration task. Do not edit other managed files and never write the application database directly.
+- You may prepare workflow or skin JSON input files in this workspace when the user authorized the configuration task. Do not edit other managed files and never write the application database directly.
 - Report revision conflicts, dirty designer states, or command failures honestly; do not bypass protections.
 `
   const launcherArguments = [

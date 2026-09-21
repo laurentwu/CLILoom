@@ -367,6 +367,34 @@ describe('parallel gateway validation', () => {
 
     expect(validateWorkflow(workflow).map((i) => i.key)).toContain('errors:workflowValidation.splitNeedsTwoOutgoingEdges')
   })
+
+  it('accepts a join gateway with multiple outgoing edges', () => {
+    const workflow: WorkflowDefinition = {
+      id: 'wf-multi-out-join',
+      name: 'Multi out join',
+      nodes: [
+        { id: 'start', type: 'start', name: 'Start', config: { variables: [] } },
+        { id: 'split', type: 'parallel-gateway', name: 'Split', config: { mode: 'split' } },
+        { id: 'a', type: 'non-interactive-terminal', name: 'A', config: { command: 'echo a', cwd: '${sys_project_dir}', successExitCodes: [0] } },
+        { id: 'b', type: 'non-interactive-terminal', name: 'B', config: { command: 'echo b', cwd: '${sys_project_dir}', successExitCodes: [0] } },
+        { id: 'join', type: 'parallel-gateway', name: 'Join', config: { mode: 'join', joinIncomingEdgeIds: ['e-a-join', 'e-b-join'] } },
+        { id: 'first', type: 'end', name: 'First', config: {} },
+        { id: 'second', type: 'end', name: 'Second', config: {} }
+      ],
+      edges: [
+        { id: 'e-start-split', from: 'start', to: 'split' },
+        { id: 'e-split-a', from: 'split', to: 'a' },
+        { id: 'e-split-b', from: 'split', to: 'b' },
+        { id: 'e-a-join', from: 'a', to: 'join' },
+        { id: 'e-b-join', from: 'b', to: 'join' },
+        { id: 'e-join-first', from: 'join', to: 'first' },
+        { id: 'e-join-second', from: 'join', to: 'second' }
+      ]
+    }
+
+    expect(validateWorkflow(workflow)).toEqual([])
+    expect(() => parseWorkflowDefinition(workflow)).not.toThrow()
+  })
 })
 
 describe('terminal node validation', () => {
@@ -433,6 +461,62 @@ describe('workflow structural validation', () => {
         { id: 'e-terminal-end', from: 'terminal', to: 'end' }
       ]
     })).toThrow('startHook must be an object')
+  })
+
+  it('rejects null optional configuration while omission leaves the field unset', () => {
+    const baseInput = () => ({
+      id: 'wf-null-optional',
+      name: 'Null optional',
+      nodes: [
+        { id: 'start', type: 'start', name: 'Start', config: { variables: [] } },
+        {
+          id: 'terminal',
+          type: 'non-interactive-terminal',
+          name: 'Terminal',
+          config: {
+            command: 'echo ok',
+            cwd: '.',
+            successExitCodes: [0]
+          }
+        },
+        { id: 'end', type: 'end', name: 'End', config: {} }
+      ],
+      edges: [
+        { id: 'e-start-terminal', from: 'start', to: 'terminal' },
+        { id: 'e-terminal-end', from: 'terminal', to: 'end' }
+      ]
+    })
+
+    for (const override of [
+      { key: 'layout', value: null },
+      { key: 'description', value: null }
+    ]) {
+      const withNull = { ...baseInput(), [override.key]: override.value }
+      expect(() => parseWorkflowDefinition(withNull), override.key).toThrow()
+    }
+    expect(() => parseWorkflowDefinition({
+      ...baseInput(),
+      nodes: baseInput().nodes.map((node) => (
+        node.id === 'terminal'
+          ? { ...node, config: { ...node.config, env: null, timeoutMs: null, retryCommand: null } }
+          : node
+      ))
+    })).toThrow()
+    expect(() => parseWorkflowDefinition({
+      ...baseInput(),
+      nodes: baseInput().nodes.map((node) => (
+        node.id === 'terminal' ? { ...node, startHook: null } : node
+      ))
+    })).toThrow()
+
+    const omitted = parseWorkflowDefinition(baseInput())
+    expect(omitted.layout).toBeUndefined()
+    expect(omitted.description).toBeUndefined()
+    const terminal = omitted.nodes.find((node) => node.id === 'terminal')!
+    expect(terminal.startHook).toBeUndefined()
+    expect('env' in terminal.config).toBe(false)
+    expect('timeoutMs' in terminal.config).toBe(false)
+    expect('retryCommand' in terminal.config).toBe(false)
   })
 
   it('rejects an exclusive gateway defaultEdgeId that is not one of its outgoing edges', () => {

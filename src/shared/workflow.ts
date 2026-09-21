@@ -128,9 +128,9 @@ const WORKFLOW_NODE_TYPES: readonly NodeType[] = [
   'end'
 ]
 
-const MAX_WORKFLOW_NODES = 1_000
-const MAX_WORKFLOW_EDGES = 5_000
-const MAX_WORKFLOW_STRING = 100_000
+export const MAX_WORKFLOW_NODES = 1_000
+export const MAX_WORKFLOW_EDGES = 5_000
+export const MAX_WORKFLOW_STRING = 100_000
 
 /**
  * Structural runtime boundary for persisted workflow definitions. This accepts

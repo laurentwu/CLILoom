@@ -172,7 +172,6 @@ export default {
       inputJsonInvalid: '无法解析命令 JSON 输入',
       inputJsonObjectRequired: '命令 JSON 输入必须是对象',
       inputTooLarge: '命令输入超过 {{limit}} 字节限制',
-      nodeNotFound: '工作流中不存在该节点',
       skinNotFound: '皮肤不存在',
       skinBuiltinImmutable: '内置皮肤不能修改；请先用 skin duplicate 复制该皮肤'
     },
@@ -216,13 +215,11 @@ export default {
     workflowConfig: {
       cancelled: '操作已被用户取消',
       workflowIdLabel: '工作流 ID',
-      nodeIdLabel: '节点 ID',
       projectIdLabel: '项目 ID',
       designerWorkflowIdLabel: '设计器中的工作流 ID',
       invalidDesignerState: '设计器状态无效',
       invalidDesignerWorkflowId: '设计器中的工作流 ID 无效',
       dirtyInDesigner: '该工作流正在设计器中编辑且有未保存的更改，请先保存或关闭设计器',
-      autoRetryNodeNotTerminal: '只有交互式和非交互式终端节点支持自动重试',
       labelInvalid: '{{label}} 无效'
     },
     workflowRuntime: {
@@ -370,8 +367,7 @@ export default {
       autoRetryInvalid: '{{name}}: 自动重试配置无效',
       autoRetryModeInvalid: '{{name}}: 自动重试模式必须是 recommended 或 cron',
       autoRetryMaxRetriesInvalid: '{{name}}: 最大自动重试次数必须是 1～9999 的整数',
-      autoRetryCronInvalid: '{{name}}: 自动重试的 Cron 表达式无效',
-      autoRetryUnknownField: '{{name}}: 未知的自动重试字段：{{field}}'
+      autoRetryCronInvalid: '{{name}}: 自动重试的 Cron 表达式无效'
     },
     cronSchedule: {
       empty: 'Cron 表达式不能为空',
@@ -674,24 +670,12 @@ export default {
       contextShellUnavailable: '不可用（{{error}}）',
       contextSkinsLine: '皮肤：{{builtinCount}} 个内置，{{userCount}} 个用户（当前：{{activeSkinId}}）',
       contextCapabilitiesTitle: '配置能力：',
-      contextCapabilityWorkflowSchema: 'workflow schema —— 完整的工作流字段说明和有效示例',
-      contextCapabilityAutoRetry: 'workflow auto-retry —— 读取/设置终端节点自动重试（推荐或 Cron）',
+      contextCapabilityWorkflowSchema: 'workflow schema —— 完整的工作流保存字段说明和有效示例',
+      contextCapabilityAutoRetry: 'workflow get/save —— 修改 nodes[].config.autoRetry 配置终端节点自动重试（推荐或 Cron）',
       contextCapabilityShell: 'shell list/refresh/select —— 列出、重新检测并选择全局 Shell',
       contextCapabilitySkin: 'skin —— list/get/create/update/duplicate/rename/delete/import/export/fonts',
       contextCapabilityLayout: 'settings set layout.* —— 项目栏和任务侧栏宽度',
-      schemaTitle: 'CLILoom 工作流结构说明（schemaVersion {{version}}）',
-      schemaNodes: '节点类型：',
-      schemaAutoRetryTitle: '自动重试（终端节点）：',
-      schemaSetLabel: '设置命令：{{command}}',
-      schemaModes: '模式：recommended（等待 {{delays}}）、cron（五段日历表达式）',
-      schemaMaxRetries: 'maxRetries：{{min}}-{{max}}，null 表示不限，默认 {{default}}',
-      schemaApplies: '生效范围：future-workflow-runs（运行中的任务保留其绑定版本）',
-      schemaNotes: '说明：',
-      schemaJsonHint: '使用 --json 获取完整字段结构、节点配置、Hook 和有效示例。',
-      autoRetryGetLine: '工作流 {{workflowId}} 修订版 {{revision}}，节点 {{nodeId}}（{{nodeType}}）。',
-      autoRetryNotConfigured: 'autoRetry：未配置（关闭）',
-      autoRetrySetSaved: '已保存工作流 {{workflowId}} 节点 {{nodeId}} 的自动重试（修订版 {{revision}}）：{{config}}。',
-      autoRetrySetRemoved: '已移除工作流 {{workflowId}} 节点 {{nodeId}} 的自动重试；新修订版 {{revision}}。',
+      helpSaveNote: 'workflow save 接受一个完整工作流定义；运行 `cliloom workflow schema` 查看完整字段说明。',
       shellSelection: '选择模式：{{selection}}',
       shellEffective: '实际目标：{{detail}}',
       shellUnavailable: '不可用',
@@ -705,6 +689,153 @@ export default {
       skinDeleted: '已删除皮肤 {{id}}。当前皮肤：{{activeId}}。',
       skinImported: '已导入皮肤 {{id}}（{{name}}）。未激活。',
       skinNoFonts: '未找到已安装的字体。'
+    },
+    workflowSchema: {
+      title: 'CLILoom 工作流结构说明（schemaVersion {{version}}）',
+      saveTitle: '保存工作流（workflow save）',
+      saveSemanticsTitle: '语义',
+      workflowTitle: '工作流根字段',
+      nodeTitle: '节点公共字段（nodes[] 元素）',
+      nodeConfigsTitle: '节点配置字段（按 nodes[].type 区分）',
+      variablesTitle: '变量定义（start/input 的 config.variables[] 元素）',
+      hooksTitle: '钩子（startHook/endHook 对象）',
+      edgesTitle: '边（edges[] 元素）',
+      layoutTitle: '布局（layout.nodes.<节点 ID>）',
+      autoRetryTitle: '终端自动重试（config.autoRetry）',
+      autoRetryFieldsTitle: '字段',
+      autoRetrySemanticsTitle: '语义',
+      autoRetrySaveRulesTitle: '保存规则',
+      autoRetryExamplesTitle: 'autoRetry 字段取值示例',
+      systemVariablesTitle: '系统变量（由运行时提供）',
+      examplesTitle: '完整工作流示例',
+      notesTitle: '说明',
+      save: {
+        usage: 'cliloom workflow save (--stdin | --file <relative-path>) [--expected-revision <revision>] [--json]',
+        input: '输入是一个完整的工作流定义对象：即 workflow get --json 响应中的 workflow 成员加上你的修改。get 的响应包装（{ version, command, workflow, revision }）不是合法的保存输入；只提交 workflow 对象。',
+        create: '新建：提交带新 id 的完整定义，并省略 --expected-revision。初始修订版为 1。',
+        update: '更新：保留原 id，包含定义中所有需要保留的部分，并通过 --expected-revision 传入 workflow get 返回的修订版。保存成功后修订版递增一次。修订版是命令选项，不是工作流 JSON 的字段。',
+        readback: '用 workflow get <workflow-id> --json 回读，确认归一化后的存储定义和新修订版。',
+        semantics: {
+          fullReplacement: '保存是完整替换。输入中省略的可选字段不会从已存储版本保留：先 get 当前定义，修改后再提交完整 JSON。',
+          revisionOption: '已存在的 id 缺少修订版、修订版过期、或修订版指向已不存在的 id 时，按修订版冲突失败（退出码 5）。不覆盖、不合并、不自动重试。新 id 不带修订版则按新建成功。',
+          validateBoundary: 'validate 只校验提交的定义；不检查数据库修订版或设计器状态，也不保证之后的保存一定成功。',
+          noExecution: '读取或保存都不会执行工作流。保存的定义只影响后续运行；运行中的任务保留其绑定的工作流版本，等待中的自动重试计划、重试计数和历史都不受影响。',
+          dirtyDesigner: '同一工作流在设计器中有未保存修改时，保存失败（验证失败，退出码 2）。请先保存或关闭设计器；不会替你关闭设计器或覆盖草稿。',
+          sizeLimits: '工作流输入上限为 2 MiB UTF-8 JSON。stdin 还受桥接完整请求体 2 MiB 限制（含 JSON 转义开销），因此不保证恰好 2 MiB 的任意 stdin 都能发送。',
+          partialInput: '不支持部分对象输入：单独的 autoRetry 对象不是工作流，整个输入为顶层 null 也不同于节点配置里的 autoRetry: null。',
+          transportFailure: '如果保存提交后传输中断，数据库可能已写入。先重新 workflow get 核实，再决定是否重试；不要盲目重复保存。'
+        }
+      },
+      workflow: {
+        id: '必填字符串，1-512 字符，禁止 NUL。工作流标识；新建和更新都以此 id 定位，不会自动生成。',
+        name: '必填字符串，1-512 字符，禁止 NUL。显示名称。',
+        description: '可选字符串，0-{{maxString}} 字符，禁止 NUL。省略即不存储。',
+        nodes: '必填节点数组，最多 {{maxNodes}} 个。节点 id 必须唯一，且必须恰好有一个 start 节点。见节点各节。',
+        edges: '必填边数组，最多 {{maxEdges}} 条。边 id 必须唯一，两端必须引用现有节点。',
+        layout: '可选布局对象，只描述画布位置，不影响执行顺序。省略即不保存布局。'
+      },
+      node: {
+        id: '必填字符串，1-512 字符，禁止 NUL。在该工作流内唯一。',
+        type: '必填。七种受支持节点类型之一，决定 config 结构。见节点配置字段一节。',
+        name: '必填字符串，1-512 字符，禁止 NUL。节点显示名称。',
+        config: '必填对象，结构随节点类型变化；不接受用 null 代替对象。见各类型字段。',
+        startHook: '可选钩子对象，节点执行前运行；省略表示没有 start 钩子。见钩子一节。',
+        endHook: '可选钩子对象，节点完成后运行；省略表示没有 end 钩子。见钩子一节。'
+      },
+      variables: {
+        variables: '必填数组，可为空，最多 1000 项。start 节点定义任务起始变量；input 节点在执行到达时进入现有人工提交输入流程收集变量。',
+        key: '必填字符串，1-512 字符，需匹配 [A-Za-z_][A-Za-z0-9_]*。禁止 sys_ 前缀，同一变量列表内不能重复。',
+        label: '必填字符串，1-512 字符。输入字段显示名称。',
+        type: "必填：'text' 或 'number'。决定输入方式和默认值转换。",
+        required: '必填布尔值。运行时判断必填输入；保存定义时不要求已有用户输入。',
+        order: '可选整数 1-1000000。小者靠前；未设置 order 的排最后，同序号保持定义顺序。',
+        defaultValue: '可选 JSON 标量：最多 {{maxString}} 字符的字符串、有限数字、布尔值或 null；不接受对象和数组。省略不注入默认值，已有变量值不会被默认值覆盖。现有转换：number 类型按 Number 转换，空值/null 或无法转换时为 0；text 类型 null 转为空串，布尔值保持布尔值，其他标量转为字符串。示例优先使用与声明类型一致的值。',
+        options: '可选字符串数组，最多 1000 项，每项 0-10000 字符。当前接受并保存，但输入组件和运行时不把它用作下拉选项，也不据此校验取值。'
+      },
+      terminalShared: {
+        command: '必填字符串，1-{{maxString}} 字符，不能只有空白，禁止 NUL。首次执行的命令模板，支持 ${变量名}。',
+        retryCommand: '可选字符串，最多 {{maxString}} 字符。用于手动和自动重试；省略或纯空白会归一化为无配置，重试回退到 command。有效取值不可含 NUL。它不是只影响自动重试。',
+        cwd: '必填字符串，1-4096 字符，不能只有空白。工作目录模板，支持 ${变量名}，常用 ${sys_project_dir}。保存阶段不保证目录存在或运行时可访问。',
+        env: '可选字符串映射，最多 1000 项；键 1-512 字符且无 NUL，值 0-{{maxString}} 字符且无 NUL。省略即不提供本节点额外环境覆盖。值按现有环境传递流程处理，不承诺自动做工作流模板插值。',
+        autoRetry: '可选自动重试配置，见终端自动重试一节。仅两个终端节点类型适用。'
+      },
+      interactive: {
+        shell: '仅交互式终端配置接受的历史兼容字段：字符串，1-4096 字符。不能覆盖实际的全局 Shell 选择；更改请使用 shell 命令。',
+        autoStart: '必填布尔值，无保存默认值。当前仅解析并持久化：运行时到达交互式节点后仍直接执行，不根据该字段决定是否等待启动。'
+      },
+      nonInteractive: {
+        timeoutMs: '可选整数 1-86400000（仅非交互式终端），单位毫秒。省略不设置该节点超时定时器。',
+        successExitCodes: '必填整数数组（仅非交互式终端），最多 256 项，每项 -255～255。无保存默认值，常用 [0]。当前接受空数组，其不匹配任何退出码。'
+      },
+      gatewayExclusive: {
+        defaultEdgeId: '可选字符串，1-512 字符。存在时保存校验要求引用该网关的某条出边。运行时默认分支查找使用边的 isDefault 标记，因此设置默认分支必须把该边标记为 isDefault: true；若保留 defaultEdgeId，请保持两者一致。仅设置 defaultEdgeId 不保证回退生效。'
+      },
+      gatewayParallel: {
+        mode: "必填：'split' 建立并行分支；'join' 等待列表中入边对应的分支汇合。",
+        joinIncomingEdgeIds: 'join 模式必填非空列表；最多 {{maxEdges}} 个 ID，每个 1-512 字符。列表内 ID 必须唯一，引用的边必须存在且指向当前 join 节点；同一条边不得同时被多个 join 节点的列表引用。split 模式应省略：解析器即使存储也不会赋予其 join 含义。'
+      },
+      endConfig: {
+        config: 'end 节点的 config 使用空对象 {}。'
+      },
+      hooks: {
+        enabled: '必填布尔值。控制钩子是否执行。',
+        command: '必填字符串，0-{{maxString}} 字符，禁止 NUL。当前结构允许空串，保存不会因此失败。',
+        cwd: '可选字符串，1-4096 字符；支持 ${sys_project_dir} 等目录模板。省略使用项目目录，不会自动继承节点 cwd。',
+        env: '可选字符串映射，形状和大小限制与终端 env 字段相同。',
+        failPolicy: "必填：'continue' 或 'fail-node'。控制钩子失败是否使节点失败。无隐含保存默认值。",
+        absence: '钩子默认不存在：省略表示不执行。enabled 为 false 的钩子仍需提交形状有效的配置。'
+      },
+      edges: {
+        id: '必填字符串，1-512 字符，禁止 NUL。在边之间唯一。',
+        from: '必填字符串，1-512 字符；必须引用现有节点 id。',
+        to: '必填字符串，1-512 字符；必须引用现有节点 id。',
+        condition: '可选字符串，0-{{maxString}} 字符。排他网关按 edges 数组顺序选择首条条件满足的出边，随后回退到首条标记 isDefault 的出边。无匹配且无默认边时运行失败。其他节点类型不按 condition 选择路径。',
+        isDefault: '可选布尔值；省略等同未标记默认边。每个排他网关最多一条默认出边。',
+        expression: '条件表达式支持变量名、字符串/数字/布尔/null、== != > >= < <=、and/or/not、括号，以及 contains/startsWith/endsWith。示例：environment == "production"。不支持 ${...}、JavaScript 的 &&/|| 或任意 JS 执行。保存校验不预先保证已存表达式可运行。'
+      },
+      layout: {
+        nodes: 'layout 存在时必填：节点 id 到位置对象的映射，最多 {{maxNodes}} 项。可只包含部分现有节点，但不能引用缺失节点。',
+        x: '必填有限数值，绝对值不超过 10000000。允许负数和小数。',
+        y: '必填有限数值，绝对值不超过 10000000。允许负数和小数。'
+      },
+      autoRetry: {
+        storage: '存储于 interactive-terminal 和 non-interactive-terminal 节点的 nodes[].config.autoRetry。字段省略或为 null 表示不持久化该配置，重试关闭。',
+        saveCommand: 'cliloom workflow save (--stdin | --file <relative-path>) [--expected-revision <revision>]，输入为包含修改后 config.autoRetry 的完整工作流定义。读取使用 cliloom workflow get <workflow-id> --json。',
+        recommendedDelays: 'recommended 模式在每次失败后依次等待 {{delays}} 分钟，之后每次等待 {{later}} 分钟。等待时间从失败时刻起算，不是相对任务启动累计。',
+        fields: {
+          enabled: '必填布尔值。false 关闭重试，同时保留策略字段以便再次启用。',
+          mode: "必填：'recommended'（固定退避延时）或 'cron'（日历计划）。",
+          maxRetries: '可选整数 {{min}}-{{max}}；省略默认 {{default}}，null 表示不限次数。0、小数、字符串等无效。',
+          cron: 'cron 模式必填：字符串，最多 {{limit}} 字符，禁止 NUL，五段格式（分 时 日 月 周）。recommended 模式下通用解析器会丢弃该字段。'
+        },
+        semantics: {
+          countOnly: 'maxRetries 仅计自动重试：首次执行不计数，手动重试开启新一轮周期。',
+          cronCalendar: 'cron 模式选择失败后的下一次日历匹配，不是固定延时。星期允许 0-7；日期和星期均受限时使用 Unix 任一匹配规则。',
+          cronLimits: '不支持秒字段、@ 宏、英文月份/星期名和 Quartz 扩展。',
+          cronDraft: '启用的 cron 配置必须能计算未来触发时间；停用时允许保留未完成的字符串草稿，但仍受类型、长度和 NUL 限制。',
+          timezone: '时区来自任务启动时捕获的系统 IANA 时区，取不到有效时区时沿用现有 UTC 回退。没有可配置的 timezone 字段。',
+          retryCommand: '自动重试执行 retryCommand（如已配置），否则执行 command。',
+          failureScope: '钩子失败、停止和中断是否触发重试遵循当前运行时规则；并非任意失败都会重试。',
+          persistence: '保存工作流不会取消等待计划、重置在运行任务的计数或改写历史。'
+        },
+        saveRules: {
+          fullReplace: 'save 替换整个工作流：先 get 定义，修改节点内的 config.autoRetry，再带当前修订版提交完整 JSON。',
+          removal: '删除 autoRetry 字段或将其设为 null 都会移除配置；归一化后两者都不存储。这与把整个保存输入设为顶层 null 无关。',
+          disabledKeeps: 'enabled: false 保留策略字段存储，便于再次启用。',
+          unknownKeys: '固定结构中的未知键由通用工作流解析器忽略（recommended 模式下的 cron 被丢弃）；其他节点类型下的 autoRetry 会被丢弃而不是启用重试。已移除专用命令的“未知键一律报错”不适用于 workflow save。'
+        }
+      },
+      notes: {
+        graph: '保存时校验的图约束：start 节点无入边且恰好一条出边；end 节点无出边且有入边；非网关节点都有入边和恰好一条出边；网关不受单出边限制——排他网关可有多条出边（最多一条标记 isDefault），parallel split 至少两条出边，parallel join 至少一条出边（校验器接受 join 有多条出边，但运行时只沿 edges 数组顺序的第一条继续）。',
+        noGlobalGuarantees: '校验器不保证所有节点可达、图无环或至少存在 end 节点。',
+        normalization: '归一化会忽略固定结构中的未知字段、丢弃 recommended 模式 autoRetry 中的 cron，并在 autoRetry 省略或为 null 时移除该字段。其他可选字段省略即不存储；提交 null 会导致校验失败而不是移除字段（variables[].defaultValue 是文档声明的可为 null 标量，属例外）。',
+        templates: '命令和 cwd 模板使用 ${变量名}；条件表达式直接使用变量名（见边一节）。',
+        systemVariables: '系统变量由运行时提供，不可重新定义，也不是 save 根对象的字段。${名称} 用于命令和目录模板，条件表达式直接使用变量名。',
+        shellLegacy: '历史兼容的节点级 shell 字段仍被解析，但不能替代全局 Shell 选择（shell select）。',
+        revisionHint: '修订版不属于工作流 JSON；更新时通过 --expected-revision 传入。更新必须使用 workflow get 返回的修订版。',
+        validateHint: '保存前使用 cliloom workflow validate。校验通过本身不代表命令已执行或保存必然成功。',
+        exampleFileUsage: '建议在助手工作目录内准备 workflow.json 并用 --file workflow.json 提交（跨平台且避免 Shell 引号问题）；也可使用 --stdin，但输入必须符合宿主 Shell 的引用规则。'
+      }
     },
     action: {
       open: '打开助手',

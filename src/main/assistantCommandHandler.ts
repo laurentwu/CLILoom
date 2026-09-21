@@ -13,10 +13,10 @@ import {
   CONTEXT_SKIN_SUMMARY,
   CONTEXT_TERMINAL_AUTO_RETRY_SUMMARY,
   CONTEXT_WORKFLOW_SCHEMA_NOTES,
-  TERMINAL_AUTO_RETRY_SCHEMA,
   WORKFLOW_NODE_TYPES,
   buildAssistantHelpText,
-  buildWorkflowSchema
+  buildWorkflowSchema,
+  renderWorkflowSchemaText
 } from '../shared/assistantCapabilities'
 import {
   BUILTIN_SKINS,
@@ -33,8 +33,7 @@ import {
   parseAssistantCommandJson,
   readAssistantCommandInput,
   rejectUnknownFields,
-  requireJsonObjectInput,
-  requireRevision
+  requireJsonObjectInput
 } from './assistantCommandInput'
 import { type AssistantWorkspace } from './assistantWorkspace'
 import type { ProjectRecord } from './database'
@@ -101,10 +100,11 @@ export class AssistantCommandHandler {
     const args = request.args.filter((argument) => argument !== '--json')
     if (command === 'help' || command === '--help' || command === '-h') {
       this.requireArgs(args, 0)
+      const notes = [t('assistant:cli.helpSaveNote')]
       return this.result(
         'help',
-        { commands: this.usageLines() },
-        buildAssistantHelpText()
+        { commands: this.usageLines(), notes },
+        buildAssistantHelpText(notes)
       )
     }
     if (command === 'context') return this.context(args)
@@ -330,29 +330,8 @@ export class AssistantCommandHandler {
     }
     if (action === 'schema') {
       this.requireArgs(args.slice(1), 0)
-      const schema = buildWorkflowSchema()
-      const text = [
-        t('assistant:cli.schemaTitle', { version: schema.schemaVersion }),
-        '',
-        t('assistant:cli.schemaNodes'),
-        ...WORKFLOW_NODE_TYPES.map((type) => `  ${type}`),
-        '',
-        t('assistant:cli.schemaAutoRetryTitle'),
-        `  ${t('assistant:cli.schemaSetLabel', { command: TERMINAL_AUTO_RETRY_SCHEMA.setCommand })}`,
-        `  ${t('assistant:cli.schemaModes', { delays: TERMINAL_AUTO_RETRY_SCHEMA.recommendedDelays })}`,
-        `  ${t('assistant:cli.schemaMaxRetries', {
-          min: CONTEXT_TERMINAL_AUTO_RETRY_SUMMARY.maxRetriesRange[0],
-          max: CONTEXT_TERMINAL_AUTO_RETRY_SUMMARY.maxRetriesRange[1],
-          default: CONTEXT_TERMINAL_AUTO_RETRY_SUMMARY.defaultMaxRetries
-        })}`,
-        `  ${t('assistant:cli.schemaApplies')}`,
-        '',
-        t('assistant:cli.schemaNotes'),
-        ...schema.notes.map((note) => `  - ${note}`),
-        '',
-        t('assistant:cli.schemaJsonHint')
-      ].join('\n')
-      return this.result('workflow.schema', schema, text)
+      const schema = buildWorkflowSchema(t)
+      return this.result('workflow.schema', schema, renderWorkflowSchemaText(schema, t))
     }
     if (action === 'validate') {
       const source = readAssistantCommandInput({
@@ -405,71 +384,6 @@ export class AssistantCommandHandler {
         }
         throw error
       }
-    }
-    if (action === 'auto-retry') return this.workflowAutoRetry(args.slice(1), stdin)
-    throw new AssistantCommandError('INVALID_ARGUMENT', 2, t('errors:assistantCommand.invalidWorkflowSubcommand'))
-  }
-
-  private workflowAutoRetry(args: string[], stdin: string | undefined): AssistantCommandResult {
-    const action = args[0]
-    if (action === 'get') {
-      this.requireArgs(args.slice(1), 2)
-      const info = this.options.workflowService.getTerminalAutoRetry(args[1], args[2])
-      return this.result(
-        'workflow.auto-retry.get',
-        { ...info, appliesTo: 'future-workflow-runs' },
-        [
-          t('assistant:cli.autoRetryGetLine', {
-            workflowId: info.workflowId,
-            revision: info.revision,
-            nodeId: info.nodeId,
-            nodeType: info.nodeType
-          }),
-          info.autoRetry === null
-            ? t('assistant:cli.autoRetryNotConfigured')
-            : `autoRetry: ${JSON.stringify(info.autoRetry)}`
-        ].join('\n')
-      )
-    }
-    if (action === 'set') {
-      const [workflowId, nodeId] = this.requirePositionals(args, 2)
-      const source = readAssistantCommandInput({
-        args: args.slice(3),
-        stdin,
-        workspaceRoot: this.options.workspace.rootPath,
-        allowRevision: true
-      })
-      const expectedRevision = requireRevision(source)
-      const input = parseAssistantCommandJson(source.content)
-      const saved = this.options.workflowService.setTerminalAutoRetry(
-        workflowId,
-        nodeId,
-        input,
-        expectedRevision
-      )
-      return this.result(
-        'workflow.auto-retry.set',
-        {
-          workflowId: saved.workflow.id,
-          nodeId,
-          nodeType: saved.nodeType,
-          revision: saved.revision,
-          autoRetry: saved.autoRetry,
-          appliesTo: 'future-workflow-runs'
-        },
-        saved.autoRetry === null
-          ? t('assistant:cli.autoRetrySetRemoved', {
-            nodeId,
-            workflowId: saved.workflow.id,
-            revision: saved.revision
-          })
-          : t('assistant:cli.autoRetrySetSaved', {
-            nodeId,
-            workflowId: saved.workflow.id,
-            revision: saved.revision,
-            config: JSON.stringify(saved.autoRetry)
-          })
-      )
     }
     throw new AssistantCommandError('INVALID_ARGUMENT', 2, t('errors:assistantCommand.invalidWorkflowSubcommand'))
   }
