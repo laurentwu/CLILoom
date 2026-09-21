@@ -562,7 +562,16 @@ export function getWorkflowDeleteImpact(
   const activeUsage = db.prepare(`
     select count(distinct task_id) as count
     from workflow_runs
-    where workflow_id = ? and status in ('running', 'waiting-input')
+    where workflow_id = ? and (
+      status in ('running', 'waiting-input')
+      or exists (
+        select 1 from node_runs
+        where node_runs.run_id = workflow_runs.id
+          and node_runs.status = 'failed'
+          and json_valid(node_runs.output_json)
+          and json_extract(node_runs.output_json, '$.autoRetry.phase') = 'waiting'
+      )
+    )
   `).get(workflowId) as { count: number }
   const historicalUsage = db.prepare(
     'select count(distinct task_id) as count from workflow_runs where workflow_id = ?'

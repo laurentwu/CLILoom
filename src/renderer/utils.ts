@@ -1,7 +1,6 @@
 import { sortVariableDefinitions } from '../shared/workflow'
 import type {
   InputNodeConfig,
-  NodeRunStatus,
   StartNodeConfig,
   VariableDefinition,
   VariableValue,
@@ -10,7 +9,8 @@ import type {
 } from '../shared/workflow'
 import {
   isRetryableRunStatus,
-  type WorkflowRuntimeBranchRun
+  type WorkflowRuntimeBranchRun,
+  type WorkflowRuntimeNodeRun
 } from '../shared/workflowRuntime'
 import {
   isTerminalSessionEnded,
@@ -23,13 +23,11 @@ import { isAppError } from '../shared/appError'
 import { getAutomaticTaskTitle } from '../shared/taskTitle'
 import { i18n } from './i18n'
 
-export type NodeRun = {
-  nodeId: string
-  status: NodeRunStatus
-  sessionId?: string
-  stdout?: string
-  stderr?: string
-  exitCode?: number | null
+/** Runtime view of one node run, shared with the main-process state. */
+export type NodeRun = WorkflowRuntimeNodeRun
+
+export function getNodeAutoRetryPhase(run: NodeRun | undefined): WorkflowRuntimeNodeRun['autoRetry'] {
+  return run?.autoRetry
 }
 
 export function getNodeTypeLabel(type: WorkflowNode['type']): TranslationKey {

@@ -57,6 +57,13 @@ Configure your preferred AI CLI and run it in a dedicated interactive terminal w
   - Edit a workflow retry or historical rerun command for one execution without changing the workflow or the next default command.
   - Native-shell target snapshots shared by terminals, hooks, retries, and the AI CLI assistant.
 
+- **Automatic retry for failed terminal nodes**
+  - Opt-in per node (interactive and non-interactive terminals); disabled by default and off for all existing workflows.
+  - Recommended schedule waits 1 → 2 → 5 → 10 → 30 minutes after each failure, then every 30 minutes; a custom five-field cron schedule (minute hour day-of-month month day-of-week, Unix either-match day semantics) can be built with the expression-assistant dialog or typed directly.
+  - Configurable attempt limit (1–9999 or unlimited). The first execution and manual retries are never counted; a manual retry starts a new count.
+  - A waiting plan shows the next retry time, attempt count, and locked task time zone with **Retry now** and **Cancel automatic retry** actions; manual stop, hook failures, and interrupted runs never schedule retries.
+  - Waiting plans survive restarts and system sleep: overdue plans run exactly once on the next launch or wake, and each task keeps the workflow version and time zone it started with.
+
 - **Variables and hooks**
   - Text and number variables with labels, defaults, ordering, and required rules.
   - Consistent `${variable}` bindings across supported shells without directly concatenating values into shell source.

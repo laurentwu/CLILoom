@@ -6,6 +6,7 @@ import type { TerminalRetryMode } from '../../shared/terminalSession'
 import type { TerminalRetryDraft, TerminalRetryEdit } from '../../shared/terminalRetry'
 import { NodeIcon } from './NodeIcon'
 import { StatusBadge } from './StatusBadge'
+import { TerminalAutoRetryBanner } from './TerminalAutoRetryBanner'
 import { TerminalOutputPane, TerminalPane } from './TerminalPane'
 import { VariableField } from './VariableField'
 import {
@@ -14,6 +15,7 @@ import {
   type NodeRun,
   type TerminalSession
 } from '../utils'
+import type { TerminalAutoRetryState } from '../../shared/terminalAutoRetry'
 import {
   getNodeAction,
   getTerminalWorkflowRole
@@ -45,6 +47,9 @@ type NodeDetailPanelProps = {
   onSendTerminalInput: (sessionId: string, input: string) => void
   onGetTerminalRetryDraft?: (sessionId: string, mode: TerminalRetryMode) => Promise<TerminalRetryDraft>
   onRetryTerminal: (sessionId: string, mode: TerminalRetryMode, edit?: TerminalRetryEdit) => Promise<void>
+  autoRetryTimeZone?: string
+  autoRetryMaxRetries?: number | null
+  onCancelAutoRetry?: (nodeId: string, autoRetry: TerminalAutoRetryState) => void | Promise<void>
   zoomTitle?: string
   className?: string
 }
@@ -67,6 +72,9 @@ export function NodeDetailPanel({
   onSendTerminalInput,
   onGetTerminalRetryDraft,
   onRetryTerminal,
+  autoRetryTimeZone,
+  autoRetryMaxRetries,
+  onCancelAutoRetry,
   zoomTitle,
   className
 }: NodeDetailPanelProps) {
@@ -100,10 +108,26 @@ export function NodeDetailPanel({
     canRun: Boolean(onRun),
     hasWorkflowRetrySession
   })
+  const autoRetry = run?.autoRetry
+  const autoRetryWaiting = autoRetry?.phase === 'waiting'
+  // The banner owns the single manual retry entry while a retry is waiting;
+  // the header and terminal pane must not duplicate it.
+  const effectiveNodeAction = autoRetryWaiting ? null : nodeAction
+  const statusLabel = (() => {
+    if (!autoRetry) return resolvedStatusLabel
+    switch (autoRetry.phase) {
+      case 'waiting': return t('node:status.autoRetryWaiting')
+      case 'running': return t('node:status.autoRetryRunning')
+      case 'exhausted': return t('node:status.autoRetryExhausted', { count: autoRetry.attemptsStarted })
+      case 'cancelled': return t('node:status.autoRetryCancelled')
+      case 'blocked': return t('node:status.autoRetryBlocked')
+      default: return resolvedStatusLabel
+    }
+  })()
   const statusText =
     run?.exitCode === undefined || run.exitCode === null
-      ? resolvedStatusLabel
-      : t('node:status.withExitCode', { label: resolvedStatusLabel, code: run.exitCode })
+      ? statusLabel
+      : t('node:status.withExitCode', { label: statusLabel, code: run.exitCode })
 
   useEffect(() => {
     setSelectedSessionId(latestSessionId)
@@ -126,19 +150,19 @@ export function NodeDetailPanel({
         </div>
         <CardAction className="node-detail-panel__actions flex items-center gap-2">
           <StatusBadge label={statusText} source="node" status={status} />
-          {nodeAction === 'continue' && (
+          {effectiveNodeAction === 'continue' && (
             <Button size="sm" onClick={onContinue}>
               <Play data-icon="inline-start" />
               {t('common:action.continue')}
             </Button>
           )}
-          {nodeAction === 'run' && onRun && (
+          {effectiveNodeAction === 'run' && onRun && (
             <Button size="sm" onClick={onRun}>
               <Play data-icon="inline-start" />
               {t('common:action.run')}
             </Button>
           )}
-          {nodeAction === 'retry-node' && (
+          {effectiveNodeAction === 'retry-node' && (
             <Button size="sm" onClick={onRetryNode}>
               <RotateCcw data-icon="inline-start" />
               {t('node:action.retry')}
@@ -153,6 +177,25 @@ export function NodeDetailPanel({
       <CardContent className="min-h-0 min-w-0 max-w-full flex-1 overflow-hidden p-0">
         {isTerminalNode ? (
           <div className="flex h-full w-full min-h-0 min-w-0 max-w-full flex-col gap-3 overflow-hidden p-4">
+            {autoRetry && isTerminalNode && (
+              <TerminalAutoRetryBanner
+                autoRetry={autoRetry}
+                timeZone={autoRetryTimeZone}
+                maxRetries={autoRetryMaxRetries}
+                disabled={!onCancelAutoRetry && !canOperate}
+                onRetryNow={() => {
+                  // Reuse the workflow terminal-retry entry so the configured
+                  // retry command, variable binding and branch queue apply
+                  // (Plan 5.5), instead of re-running the node from scratch.
+                  const sessionId = run?.sessionId
+                  if (!sessionId) return
+                  void onRetryTerminal(sessionId, 'workflow')
+                }}
+                onCancel={(state) => (
+                  onCancelAutoRetry ? onCancelAutoRetry(node.id, state) : Promise.resolve()
+                )}
+              />
+            )}
             {sessions.length > 1 && selectedSession && (
               <Select value={selectedSession.id} onValueChange={setSelectedSessionId}>
                 <SelectTrigger aria-label={t('node:terminal.selectSession')} className="max-w-72 shrink-0" size="sm">
@@ -181,6 +224,7 @@ export function NodeDetailPanel({
                 onRetry={onRetryTerminal}
                 onStop={onStopTerminal}
                 workflowRole={getSessionWorkflowRole(selectedSession)}
+                suppressRetryButton={Boolean(autoRetryWaiting)}
                 disabled={!canAcceptTerminalInput(selectedSession)}
               />
             ) : (

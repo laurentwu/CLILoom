@@ -21,11 +21,14 @@ export type TerminalAction =
   | 'stop-command'
 
 export function getWorkflowAction(
-  status: WorkflowRuntimeStatus | null
+  status: WorkflowRuntimeStatus | null,
+  hasWaitingAutoRetry = false
 ): WorkflowAction | null {
-  return status === 'running' || status === 'waiting-input'
-    ? 'stop-workflow'
-    : null
+  if (status === 'running' || status === 'waiting-input') return 'stop-workflow'
+  // A task with a waiting automatic-retry plan is still live: stopping it
+  // must remain available even though the overall status is failed.
+  if (hasWaitingAutoRetry) return 'stop-workflow'
+  return null
 }
 
 export function getNodeAction({

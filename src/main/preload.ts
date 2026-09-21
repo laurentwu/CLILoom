@@ -81,6 +81,13 @@ const api = {
     ipcRenderer.invoke('workflow:retryNode', taskId, nodeId, branchId),
   updateWorkflowVariables: (taskId: string, variables: unknown, branchId?: string) => ipcRenderer.invoke('workflow:updateVariables', taskId, variables, branchId),
   stopWorkflow: (taskId: string) => ipcRenderer.invoke('workflow:stop', taskId),
+  cancelTerminalAutoRetry: (request: {
+    taskId: string
+    nodeId: string
+    runId: string
+    cycleId: string
+    scheduleId: string
+  }) => ipcRenderer.invoke('workflow:cancelTerminalAutoRetry', request),
   restoreWorkflowState: (taskId: string) => ipcRenderer.invoke('workflow:restoreState', taskId),
   onWorkflowState: (callback: (event: unknown) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, payload: unknown) => callback(payload)

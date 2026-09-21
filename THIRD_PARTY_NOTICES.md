@@ -8,7 +8,7 @@ CLILoom itself is licensed under Apache License 2.0 as stated in `LICENSE`. This
 
 The Electron runtime also distributes its own `LICENSE` and `LICENSES.chromium.html` files for Electron, Chromium, Node.js, and their incorporated components. Those runtime files remain part of packaged Electron applications and are not duplicated in this Markdown document.
 
-This generated inventory contains 326 package versions and 101 distinct notice texts. Refresh it with `npm run licenses:generate`; builds verify it with `npm run licenses:check`.
+This generated inventory contains 328 package versions and 103 distinct notice texts. Refresh it with `npm run licenses:generate`; builds verify it with `npm run licenses:check`.
 
 ## Component index
 
@@ -197,149 +197,151 @@ This generated inventory contains 326 package versions and 101 distinct notice t
 | [codemirror](https://www.npmjs.com/package/codemirror) | `6.0.2` | MIT | [Notice 002](#notice-002) |
 | [compute-scroll-into-view](https://www.npmjs.com/package/compute-scroll-into-view) | `2.0.4` | MIT | [Notice 037](#notice-037) |
 | [crelt](https://www.npmjs.com/package/crelt) | `1.0.7` | MIT | [Notice 038](#notice-038) |
-| [d3-color](https://www.npmjs.com/package/d3-color) | `3.1.0` | ISC | [Notice 039](#notice-039) |
-| [d3-dispatch](https://www.npmjs.com/package/d3-dispatch) | `3.0.1` | ISC | [Notice 040](#notice-040) |
-| [d3-drag](https://www.npmjs.com/package/d3-drag) | `3.0.0` | ISC | [Notice 040](#notice-040) |
-| [d3-ease](https://www.npmjs.com/package/d3-ease) | `3.0.1` | BSD-3-Clause | [Notice 041](#notice-041) |
-| [d3-interpolate](https://www.npmjs.com/package/d3-interpolate) | `3.0.1` | ISC | [Notice 040](#notice-040) |
-| [d3-selection](https://www.npmjs.com/package/d3-selection) | `3.0.0` | ISC | [Notice 040](#notice-040) |
-| [d3-timer](https://www.npmjs.com/package/d3-timer) | `3.0.1` | ISC | [Notice 040](#notice-040) |
-| [d3-transition](https://www.npmjs.com/package/d3-transition) | `3.0.1` | ISC | [Notice 040](#notice-040) |
-| [d3-zoom](https://www.npmjs.com/package/d3-zoom) | `3.0.0` | ISC | [Notice 040](#notice-040) |
-| [debug](https://www.npmjs.com/package/debug) | `4.4.3` | MIT | [Notice 042](#notice-042) |
-| [decode-named-character-reference](https://www.npmjs.com/package/decode-named-character-reference) | `1.3.0` | MIT | [Notice 043](#notice-043) |
-| [dequal](https://www.npmjs.com/package/dequal) | `2.0.3` | MIT | [Notice 044](#notice-044) |
-| [detect-node-es](https://www.npmjs.com/package/detect-node-es) | `1.1.0` | MIT | [Notice 045](#notice-045) |
-| [devlop](https://www.npmjs.com/package/devlop) | `1.1.0` | MIT | [Notice 046](#notice-046) |
-| [diff](https://www.npmjs.com/package/diff) | `5.2.2` | BSD-3-Clause | [Notice 047](#notice-047) |
-| [downshift](https://www.npmjs.com/package/downshift) | `7.6.2` | MIT | [Notice 048](#notice-048) |
-| [electron](https://www.npmjs.com/package/electron) | `43.3.0` | MIT | [Notice 049](#notice-049) |
+| [cron-parser](https://www.npmjs.com/package/cron-parser) | `5.10.1` | MIT | [Notice 039](#notice-039) |
+| [d3-color](https://www.npmjs.com/package/d3-color) | `3.1.0` | ISC | [Notice 040](#notice-040) |
+| [d3-dispatch](https://www.npmjs.com/package/d3-dispatch) | `3.0.1` | ISC | [Notice 041](#notice-041) |
+| [d3-drag](https://www.npmjs.com/package/d3-drag) | `3.0.0` | ISC | [Notice 041](#notice-041) |
+| [d3-ease](https://www.npmjs.com/package/d3-ease) | `3.0.1` | BSD-3-Clause | [Notice 042](#notice-042) |
+| [d3-interpolate](https://www.npmjs.com/package/d3-interpolate) | `3.0.1` | ISC | [Notice 041](#notice-041) |
+| [d3-selection](https://www.npmjs.com/package/d3-selection) | `3.0.0` | ISC | [Notice 041](#notice-041) |
+| [d3-timer](https://www.npmjs.com/package/d3-timer) | `3.0.1` | ISC | [Notice 041](#notice-041) |
+| [d3-transition](https://www.npmjs.com/package/d3-transition) | `3.0.1` | ISC | [Notice 041](#notice-041) |
+| [d3-zoom](https://www.npmjs.com/package/d3-zoom) | `3.0.0` | ISC | [Notice 041](#notice-041) |
+| [debug](https://www.npmjs.com/package/debug) | `4.4.3` | MIT | [Notice 043](#notice-043) |
+| [decode-named-character-reference](https://www.npmjs.com/package/decode-named-character-reference) | `1.3.0` | MIT | [Notice 044](#notice-044) |
+| [dequal](https://www.npmjs.com/package/dequal) | `2.0.3` | MIT | [Notice 045](#notice-045) |
+| [detect-node-es](https://www.npmjs.com/package/detect-node-es) | `1.1.0` | MIT | [Notice 046](#notice-046) |
+| [devlop](https://www.npmjs.com/package/devlop) | `1.1.0` | MIT | [Notice 047](#notice-047) |
+| [diff](https://www.npmjs.com/package/diff) | `5.2.2` | BSD-3-Clause | [Notice 048](#notice-048) |
+| [downshift](https://www.npmjs.com/package/downshift) | `7.6.2` | MIT | [Notice 049](#notice-049) |
+| [electron](https://www.npmjs.com/package/electron) | `43.3.0` | MIT | [Notice 050](#notice-050) |
 | [electron-updater](https://www.npmjs.com/package/electron-updater) | `6.8.9` | MIT | [Notice 029](#notice-029) |
-| [escape-string-regexp](https://www.npmjs.com/package/escape-string-regexp) | `5.0.0` | MIT | [Notice 050](#notice-050) |
-| [estree-util-is-identifier-name](https://www.npmjs.com/package/estree-util-is-identifier-name) | `3.0.0` | MIT | [Notice 051](#notice-051) |
-| [estree-util-visit](https://www.npmjs.com/package/estree-util-visit) | `2.0.0` | MIT | [Notice 052](#notice-052) |
+| [escape-string-regexp](https://www.npmjs.com/package/escape-string-regexp) | `5.0.0` | MIT | [Notice 051](#notice-051) |
+| [estree-util-is-identifier-name](https://www.npmjs.com/package/estree-util-is-identifier-name) | `3.0.0` | MIT | [Notice 052](#notice-052) |
+| [estree-util-visit](https://www.npmjs.com/package/estree-util-visit) | `2.0.0` | MIT | [Notice 053](#notice-053) |
 | [fault](https://www.npmjs.com/package/fault) | `2.0.1` | MIT | [Notice 030](#notice-030) |
-| [font-list](https://www.npmjs.com/package/font-list) | `2.1.0` | MIT | [Notice 053](#notice-053) |
-| [format](https://www.npmjs.com/package/format) | `0.2.2` | MIT | [Notice 054](#notice-054) |
-| [fs-extra](https://www.npmjs.com/package/fs-extra) | `10.1.0` | MIT | [Notice 055](#notice-055) |
-| [get-nonce](https://www.npmjs.com/package/get-nonce) | `1.0.1` | MIT | [Notice 056](#notice-056) |
-| [graceful-fs](https://www.npmjs.com/package/graceful-fs) | `4.2.11` | ISC | [Notice 057](#notice-057) |
-| [html-parse-stringify](https://www.npmjs.com/package/html-parse-stringify) | `4.0.1` | MIT | [Notice 058](#notice-058) |
-| [i18next](https://www.npmjs.com/package/i18next) | `26.3.6` | MIT | [Notice 059](#notice-059) |
-| [is-alphabetical](https://www.npmjs.com/package/is-alphabetical) | `2.0.1` | MIT | [Notice 060](#notice-060) |
-| [is-alphanumerical](https://www.npmjs.com/package/is-alphanumerical) | `2.0.1` | MIT | [Notice 060](#notice-060) |
-| [is-decimal](https://www.npmjs.com/package/is-decimal) | `2.0.1` | MIT | [Notice 060](#notice-060) |
-| [is-hexadecimal](https://www.npmjs.com/package/is-hexadecimal) | `2.0.1` | MIT | [Notice 060](#notice-060) |
-| [isomorphic.js](https://www.npmjs.com/package/isomorphic.js) | `0.2.5` | MIT | [Notice 061](#notice-061) |
-| [js-tokens](https://www.npmjs.com/package/js-tokens) | `4.0.0` | MIT | [Notice 062](#notice-062) |
-| [js-yaml](https://www.npmjs.com/package/js-yaml) | `4.3.1` | MIT | [Notice 063](#notice-063) |
-| [jsonfile](https://www.npmjs.com/package/jsonfile) | `6.2.1` | MIT | [Notice 064](#notice-064) |
-| [kleur](https://www.npmjs.com/package/kleur) | `4.1.5` | MIT | [Notice 044](#notice-044) |
-| [lazy-val](https://www.npmjs.com/package/lazy-val) | `1.0.5` | MIT | [Notice 065](#notice-065) |
+| [font-list](https://www.npmjs.com/package/font-list) | `2.1.0` | MIT | [Notice 054](#notice-054) |
+| [format](https://www.npmjs.com/package/format) | `0.2.2` | MIT | [Notice 055](#notice-055) |
+| [fs-extra](https://www.npmjs.com/package/fs-extra) | `10.1.0` | MIT | [Notice 056](#notice-056) |
+| [get-nonce](https://www.npmjs.com/package/get-nonce) | `1.0.1` | MIT | [Notice 057](#notice-057) |
+| [graceful-fs](https://www.npmjs.com/package/graceful-fs) | `4.2.11` | ISC | [Notice 058](#notice-058) |
+| [html-parse-stringify](https://www.npmjs.com/package/html-parse-stringify) | `4.0.1` | MIT | [Notice 059](#notice-059) |
+| [i18next](https://www.npmjs.com/package/i18next) | `26.3.6` | MIT | [Notice 060](#notice-060) |
+| [is-alphabetical](https://www.npmjs.com/package/is-alphabetical) | `2.0.1` | MIT | [Notice 061](#notice-061) |
+| [is-alphanumerical](https://www.npmjs.com/package/is-alphanumerical) | `2.0.1` | MIT | [Notice 061](#notice-061) |
+| [is-decimal](https://www.npmjs.com/package/is-decimal) | `2.0.1` | MIT | [Notice 061](#notice-061) |
+| [is-hexadecimal](https://www.npmjs.com/package/is-hexadecimal) | `2.0.1` | MIT | [Notice 061](#notice-061) |
+| [isomorphic.js](https://www.npmjs.com/package/isomorphic.js) | `0.2.5` | MIT | [Notice 062](#notice-062) |
+| [js-tokens](https://www.npmjs.com/package/js-tokens) | `4.0.0` | MIT | [Notice 063](#notice-063) |
+| [js-yaml](https://www.npmjs.com/package/js-yaml) | `4.3.1` | MIT | [Notice 064](#notice-064) |
+| [jsonfile](https://www.npmjs.com/package/jsonfile) | `6.2.1` | MIT | [Notice 065](#notice-065) |
+| [kleur](https://www.npmjs.com/package/kleur) | `4.1.5` | MIT | [Notice 045](#notice-045) |
+| [lazy-val](https://www.npmjs.com/package/lazy-val) | `1.0.5` | MIT | [Notice 066](#notice-066) |
 | [lexical](https://www.npmjs.com/package/lexical) | `0.48.0` | MIT | [Notice 009](#notice-009) |
-| [lib0](https://www.npmjs.com/package/lib0) | `0.2.117` | MIT | [Notice 066](#notice-066) |
-| [lodash.escaperegexp](https://www.npmjs.com/package/lodash.escaperegexp) | `4.1.2` | MIT | [Notice 067](#notice-067) |
-| [lodash.isequal](https://www.npmjs.com/package/lodash.isequal) | `4.5.0` | MIT | [Notice 068](#notice-068) |
-| [longest-streak](https://www.npmjs.com/package/longest-streak) | `3.1.0` | MIT | [Notice 069](#notice-069) |
-| [loose-envify](https://www.npmjs.com/package/loose-envify) | `1.4.0` | MIT | [Notice 070](#notice-070) |
-| [lucide-react](https://www.npmjs.com/package/lucide-react) | `1.30.0` | ISC | [Notice 071](#notice-071) |
-| [markdown-table](https://www.npmjs.com/package/markdown-table) | `3.0.4` | MIT | [Notice 043](#notice-043) |
-| [mdast-util-directive](https://www.npmjs.com/package/mdast-util-directive) | `3.1.0` | MIT | [Notice 043](#notice-043) |
-| [mdast-util-from-markdown](https://www.npmjs.com/package/mdast-util-from-markdown) | `2.0.3` | MIT | [Notice 043](#notice-043) |
-| [mdast-util-frontmatter](https://www.npmjs.com/package/mdast-util-frontmatter) | `2.0.1` | MIT | [Notice 051](#notice-051) |
-| [mdast-util-gfm-strikethrough](https://www.npmjs.com/package/mdast-util-gfm-strikethrough) | `2.0.0` | MIT | [Notice 051](#notice-051) |
-| [mdast-util-gfm-table](https://www.npmjs.com/package/mdast-util-gfm-table) | `2.0.0` | MIT | [Notice 051](#notice-051) |
-| [mdast-util-gfm-task-list-item](https://www.npmjs.com/package/mdast-util-gfm-task-list-item) | `2.0.0` | MIT | [Notice 051](#notice-051) |
-| [mdast-util-highlight-mark](https://www.npmjs.com/package/mdast-util-highlight-mark) | `1.2.2` | MIT | [Notice 072](#notice-072) |
-| [mdast-util-mdx](https://www.npmjs.com/package/mdast-util-mdx) | `3.0.0` | MIT | [Notice 051](#notice-051) |
-| [mdast-util-mdx-expression](https://www.npmjs.com/package/mdast-util-mdx-expression) | `2.0.1` | MIT | [Notice 051](#notice-051) |
-| [mdast-util-mdx-jsx](https://www.npmjs.com/package/mdast-util-mdx-jsx) | `3.2.0` | MIT | [Notice 051](#notice-051) |
-| [mdast-util-mdxjs-esm](https://www.npmjs.com/package/mdast-util-mdxjs-esm) | `2.0.1` | MIT | [Notice 051](#notice-051) |
-| [mdast-util-phrasing](https://www.npmjs.com/package/mdast-util-phrasing) | `4.1.0` | MIT | [Notice 073](#notice-073) |
-| [mdast-util-to-markdown](https://www.npmjs.com/package/mdast-util-to-markdown) | `2.1.2` | MIT | [Notice 043](#notice-043) |
+| [lib0](https://www.npmjs.com/package/lib0) | `0.2.117` | MIT | [Notice 067](#notice-067) |
+| [lodash.escaperegexp](https://www.npmjs.com/package/lodash.escaperegexp) | `4.1.2` | MIT | [Notice 068](#notice-068) |
+| [lodash.isequal](https://www.npmjs.com/package/lodash.isequal) | `4.5.0` | MIT | [Notice 069](#notice-069) |
+| [longest-streak](https://www.npmjs.com/package/longest-streak) | `3.1.0` | MIT | [Notice 070](#notice-070) |
+| [loose-envify](https://www.npmjs.com/package/loose-envify) | `1.4.0` | MIT | [Notice 071](#notice-071) |
+| [lucide-react](https://www.npmjs.com/package/lucide-react) | `1.30.0` | ISC | [Notice 072](#notice-072) |
+| [luxon](https://www.npmjs.com/package/luxon) | `3.7.2` | MIT | [Notice 073](#notice-073) |
+| [markdown-table](https://www.npmjs.com/package/markdown-table) | `3.0.4` | MIT | [Notice 044](#notice-044) |
+| [mdast-util-directive](https://www.npmjs.com/package/mdast-util-directive) | `3.1.0` | MIT | [Notice 044](#notice-044) |
+| [mdast-util-from-markdown](https://www.npmjs.com/package/mdast-util-from-markdown) | `2.0.3` | MIT | [Notice 044](#notice-044) |
+| [mdast-util-frontmatter](https://www.npmjs.com/package/mdast-util-frontmatter) | `2.0.1` | MIT | [Notice 052](#notice-052) |
+| [mdast-util-gfm-strikethrough](https://www.npmjs.com/package/mdast-util-gfm-strikethrough) | `2.0.0` | MIT | [Notice 052](#notice-052) |
+| [mdast-util-gfm-table](https://www.npmjs.com/package/mdast-util-gfm-table) | `2.0.0` | MIT | [Notice 052](#notice-052) |
+| [mdast-util-gfm-task-list-item](https://www.npmjs.com/package/mdast-util-gfm-task-list-item) | `2.0.0` | MIT | [Notice 052](#notice-052) |
+| [mdast-util-highlight-mark](https://www.npmjs.com/package/mdast-util-highlight-mark) | `1.2.2` | MIT | [Notice 074](#notice-074) |
+| [mdast-util-mdx](https://www.npmjs.com/package/mdast-util-mdx) | `3.0.0` | MIT | [Notice 052](#notice-052) |
+| [mdast-util-mdx-expression](https://www.npmjs.com/package/mdast-util-mdx-expression) | `2.0.1` | MIT | [Notice 052](#notice-052) |
+| [mdast-util-mdx-jsx](https://www.npmjs.com/package/mdast-util-mdx-jsx) | `3.2.0` | MIT | [Notice 052](#notice-052) |
+| [mdast-util-mdxjs-esm](https://www.npmjs.com/package/mdast-util-mdxjs-esm) | `2.0.1` | MIT | [Notice 052](#notice-052) |
+| [mdast-util-phrasing](https://www.npmjs.com/package/mdast-util-phrasing) | `4.1.0` | MIT | [Notice 075](#notice-075) |
+| [mdast-util-to-markdown](https://www.npmjs.com/package/mdast-util-to-markdown) | `2.1.2` | MIT | [Notice 044](#notice-044) |
 | [mdast-util-to-string](https://www.npmjs.com/package/mdast-util-to-string) | `4.0.0` | MIT | [Notice 030](#notice-030) |
-| [micromark](https://www.npmjs.com/package/micromark) | `4.0.2` | MIT | [Notice 043](#notice-043) |
-| [micromark-core-commonmark](https://www.npmjs.com/package/micromark-core-commonmark) | `2.0.3` | MIT | [Notice 043](#notice-043) |
-| [micromark-extension-directive](https://www.npmjs.com/package/micromark-extension-directive) | `3.0.2` | MIT | [Notice 051](#notice-051) |
-| [micromark-extension-frontmatter](https://www.npmjs.com/package/micromark-extension-frontmatter) | `2.0.0` | MIT | [Notice 051](#notice-051) |
-| [micromark-extension-gfm-strikethrough](https://www.npmjs.com/package/micromark-extension-gfm-strikethrough) | `2.1.0` | MIT | [Notice 051](#notice-051) |
-| [micromark-extension-gfm-table](https://www.npmjs.com/package/micromark-extension-gfm-table) | `2.1.1` | MIT | [Notice 043](#notice-043) |
-| [micromark-extension-gfm-task-list-item](https://www.npmjs.com/package/micromark-extension-gfm-task-list-item) | `2.1.0` | MIT | [Notice 051](#notice-051) |
-| [micromark-extension-highlight-mark](https://www.npmjs.com/package/micromark-extension-highlight-mark) | `1.2.0` | MIT | [Notice 072](#notice-072) |
-| [micromark-extension-mdx-expression](https://www.npmjs.com/package/micromark-extension-mdx-expression) | `3.0.1` | MIT | [Notice 043](#notice-043) |
-| [micromark-extension-mdx-jsx](https://www.npmjs.com/package/micromark-extension-mdx-jsx) | `3.0.2` | MIT | [Notice 051](#notice-051) |
-| [micromark-extension-mdx-md](https://www.npmjs.com/package/micromark-extension-mdx-md) | `2.0.0` | MIT | [Notice 051](#notice-051) |
-| [micromark-extension-mdxjs](https://www.npmjs.com/package/micromark-extension-mdxjs) | `3.0.0` | MIT | [Notice 051](#notice-051) |
-| [micromark-extension-mdxjs-esm](https://www.npmjs.com/package/micromark-extension-mdxjs-esm) | `3.0.0` | MIT | [Notice 051](#notice-051) |
-| [micromark-factory-destination](https://www.npmjs.com/package/micromark-factory-destination) | `2.0.1` | MIT | [Notice 043](#notice-043) |
-| [micromark-factory-label](https://www.npmjs.com/package/micromark-factory-label) | `2.0.1` | MIT | [Notice 043](#notice-043) |
-| [micromark-factory-mdx-expression](https://www.npmjs.com/package/micromark-factory-mdx-expression) | `2.0.3` | MIT | [Notice 043](#notice-043) |
-| [micromark-factory-space](https://www.npmjs.com/package/micromark-factory-space) | `2.0.1` | MIT | [Notice 043](#notice-043) |
-| [micromark-factory-title](https://www.npmjs.com/package/micromark-factory-title) | `2.0.1` | MIT | [Notice 043](#notice-043) |
-| [micromark-factory-whitespace](https://www.npmjs.com/package/micromark-factory-whitespace) | `2.0.1` | MIT | [Notice 043](#notice-043) |
-| [micromark-util-character](https://www.npmjs.com/package/micromark-util-character) | `2.1.1` | MIT | [Notice 043](#notice-043) |
-| [micromark-util-chunked](https://www.npmjs.com/package/micromark-util-chunked) | `2.0.1` | MIT | [Notice 043](#notice-043) |
-| [micromark-util-classify-character](https://www.npmjs.com/package/micromark-util-classify-character) | `2.0.1` | MIT | [Notice 043](#notice-043) |
-| [micromark-util-combine-extensions](https://www.npmjs.com/package/micromark-util-combine-extensions) | `2.0.1` | MIT | [Notice 043](#notice-043) |
-| [micromark-util-decode-numeric-character-reference](https://www.npmjs.com/package/micromark-util-decode-numeric-character-reference) | `2.0.2` | MIT | [Notice 043](#notice-043) |
-| [micromark-util-decode-string](https://www.npmjs.com/package/micromark-util-decode-string) | `2.0.1` | MIT | [Notice 043](#notice-043) |
-| [micromark-util-encode](https://www.npmjs.com/package/micromark-util-encode) | `2.0.1` | MIT | [Notice 043](#notice-043) |
-| [micromark-util-events-to-acorn](https://www.npmjs.com/package/micromark-util-events-to-acorn) | `2.0.3` | MIT | [Notice 043](#notice-043) |
-| [micromark-util-html-tag-name](https://www.npmjs.com/package/micromark-util-html-tag-name) | `2.0.1` | MIT | [Notice 043](#notice-043) |
-| [micromark-util-normalize-identifier](https://www.npmjs.com/package/micromark-util-normalize-identifier) | `2.0.1` | MIT | [Notice 043](#notice-043) |
-| [micromark-util-resolve-all](https://www.npmjs.com/package/micromark-util-resolve-all) | `2.0.1` | MIT | [Notice 043](#notice-043) |
-| [micromark-util-sanitize-uri](https://www.npmjs.com/package/micromark-util-sanitize-uri) | `2.0.1` | MIT | [Notice 043](#notice-043) |
-| [micromark-util-subtokenize](https://www.npmjs.com/package/micromark-util-subtokenize) | `2.1.0` | MIT | [Notice 043](#notice-043) |
-| [micromark-util-symbol](https://www.npmjs.com/package/micromark-util-symbol) | `2.0.1` | MIT | [Notice 043](#notice-043) |
-| [micromark-util-types](https://www.npmjs.com/package/micromark-util-types) | `2.0.2` | MIT | [Notice 043](#notice-043) |
-| [mri](https://www.npmjs.com/package/mri) | `1.2.0` | MIT | [Notice 044](#notice-044) |
-| [ms](https://www.npmjs.com/package/ms) | `2.1.3` | MIT | [Notice 074](#notice-074) |
-| [node-addon-api](https://www.npmjs.com/package/node-addon-api) | `7.1.1` | MIT | [Notice 075](#notice-075) |
-| [node-addon-api](https://www.npmjs.com/package/node-addon-api) | `8.9.1` | MIT | [Notice 075](#notice-075) |
-| [node-pty](https://www.npmjs.com/package/node-pty) | `1.1.0` | MIT | [Notice 076](#notice-076) |
-| [object-assign](https://www.npmjs.com/package/object-assign) | `4.1.1` | MIT | [Notice 077](#notice-077) |
-| [parse-entities](https://www.npmjs.com/package/parse-entities) | `4.0.2` | MIT | [Notice 078](#notice-078) |
-| [prop-types](https://www.npmjs.com/package/prop-types) | `15.8.1` | MIT | [Notice 079](#notice-079) |
+| [micromark](https://www.npmjs.com/package/micromark) | `4.0.2` | MIT | [Notice 044](#notice-044) |
+| [micromark-core-commonmark](https://www.npmjs.com/package/micromark-core-commonmark) | `2.0.3` | MIT | [Notice 044](#notice-044) |
+| [micromark-extension-directive](https://www.npmjs.com/package/micromark-extension-directive) | `3.0.2` | MIT | [Notice 052](#notice-052) |
+| [micromark-extension-frontmatter](https://www.npmjs.com/package/micromark-extension-frontmatter) | `2.0.0` | MIT | [Notice 052](#notice-052) |
+| [micromark-extension-gfm-strikethrough](https://www.npmjs.com/package/micromark-extension-gfm-strikethrough) | `2.1.0` | MIT | [Notice 052](#notice-052) |
+| [micromark-extension-gfm-table](https://www.npmjs.com/package/micromark-extension-gfm-table) | `2.1.1` | MIT | [Notice 044](#notice-044) |
+| [micromark-extension-gfm-task-list-item](https://www.npmjs.com/package/micromark-extension-gfm-task-list-item) | `2.1.0` | MIT | [Notice 052](#notice-052) |
+| [micromark-extension-highlight-mark](https://www.npmjs.com/package/micromark-extension-highlight-mark) | `1.2.0` | MIT | [Notice 074](#notice-074) |
+| [micromark-extension-mdx-expression](https://www.npmjs.com/package/micromark-extension-mdx-expression) | `3.0.1` | MIT | [Notice 044](#notice-044) |
+| [micromark-extension-mdx-jsx](https://www.npmjs.com/package/micromark-extension-mdx-jsx) | `3.0.2` | MIT | [Notice 052](#notice-052) |
+| [micromark-extension-mdx-md](https://www.npmjs.com/package/micromark-extension-mdx-md) | `2.0.0` | MIT | [Notice 052](#notice-052) |
+| [micromark-extension-mdxjs](https://www.npmjs.com/package/micromark-extension-mdxjs) | `3.0.0` | MIT | [Notice 052](#notice-052) |
+| [micromark-extension-mdxjs-esm](https://www.npmjs.com/package/micromark-extension-mdxjs-esm) | `3.0.0` | MIT | [Notice 052](#notice-052) |
+| [micromark-factory-destination](https://www.npmjs.com/package/micromark-factory-destination) | `2.0.1` | MIT | [Notice 044](#notice-044) |
+| [micromark-factory-label](https://www.npmjs.com/package/micromark-factory-label) | `2.0.1` | MIT | [Notice 044](#notice-044) |
+| [micromark-factory-mdx-expression](https://www.npmjs.com/package/micromark-factory-mdx-expression) | `2.0.3` | MIT | [Notice 044](#notice-044) |
+| [micromark-factory-space](https://www.npmjs.com/package/micromark-factory-space) | `2.0.1` | MIT | [Notice 044](#notice-044) |
+| [micromark-factory-title](https://www.npmjs.com/package/micromark-factory-title) | `2.0.1` | MIT | [Notice 044](#notice-044) |
+| [micromark-factory-whitespace](https://www.npmjs.com/package/micromark-factory-whitespace) | `2.0.1` | MIT | [Notice 044](#notice-044) |
+| [micromark-util-character](https://www.npmjs.com/package/micromark-util-character) | `2.1.1` | MIT | [Notice 044](#notice-044) |
+| [micromark-util-chunked](https://www.npmjs.com/package/micromark-util-chunked) | `2.0.1` | MIT | [Notice 044](#notice-044) |
+| [micromark-util-classify-character](https://www.npmjs.com/package/micromark-util-classify-character) | `2.0.1` | MIT | [Notice 044](#notice-044) |
+| [micromark-util-combine-extensions](https://www.npmjs.com/package/micromark-util-combine-extensions) | `2.0.1` | MIT | [Notice 044](#notice-044) |
+| [micromark-util-decode-numeric-character-reference](https://www.npmjs.com/package/micromark-util-decode-numeric-character-reference) | `2.0.2` | MIT | [Notice 044](#notice-044) |
+| [micromark-util-decode-string](https://www.npmjs.com/package/micromark-util-decode-string) | `2.0.1` | MIT | [Notice 044](#notice-044) |
+| [micromark-util-encode](https://www.npmjs.com/package/micromark-util-encode) | `2.0.1` | MIT | [Notice 044](#notice-044) |
+| [micromark-util-events-to-acorn](https://www.npmjs.com/package/micromark-util-events-to-acorn) | `2.0.3` | MIT | [Notice 044](#notice-044) |
+| [micromark-util-html-tag-name](https://www.npmjs.com/package/micromark-util-html-tag-name) | `2.0.1` | MIT | [Notice 044](#notice-044) |
+| [micromark-util-normalize-identifier](https://www.npmjs.com/package/micromark-util-normalize-identifier) | `2.0.1` | MIT | [Notice 044](#notice-044) |
+| [micromark-util-resolve-all](https://www.npmjs.com/package/micromark-util-resolve-all) | `2.0.1` | MIT | [Notice 044](#notice-044) |
+| [micromark-util-sanitize-uri](https://www.npmjs.com/package/micromark-util-sanitize-uri) | `2.0.1` | MIT | [Notice 044](#notice-044) |
+| [micromark-util-subtokenize](https://www.npmjs.com/package/micromark-util-subtokenize) | `2.1.0` | MIT | [Notice 044](#notice-044) |
+| [micromark-util-symbol](https://www.npmjs.com/package/micromark-util-symbol) | `2.0.1` | MIT | [Notice 044](#notice-044) |
+| [micromark-util-types](https://www.npmjs.com/package/micromark-util-types) | `2.0.2` | MIT | [Notice 044](#notice-044) |
+| [mri](https://www.npmjs.com/package/mri) | `1.2.0` | MIT | [Notice 045](#notice-045) |
+| [ms](https://www.npmjs.com/package/ms) | `2.1.3` | MIT | [Notice 076](#notice-076) |
+| [node-addon-api](https://www.npmjs.com/package/node-addon-api) | `7.1.1` | MIT | [Notice 077](#notice-077) |
+| [node-addon-api](https://www.npmjs.com/package/node-addon-api) | `8.9.1` | MIT | [Notice 077](#notice-077) |
+| [node-pty](https://www.npmjs.com/package/node-pty) | `1.1.0` | MIT | [Notice 078](#notice-078) |
+| [object-assign](https://www.npmjs.com/package/object-assign) | `4.1.1` | MIT | [Notice 079](#notice-079) |
+| [parse-entities](https://www.npmjs.com/package/parse-entities) | `4.0.2` | MIT | [Notice 080](#notice-080) |
+| [prop-types](https://www.npmjs.com/package/prop-types) | `15.8.1` | MIT | [Notice 081](#notice-081) |
 | [radix-ui](https://www.npmjs.com/package/radix-ui) | `1.6.7` | MIT | [Notice 019](#notice-019) |
 | [react](https://www.npmjs.com/package/react) | `19.2.8` | MIT | [Notice 009](#notice-009) |
 | [react-dom](https://www.npmjs.com/package/react-dom) | `19.2.8` | MIT | [Notice 009](#notice-009) |
-| [react-hook-form](https://www.npmjs.com/package/react-hook-form) | `7.85.0` | MIT | [Notice 080](#notice-080) |
-| [react-i18next](https://www.npmjs.com/package/react-i18next) | `17.0.11` | MIT | [Notice 081](#notice-081) |
-| [react-is](https://www.npmjs.com/package/react-is) | `16.13.1` | MIT | [Notice 082](#notice-082) |
-| [react-is](https://www.npmjs.com/package/react-is) | `17.0.2` | MIT | [Notice 082](#notice-082) |
+| [react-hook-form](https://www.npmjs.com/package/react-hook-form) | `7.85.0` | MIT | [Notice 082](#notice-082) |
+| [react-i18next](https://www.npmjs.com/package/react-i18next) | `17.0.11` | MIT | [Notice 083](#notice-083) |
+| [react-is](https://www.npmjs.com/package/react-is) | `16.13.1` | MIT | [Notice 084](#notice-084) |
+| [react-is](https://www.npmjs.com/package/react-is) | `17.0.2` | MIT | [Notice 084](#notice-084) |
 | [react-remove-scroll](https://www.npmjs.com/package/react-remove-scroll) | `2.7.2` | MIT | [Notice 027](#notice-027) |
-| [react-remove-scroll-bar](https://www.npmjs.com/package/react-remove-scroll-bar) | `2.3.8` | MIT | [Notice 083](#notice-083) |
+| [react-remove-scroll-bar](https://www.npmjs.com/package/react-remove-scroll-bar) | `2.3.8` | MIT | [Notice 085](#notice-085) |
 | [react-style-singleton](https://www.npmjs.com/package/react-style-singleton) | `2.2.3` | MIT | [Notice 027](#notice-027) |
-| [sade](https://www.npmjs.com/package/sade) | `1.8.1` | MIT | [Notice 084](#notice-084) |
-| [sax](https://www.npmjs.com/package/sax) | `1.6.1` | BlueOak-1.0.0 | [Notice 085](#notice-085) |
+| [sade](https://www.npmjs.com/package/sade) | `1.8.1` | MIT | [Notice 086](#notice-086) |
+| [sax](https://www.npmjs.com/package/sax) | `1.6.1` | BlueOak-1.0.0 | [Notice 087](#notice-087) |
 | [scheduler](https://www.npmjs.com/package/scheduler) | `0.27.0` | MIT | [Notice 009](#notice-009) |
-| [semver](https://www.npmjs.com/package/semver) | `7.7.4` | ISC | [Notice 086](#notice-086) |
-| [shadcn](https://www.npmjs.com/package/shadcn) | `4.16.2` | MIT | [Notice 087](#notice-087) |
-| [sonner](https://www.npmjs.com/package/sonner) | `2.0.7` | MIT | [Notice 088](#notice-088) |
-| [stringify-entities](https://www.npmjs.com/package/stringify-entities) | `4.0.4` | MIT | [Notice 069](#notice-069) |
-| [style-mod](https://www.npmjs.com/package/style-mod) | `4.1.3` | MIT | [Notice 089](#notice-089) |
-| [tabbable](https://www.npmjs.com/package/tabbable) | `6.5.0` | MIT | [Notice 090](#notice-090) |
-| [tailwind-merge](https://www.npmjs.com/package/tailwind-merge) | `3.6.0` | MIT | [Notice 091](#notice-091) |
-| [tailwindcss](https://www.npmjs.com/package/tailwindcss) | `4.3.3` | MIT | [Notice 092](#notice-092) |
-| [tiny-typed-emitter](https://www.npmjs.com/package/tiny-typed-emitter) | `2.1.0` | MIT | [Notice 093](#notice-093) |
-| [tslib](https://www.npmjs.com/package/tslib) | `2.8.1` | 0BSD | [Notice 094](#notice-094) |
-| [tw-animate-css](https://www.npmjs.com/package/tw-animate-css) | `1.4.0` | MIT | [Notice 095](#notice-095) |
-| [unidiff](https://www.npmjs.com/package/unidiff) | `1.0.4` | MIT | [Notice 096](#notice-096) |
-| [unist-util-is](https://www.npmjs.com/package/unist-util-is) | `6.0.1` | MIT | [Notice 097](#notice-097) |
-| [unist-util-position-from-estree](https://www.npmjs.com/package/unist-util-position-from-estree) | `2.0.0` | MIT | [Notice 052](#notice-052) |
-| [unist-util-stringify-position](https://www.npmjs.com/package/unist-util-stringify-position) | `4.0.0` | MIT | [Notice 060](#notice-060) |
+| [semver](https://www.npmjs.com/package/semver) | `7.7.4` | ISC | [Notice 088](#notice-088) |
+| [shadcn](https://www.npmjs.com/package/shadcn) | `4.16.2` | MIT | [Notice 089](#notice-089) |
+| [sonner](https://www.npmjs.com/package/sonner) | `2.0.7` | MIT | [Notice 090](#notice-090) |
+| [stringify-entities](https://www.npmjs.com/package/stringify-entities) | `4.0.4` | MIT | [Notice 070](#notice-070) |
+| [style-mod](https://www.npmjs.com/package/style-mod) | `4.1.3` | MIT | [Notice 091](#notice-091) |
+| [tabbable](https://www.npmjs.com/package/tabbable) | `6.5.0` | MIT | [Notice 092](#notice-092) |
+| [tailwind-merge](https://www.npmjs.com/package/tailwind-merge) | `3.6.0` | MIT | [Notice 093](#notice-093) |
+| [tailwindcss](https://www.npmjs.com/package/tailwindcss) | `4.3.3` | MIT | [Notice 094](#notice-094) |
+| [tiny-typed-emitter](https://www.npmjs.com/package/tiny-typed-emitter) | `2.1.0` | MIT | [Notice 095](#notice-095) |
+| [tslib](https://www.npmjs.com/package/tslib) | `2.8.1` | 0BSD | [Notice 096](#notice-096) |
+| [tw-animate-css](https://www.npmjs.com/package/tw-animate-css) | `1.4.0` | MIT | [Notice 097](#notice-097) |
+| [unidiff](https://www.npmjs.com/package/unidiff) | `1.0.4` | MIT | [Notice 098](#notice-098) |
+| [unist-util-is](https://www.npmjs.com/package/unist-util-is) | `6.0.1` | MIT | [Notice 099](#notice-099) |
+| [unist-util-position-from-estree](https://www.npmjs.com/package/unist-util-position-from-estree) | `2.0.0` | MIT | [Notice 053](#notice-053) |
+| [unist-util-stringify-position](https://www.npmjs.com/package/unist-util-stringify-position) | `4.0.0` | MIT | [Notice 061](#notice-061) |
 | [unist-util-visit](https://www.npmjs.com/package/unist-util-visit) | `5.1.0` | MIT | [Notice 030](#notice-030) |
-| [unist-util-visit-parents](https://www.npmjs.com/package/unist-util-visit-parents) | `6.0.2` | MIT | [Notice 060](#notice-060) |
-| [universalify](https://www.npmjs.com/package/universalify) | `2.0.1` | MIT | [Notice 098](#notice-098) |
+| [unist-util-visit-parents](https://www.npmjs.com/package/unist-util-visit-parents) | `6.0.2` | MIT | [Notice 061](#notice-061) |
+| [universalify](https://www.npmjs.com/package/universalify) | `2.0.1` | MIT | [Notice 100](#notice-100) |
 | [use-callback-ref](https://www.npmjs.com/package/use-callback-ref) | `1.3.3` | MIT | [Notice 027](#notice-027) |
 | [use-sidecar](https://www.npmjs.com/package/use-sidecar) | `1.1.3` | MIT | [Notice 027](#notice-027) |
 | [use-sync-external-store](https://www.npmjs.com/package/use-sync-external-store) | `1.6.0` | MIT | [Notice 009](#notice-009) |
-| [uvu](https://www.npmjs.com/package/uvu) | `0.5.6` | MIT | [Notice 044](#notice-044) |
-| [vfile-message](https://www.npmjs.com/package/vfile-message) | `4.0.3` | MIT | [Notice 043](#notice-043) |
-| [w3c-keyname](https://www.npmjs.com/package/w3c-keyname) | `2.2.8` | MIT | [Notice 099](#notice-099) |
-| [yjs](https://www.npmjs.com/package/yjs) | `13.6.32` | MIT | [Notice 100](#notice-100) |
-| [zustand](https://www.npmjs.com/package/zustand) | `4.5.7` | MIT | [Notice 101](#notice-101) |
-| [zwitch](https://www.npmjs.com/package/zwitch) | `2.0.4` | MIT | [Notice 060](#notice-060) |
+| [uvu](https://www.npmjs.com/package/uvu) | `0.5.6` | MIT | [Notice 045](#notice-045) |
+| [vfile-message](https://www.npmjs.com/package/vfile-message) | `4.0.3` | MIT | [Notice 044](#notice-044) |
+| [w3c-keyname](https://www.npmjs.com/package/w3c-keyname) | `2.2.8` | MIT | [Notice 101](#notice-101) |
+| [yjs](https://www.npmjs.com/package/yjs) | `13.6.32` | MIT | [Notice 102](#notice-102) |
+| [zustand](https://www.npmjs.com/package/zustand) | `4.5.7` | MIT | [Notice 103](#notice-103) |
+| [zwitch](https://www.npmjs.com/package/zwitch) | `2.0.4` | MIT | [Notice 061](#notice-061) |
 
 ## License and notice texts
 
@@ -1931,6 +1933,36 @@ THE SOFTWARE.
 
 ### Notice 039
 
+Applies to: `cron-parser@5.10.1`
+
+Declared license: MIT
+
+```text
+The MIT License (MIT)
+
+Copyright (c) 2014-2023 Harri Siirak
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### Notice 040
+
 Applies to: `d3-color@3.1.0`
 
 Declared license: ISC
@@ -1951,7 +1983,7 @@ TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
 THIS SOFTWARE.
 ```
 
-### Notice 040
+### Notice 041
 
 Applies to: `d3-dispatch@3.0.1`, `d3-drag@3.0.0`, `d3-interpolate@3.0.1`, `d3-selection@3.0.0`, `d3-timer@3.0.1`, `d3-transition@3.0.1`, `d3-zoom@3.0.0`
 
@@ -1973,7 +2005,7 @@ TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
 THIS SOFTWARE.
 ```
 
-### Notice 041
+### Notice 042
 
 Applies to: `d3-ease@3.0.1`
 
@@ -2010,7 +2042,7 @@ ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-### Notice 042
+### Notice 043
 
 Applies to: `debug@4.4.3`
 
@@ -2038,7 +2070,7 @@ WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN 
 SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-### Notice 043
+### Notice 044
 
 Applies to: `decode-named-character-reference@1.3.0`, `markdown-table@3.0.4`, `mdast-util-directive@3.1.0`, `mdast-util-from-markdown@2.0.3`, `mdast-util-to-markdown@2.1.2`, `micromark@4.0.2`, `micromark-core-commonmark@2.0.3`, `micromark-extension-gfm-table@2.1.1`, `micromark-extension-mdx-expression@3.0.1`, `micromark-factory-destination@2.0.1`, `micromark-factory-label@2.0.1`, `micromark-factory-mdx-expression@2.0.3`, `micromark-factory-space@2.0.1`, `micromark-factory-title@2.0.1`, `micromark-factory-whitespace@2.0.1`, `micromark-util-character@2.1.1`, `micromark-util-chunked@2.0.1`, `micromark-util-classify-character@2.0.1`, `micromark-util-combine-extensions@2.0.1`, `micromark-util-decode-numeric-character-reference@2.0.2`, `micromark-util-decode-string@2.0.1`, `micromark-util-encode@2.0.1`, `micromark-util-events-to-acorn@2.0.3`, `micromark-util-html-tag-name@2.0.1`, `micromark-util-normalize-identifier@2.0.1`, `micromark-util-resolve-all@2.0.1`, `micromark-util-sanitize-uri@2.0.1`, `micromark-util-subtokenize@2.1.0`, `micromark-util-symbol@2.0.1`, `micromark-util-types@2.0.2`, `vfile-message@4.0.3`
 
@@ -2069,7 +2101,7 @@ TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-### Notice 044
+### Notice 045
 
 Applies to: `dequal@2.0.3`, `kleur@4.1.5`, `mri@1.2.0`, `uvu@0.5.6`
 
@@ -2099,7 +2131,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-### Notice 045
+### Notice 046
 
 Applies to: `detect-node-es@1.1.0`
 
@@ -2129,7 +2161,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Notice 046
+### Notice 047
 
 Applies to: `devlop@1.1.0`
 
@@ -2160,7 +2192,7 @@ TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-### Notice 047
+### Notice 048
 
 Applies to: `diff@5.2.2`
 
@@ -2198,7 +2230,7 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-### Notice 048
+### Notice 049
 
 Applies to: `downshift@7.6.2`
 
@@ -2227,7 +2259,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Notice 049
+### Notice 050
 
 Applies to: `electron@43.3.0`
 
@@ -2257,7 +2289,7 @@ OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-### Notice 050
+### Notice 051
 
 Applies to: `escape-string-regexp@5.0.0`
 
@@ -2275,7 +2307,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-### Notice 051
+### Notice 052
 
 Applies to: `estree-util-is-identifier-name@3.0.0`, `mdast-util-frontmatter@2.0.1`, `mdast-util-gfm-strikethrough@2.0.0`, `mdast-util-gfm-table@2.0.0`, `mdast-util-gfm-task-list-item@2.0.0`, `mdast-util-mdx@3.0.0`, `mdast-util-mdx-expression@2.0.1`, `mdast-util-mdx-jsx@3.2.0`, `mdast-util-mdxjs-esm@2.0.1`, `micromark-extension-directive@3.0.2`, `micromark-extension-frontmatter@2.0.0`, `micromark-extension-gfm-strikethrough@2.1.0`, `micromark-extension-gfm-task-list-item@2.1.0`, `micromark-extension-mdx-jsx@3.0.2`, `micromark-extension-mdx-md@2.0.0`, `micromark-extension-mdxjs@3.0.0`, `micromark-extension-mdxjs-esm@3.0.0`
 
@@ -2306,7 +2338,7 @@ TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-### Notice 052
+### Notice 053
 
 Applies to: `estree-util-visit@2.0.0`, `unist-util-position-from-estree@2.0.0`
 
@@ -2337,7 +2369,7 @@ TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-### Notice 053
+### Notice 054
 
 Applies to: `font-list@2.1.0`
 
@@ -2367,7 +2399,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Notice 054
+### Notice 055
 
 Applies to: `format@0.2.2`
 
@@ -2397,7 +2429,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-### Notice 055
+### Notice 056
 
 Applies to: `fs-extra@10.1.0`
 
@@ -2421,7 +2453,7 @@ OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHE
  ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-### Notice 056
+### Notice 057
 
 Applies to: `get-nonce@1.0.1`
 
@@ -2451,7 +2483,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Notice 057
+### Notice 058
 
 Applies to: `graceful-fs@4.2.11`
 
@@ -2475,7 +2507,7 @@ ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
 IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 ```
 
-### Notice 058
+### Notice 059
 
 Applies to: `html-parse-stringify@4.0.1`
 
@@ -2506,7 +2538,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Notice 059
+### Notice 060
 
 Applies to: `i18next@26.3.6`
 
@@ -2536,7 +2568,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Notice 060
+### Notice 061
 
 Applies to: `is-alphabetical@2.0.1`, `is-alphanumerical@2.0.1`, `is-decimal@2.0.1`, `is-hexadecimal@2.0.1`, `unist-util-stringify-position@4.0.0`, `unist-util-visit-parents@6.0.2`, `zwitch@2.0.4`
 
@@ -2567,7 +2599,7 @@ TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-### Notice 061
+### Notice 062
 
 Applies to: `isomorphic.js@0.2.5`
 
@@ -2597,7 +2629,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Notice 062
+### Notice 063
 
 Applies to: `js-tokens@4.0.0`
 
@@ -2627,7 +2659,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-### Notice 063
+### Notice 064
 
 Applies to: `js-yaml@4.3.1`
 
@@ -2657,7 +2689,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-### Notice 064
+### Notice 065
 
 Applies to: `jsonfile@6.2.1`
 
@@ -2681,7 +2713,7 @@ OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHE
  ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-### Notice 065
+### Notice 066
 
 Applies to: `lazy-val@1.0.5`
 
@@ -2711,7 +2743,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Notice 066
+### Notice 067
 
 Applies to: `lib0@0.2.117`
 
@@ -2741,7 +2773,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Notice 067
+### Notice 068
 
 Applies to: `lodash.escaperegexp@4.1.2`
 
@@ -2797,7 +2829,7 @@ licenses; we recommend you read them, as their terms may differ from the
 terms above.
 ```
 
-### Notice 068
+### Notice 069
 
 Applies to: `lodash.isequal@4.5.0`
 
@@ -2853,7 +2885,7 @@ licenses; we recommend you read them, as their terms may differ from the
 terms above.
 ```
 
-### Notice 069
+### Notice 070
 
 Applies to: `longest-streak@3.1.0`, `stringify-entities@4.0.4`
 
@@ -2884,7 +2916,7 @@ TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-### Notice 070
+### Notice 071
 
 Applies to: `loose-envify@1.4.0`
 
@@ -2914,7 +2946,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-### Notice 071
+### Notice 072
 
 Applies to: `lucide-react@1.30.0`
 
@@ -2966,7 +2998,23 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Notice 072
+### Notice 073
+
+Applies to: `luxon@3.7.2`
+
+Declared license: MIT
+
+```text
+Copyright 2019 JS Foundation and other contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+```
+
+### Notice 074
 
 Applies to: `mdast-util-highlight-mark@1.2.2`, `micromark-extension-highlight-mark@1.2.0`
 
@@ -2996,7 +3044,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Notice 073
+### Notice 075
 
 Applies to: `mdast-util-phrasing@4.1.0`
 
@@ -3028,7 +3076,7 @@ TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-### Notice 074
+### Notice 076
 
 Applies to: `ms@2.1.3`
 
@@ -3058,7 +3106,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Notice 075
+### Notice 077
 
 Applies to: `node-addon-api@7.1.1`, `node-addon-api@8.9.1`
 
@@ -3076,7 +3124,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-### Notice 076
+### Notice 078
 
 Applies to: `node-pty@1.1.0`
 
@@ -3180,7 +3228,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Notice 077
+### Notice 079
 
 Applies to: `object-assign@4.1.1`
 
@@ -3210,7 +3258,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-### Notice 078
+### Notice 080
 
 Applies to: `parse-entities@4.0.2`
 
@@ -3241,7 +3289,7 @@ TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-### Notice 079
+### Notice 081
 
 Applies to: `prop-types@15.8.1`
 
@@ -3271,7 +3319,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Notice 080
+### Notice 082
 
 Applies to: `react-hook-form@7.85.0`
 
@@ -3301,7 +3349,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Notice 081
+### Notice 083
 
 Applies to: `react-i18next@17.0.11`
 
@@ -3331,7 +3379,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Notice 082
+### Notice 084
 
 Applies to: `react-is@16.13.1`, `react-is@17.0.2`
 
@@ -3361,7 +3409,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Notice 083
+### Notice 085
 
 Applies to: `react-remove-scroll-bar@2.3.8`
 
@@ -3391,7 +3439,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Notice 084
+### Notice 086
 
 Applies to: `sade@1.8.1`
 
@@ -3421,7 +3469,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-### Notice 085
+### Notice 087
 
 Applies to: `sax@1.6.1`
 
@@ -3485,7 +3533,7 @@ will be liable to anyone for any damages related to this
 software or this license, under any kind of legal claim.***
 ```
 
-### Notice 086
+### Notice 088
 
 Applies to: `semver@7.7.4`
 
@@ -3509,7 +3557,7 @@ ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
 IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 ```
 
-### Notice 087
+### Notice 089
 
 Applies to: `shadcn@4.16.2`
 
@@ -3539,7 +3587,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Notice 088
+### Notice 090
 
 Applies to: `sonner@2.0.7`
 
@@ -3569,7 +3617,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Notice 089
+### Notice 091
 
 Applies to: `style-mod@4.1.3`
 
@@ -3597,7 +3645,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-### Notice 090
+### Notice 092
 
 Applies to: `tabbable@6.5.0`
 
@@ -3627,7 +3675,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Notice 091
+### Notice 093
 
 Applies to: `tailwind-merge@3.6.0`
 
@@ -3657,7 +3705,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Notice 092
+### Notice 094
 
 Applies to: `tailwindcss@4.3.3`
 
@@ -3687,7 +3735,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Notice 093
+### Notice 095
 
 Applies to: `tiny-typed-emitter@2.1.0`
 
@@ -3717,7 +3765,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Notice 094
+### Notice 096
 
 Applies to: `tslib@2.8.1`
 
@@ -3738,7 +3786,7 @@ OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
 PERFORMANCE OF THIS SOFTWARE.
 ```
 
-### Notice 095
+### Notice 097
 
 Applies to: `tw-animate-css@1.4.0`
 
@@ -3768,7 +3816,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Notice 096
+### Notice 098
 
 Applies to: `unidiff@1.0.4`
 
@@ -3792,7 +3840,7 @@ ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 ```
 
-### Notice 097
+### Notice 099
 
 Applies to: `unist-util-is@6.0.1`
 
@@ -3823,7 +3871,7 @@ TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-### Notice 098
+### Notice 100
 
 Applies to: `universalify@2.0.1`
 
@@ -3852,7 +3900,7 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-### Notice 099
+### Notice 101
 
 Applies to: `w3c-keyname@2.2.8`
 
@@ -3880,7 +3928,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-### Notice 100
+### Notice 102
 
 Applies to: `yjs@13.6.32`
 
@@ -3912,7 +3960,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### Notice 101
+### Notice 103
 
 Applies to: `zustand@4.5.7`
 

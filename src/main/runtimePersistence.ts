@@ -15,6 +15,11 @@ import type {
   WorkflowRuntimeTaskSnapshot
 } from '../shared/workflowRuntime'
 import type { NodeRunStatus, WorkflowDefinition } from '../shared/workflow'
+import {
+  parseTerminalAutoRetryState,
+  parseWorkflowAutoRetryContext,
+  type TerminalAutoRetryReason
+} from '../shared/terminalAutoRetry'
 import type { TerminalTranscriptSnapshot } from '../shared/terminalBuffer'
 import { getAutomaticTaskTitle } from '../shared/taskTitle'
 import {
@@ -265,18 +270,20 @@ export function reconcileRecoverableRuntimeState(
   normalizeTerminalSessions(db, runningSessions, options)
 
   const runningNodeRuns = db.prepare('select * from node_runs where status = ?').all('running') as NodeRunRow[]
-  const updateNodeRun = db.prepare('update node_runs set status = ?, ended_at = ? where id = ?')
+  const updateNodeRun = db.prepare('update node_runs set status = ?, ended_at = ?, output_json = ? where id = ?')
   const now = new Date().toISOString()
   for (const nodeRun of runningNodeRuns) {
     const output = parseJson<Record<string, unknown>>(nodeRun.output_json, {})
     const sessionId = typeof output.sessionId === 'string' ? output.sessionId : undefined
     if (!sessionId) {
-      updateNodeRun.run('interrupted', now, nodeRun.id)
+      updateNodeRun.run('interrupted', now, blockInFlightAutoRetry(output), nodeRun.id)
       continue
     }
     const session = db.prepare('select id, status from terminal_sessions where id = ?').get(sessionId) as
       Pick<TerminalSessionRecord, 'id' | 'status'> | undefined
-    if (!session || session.status !== 'running') updateNodeRun.run('interrupted', now, nodeRun.id)
+    if (!session || session.status !== 'running') {
+      updateNodeRun.run('interrupted', now, blockInFlightAutoRetry(output), nodeRun.id)
+    }
   }
 
   const runs = db
@@ -296,18 +303,20 @@ function reconcileTaskRuntimeState(db: AppDatabase, taskId: string): void {
   const runningNodeRuns = db
     .prepare('select * from node_runs where status = ? and run_id in (select id from workflow_runs where task_id = ?)')
     .all('running', taskId) as NodeRunRow[]
-  const updateNodeRun = db.prepare('update node_runs set status = ?, ended_at = ? where id = ?')
+  const updateNodeRun = db.prepare('update node_runs set status = ?, ended_at = ?, output_json = ? where id = ?')
   const now = new Date().toISOString()
   for (const nodeRun of runningNodeRuns) {
     const output = parseJson<Record<string, unknown>>(nodeRun.output_json, {})
     const sessionId = typeof output.sessionId === 'string' ? output.sessionId : undefined
     if (!sessionId) {
-      updateNodeRun.run('interrupted', now, nodeRun.id)
+      updateNodeRun.run('interrupted', now, blockInFlightAutoRetry(output), nodeRun.id)
       continue
     }
     const session = db.prepare('select id, status from terminal_sessions where id = ?').get(sessionId) as
       Pick<TerminalSessionRecord, 'id' | 'status'> | undefined
-    if (!session || session.status !== 'running') updateNodeRun.run('interrupted', now, nodeRun.id)
+    if (!session || session.status !== 'running') {
+      updateNodeRun.run('interrupted', now, blockInFlightAutoRetry(output), nodeRun.id)
+    }
   }
 
   const runs = db
@@ -344,6 +353,7 @@ function updateWorkflowStatuses(db: AppDatabase, runs: WorkflowRunRow[], now: st
 function restoreStateFromRun(db: AppDatabase, run: WorkflowRunRow): WorkflowRuntimeState {
   const context = parseJson<Partial<WorkflowRuntimeState>>(run.context_json, {})
   const executionContext = parseWorkflowExecutionContext(context.executionContext)
+  const autoRetryContext = parseWorkflowAutoRetryContext(context.autoRetryContext)
   const nodeRows = db.prepare('select * from node_runs where run_id = ?').all(run.id) as NodeRunRow[]
   const nodeRuns = restoreNodeRuns(nodeRows, context.nodeRuns)
   const status = run.status as WorkflowRuntimeStatus
@@ -376,6 +386,7 @@ function restoreStateFromRun(db: AppDatabase, run: WorkflowRunRow): WorkflowRunt
     projectId: context.projectId ?? task?.project_id ?? '',
     projectDir: context.projectDir ?? '',
     ...(executionContext ? { executionContext } : {}),
+    ...(autoRetryContext ? { autoRetryContext } : {}),
     workflowId: run.workflow_id,
     status,
     currentNodeId,
@@ -429,10 +440,112 @@ function restoreNodeRuns(
       compactNodeRun({
         nodeId: row.node_id,
         status: row.status as NodeRunStatus,
-        ...output
+        ...sanitizeStoredNodeRunOutput(output, row.status)
       })
     ]
   }))
+}
+
+const STORED_FAILURE_SOURCES = ['terminal', 'start-hook', 'end-hook', 'runtime'] as const
+
+/**
+ * Validate retry-relevant fields read from `node_runs.output_json`. Corrupt or
+ * unknown data never reaches the scheduler: waiting states on non-failed
+ * nodes are demoted to blocked, and an automatic execution recorded as
+ * running is treated as interrupted by the crash.
+ */
+function sanitizeStoredNodeRunOutput(
+  output: Omit<WorkflowRuntimeNodeRun, 'nodeId' | 'status'>,
+  rowStatus: string
+): Omit<WorkflowRuntimeNodeRun, 'nodeId' | 'status'> {
+  const autoRetry = parseTerminalAutoRetryState(output.autoRetry)
+  const failureSource = STORED_FAILURE_SOURCES.includes(output.failureSource as (typeof STORED_FAILURE_SOURCES)[number])
+    ? output.failureSource
+    : undefined
+  if (!autoRetry) {
+    return { ...output, failureSource, autoRetry: undefined }
+  }
+  if (autoRetry.phase === 'waiting' && rowStatus !== 'failed') {
+    return {
+      ...output,
+      failureSource,
+      autoRetry: {
+        ...autoRetry,
+        phase: 'blocked',
+        reason: 'invalid-state',
+        scheduleId: undefined,
+        nextRetryAt: undefined
+      }
+    }
+  }
+  if (autoRetry.phase === 'running') {
+    return {
+      ...output,
+      failureSource,
+      autoRetry: {
+        ...autoRetry,
+        phase: 'blocked',
+        reason: 'interrupted'
+      }
+    }
+  }
+  return { ...output, failureSource, autoRetry }
+}
+
+/**
+ * When a `running` node run is reconciled to `interrupted`, an automatic
+ * execution recorded as in-flight must be blocked rather than resumed, since
+ * whether the command already ran cannot be determined.
+ */
+function blockInFlightAutoRetry(output: Record<string, unknown>): string {
+  const autoRetry = parseTerminalAutoRetryState(output.autoRetry)
+  if (!autoRetry || autoRetry.phase !== 'running') return JSON.stringify(output)
+  return JSON.stringify({
+    ...output,
+    autoRetry: {
+      ...autoRetry,
+      phase: 'blocked',
+      reason: 'interrupted'
+    }
+  })
+}
+
+/**
+ * Cancel every persisted waiting automatic-retry plan of a task directly in
+ * storage. Used by user-initiated stops and deletions when no runtime engine
+ * is loaded; the workflow definition is not required.
+ */
+export function cancelWaitingAutoRetriesInDb(
+  db: AppDatabase,
+  taskId: string,
+  reason: TerminalAutoRetryReason
+): number {
+  const rows = db.prepare(
+    `select node_runs.id, node_runs.status, node_runs.output_json
+    from node_runs
+    join workflow_runs on workflow_runs.id = node_runs.run_id
+    where workflow_runs.task_id = ?
+      and node_runs.run_id = (
+        select id from workflow_runs where task_id = ? order by updated_at desc limit 1
+      )`
+  ).all(taskId, taskId) as Array<{ id: string; status: string; output_json: string | null }>
+  const update = db.prepare('update node_runs set output_json = ? where id = ?')
+  let changed = 0
+  for (const row of rows) {
+    const output = parseJson<Record<string, unknown>>(row.output_json, {})
+    const autoRetry = parseTerminalAutoRetryState(output.autoRetry)
+    if (!autoRetry || autoRetry.phase !== 'waiting') continue
+    output.autoRetry = {
+      ...autoRetry,
+      phase: 'blocked',
+      reason,
+      scheduleId: undefined,
+      nextRetryAt: undefined
+    }
+    update.run(JSON.stringify(output), row.id)
+    changed += 1
+  }
+  return changed
 }
 
 function normalizeTerminalSessions(

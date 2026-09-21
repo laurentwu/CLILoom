@@ -4,6 +4,7 @@ import {
   dialog,
   ipcMain,
   Menu,
+  powerMonitor,
   screen,
   session,
   shell
@@ -249,6 +250,12 @@ function startDesktopApplication(): void {
       () => scheduleDatabaseMaintenance(),
       shellService
     )
+    void workflowRuntime.recoverAutoRetries().catch((error) => {
+      console.error('[WorkflowRuntimeService] automatic retry recovery failed:', error)
+    })
+    powerMonitor.on('resume', () => {
+      workflowRuntime.resumeAutoRetryScheduler()
+    })
     databaseMaintenanceScheduler = new IdleMaintenanceScheduler({
       idleDelayMs: DATABASE_MAINTENANCE_IDLE_DELAY_MS,
       retryDelayMs: DATABASE_MAINTENANCE_RETRY_DELAY_MS,
@@ -937,6 +944,11 @@ function registerIpc(): void {
     assertMainSender(event)
     return workflowRuntime.stop(taskId)
   })
+  ipcMain.handle('workflow:cancelTerminalAutoRetry', (event, request: unknown) => {
+    assertMainSender(event)
+    const parsed = parseCancelTerminalAutoRetryRequest(request)
+    return workflowRuntime.cancelTerminalAutoRetry(parsed)
+  })
   ipcMain.handle('workflow:restoreState', (event, taskId: string) => {
     assertMainSender(event)
     return workflowRuntime.restore(taskId)
@@ -1077,6 +1089,32 @@ function assertTerminalRetryRequest(sessionId: unknown, mode: unknown): asserts 
   if (mode !== 'workflow' && mode !== 'standalone') {
     throw new Error(t('errors:session.retryDataInvalid'))
   }
+}
+
+function parseCancelTerminalAutoRetryRequest(value: unknown): {
+  taskId: string
+  nodeId: string
+  runId: string
+  cycleId: string
+  scheduleId: string
+} {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error(t('errors:session.retryDataInvalid'))
+  }
+  const request = value as Record<string, unknown>
+  const taskId = requireRetryIdentity(request.taskId)
+  const nodeId = requireRetryIdentity(request.nodeId)
+  const runId = requireRetryIdentity(request.runId)
+  const cycleId = requireRetryIdentity(request.cycleId)
+  const scheduleId = requireRetryIdentity(request.scheduleId)
+  return { taskId, nodeId, runId, cycleId, scheduleId }
+}
+
+function requireRetryIdentity(value: unknown): string {
+  if (typeof value !== 'string' || !value || value.length > 512 || value.includes('\0')) {
+    throw new Error(t('errors:session.invalidId'))
+  }
+  return value
 }
 
 function assertAssistantSender(event: IpcSenderEvent): void {

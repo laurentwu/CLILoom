@@ -352,7 +352,21 @@ export default {
       joinIncomingEdgeIdsMustTargetJoin: '{{name}}: joinIncomingEdgeIds 只能引用指向当前 join 的入边',
       joinIncomingEdgeIdsSharedByMultipleJoins: '{{name}}: joinIncomingEdgeIds 不能被多个 join 节点重复引用',
       terminalCommandEmpty: '{{name}}: 终端命令不能为空',
-      workingDirEmpty: '{{name}}: 工作目录不能为空'
+      workingDirEmpty: '{{name}}: 工作目录不能为空',
+      autoRetryInvalid: '{{name}}: 自动重试配置无效',
+      autoRetryModeInvalid: '{{name}}: 自动重试模式必须是 recommended 或 cron',
+      autoRetryMaxRetriesInvalid: '{{name}}: 最大自动重试次数必须是 1～9999 的整数',
+      autoRetryCronInvalid: '{{name}}: 自动重试的 Cron 表达式无效'
+    },
+    cronSchedule: {
+      empty: 'Cron 表达式不能为空',
+      fieldCount: 'Cron 表达式必须恰好包含 {{count}} 段：分 时 日 月 周',
+      fieldSyntax: '{{field}} 字段仅支持数字、"*"、逗号、连字符和步长',
+      stepInvalid: '{{field}} 字段的步长无效（必须是正整数）',
+      rangeInvalid: '{{field}} 字段的范围颠倒',
+      rangeOutOfBounds: '{{field}} 字段必须在 {{min}}～{{max}} 之间',
+      noFutureDate: 'Cron 表达式不存在未来的触发时间',
+      invalid: 'Cron 表达式无效'
     }
   },
   workflow: {
@@ -542,7 +556,55 @@ export default {
       modeSplit: '并行分支 (split)',
       modeJoin: '汇合 (join)',
       joinIncoming: '需要等待的入边',
-      joinIncomingDescription: '将分支连接到此汇合节点后，选择该节点需要等待的入边。'
+      joinIncomingDescription: '将分支连接到此汇合节点后，选择该节点需要等待的入边。',
+      autoRetryTitle: '失败自动重试',
+      autoRetryEnable: '启用自动重试',
+      autoRetryMode: '重试频率',
+      autoRetryModeRecommended: '推荐设置',
+      autoRetryModeCron: '自定义 Cron',
+      autoRetryRecommendedHint: '每次失败后依次等待 1 → 2 → 5 → 10 → 30 分钟，之后保持每 30 分钟。',
+      autoRetryMaxRetries: '最多自动重试次数',
+      autoRetryUnlimited: '不限次数',
+      autoRetryCountHint: '不包含首次执行；手动重试开启新一轮计数。',
+      autoRetryCronLabel: 'Cron 表达式',
+      autoRetryCronAssistant: '表达式助手',
+      autoRetryCronAssistantAria: '打开 Cron 表达式助手',
+      autoRetryCronFieldsHint: '五段格式：分 时 日 月 周。日和周同时受限时，任一匹配即触发（Unix Cron 语义）。',
+      autoRetryCronPreviewTitle: '未来 5 次候选时间',
+      autoRetryCronPreviewTimezone: '时间以 {{timezone}} 显示；运行中的任务使用启动时记录的系统时区。',
+      autoRetryCronPreviewHint: '这些是日历触发候选，仅失败且等待中的节点才会执行。',
+      autoRetryCronInvalid: 'Cron 表达式无效',
+      autoRetryCronPreviewUnavailable: '暂无预览'
+    },
+    cronAssistant: {
+      title: '表达式助手',
+      description: '选择一种简单频率并应用到表达式输入框。输入框仍可直接编辑复杂表达式。',
+      mode: '频率',
+      modeEveryNMinutes: '每隔若干分钟',
+      modeHourly: '每小时',
+      modeDaily: '每天',
+      modeWeekly: '每周',
+      everyNMinutes: '间隔（分钟）',
+      minuteOfHour: '分钟',
+      timeOfDay: '时间',
+      weekdays: '星期',
+      weekdayShort: {
+        sun: '周日',
+        mon: '周一',
+        tue: '周二',
+        wed: '周三',
+        thu: '周四',
+        fri: '周五',
+        sat: '周六'
+      },
+      generated: '生成的表达式',
+      scheduleDescription: '说明',
+      preview: '未来 5 次候选时间',
+      previewTimezone: '时间以 {{timezone}} 显示',
+      unconvertible: '当前表达式不能转换为简单设置',
+      apply: '使用表达式',
+      applyUnavailable: '请选择有效的频率后再使用表达式',
+      noPreview: '暂无预览'
     },
     env: {
       title: '环境变量',
@@ -749,7 +811,38 @@ export default {
       retry: '重试节点'
     },
     status: {
-      withExitCode: '{{label}} · exit {{code}}'
+      withExitCode: '{{label}} · 退出码 {{code}}',
+      autoRetryWaiting: '失败 · 待自动重试',
+      autoRetryRunning: '运行中 · 自动重试',
+      autoRetryExhausted: '失败 · 自动重试已达上限（{{count}} 次）',
+      autoRetryCancelled: '失败 · 已取消自动重试',
+      autoRetryBlocked: '失败 · 无法继续自动重试'
+    },
+    autoRetry: {
+      blockedReason: {
+        'hook-failed': 'Hook 失败，本轮无法继续自动重试。',
+        'interrupted': '执行被中断，请手动重试以继续。',
+        'missing-session': '该节点没有可重试的终端会话记录。',
+        'missing-workflow': '任务使用的 workflow 版本已不可用。',
+        'invalid-state': '保存的重试状态无效。',
+        'schedule-error': '无法根据 Cron 表达式计算重试时间。',
+        'user-cancelled': '本轮自动重试已取消。',
+        'task-stopped': '任务已停止，自动重试已取消。'
+      },
+      nextRetry: '第 {{attempt}} 次自动重试将在 {{time}} 执行',
+      statsLimited: '已自动重试 {{started}} / {{max}} 次 · {{timezone}} · 还剩 {{remaining}}',
+      statsUnlimited: '已自动重试 {{started}} 次 · 不限次数 · {{timezone}}',
+      attemptsOnly: '已自动重试 {{started}} 次',
+      retryNow: '立即重试',
+      cancel: '取消自动重试',
+      preparing: '准备重试…',
+      running: '正在进行第 {{attempt}} 次自动重试',
+      cancelling: '正在取消…',
+      cancelled: '已取消自动重试，仍可手动重试。',
+      cancelledTitle: '已取消自动重试',
+      outcomeTitle: '无法继续自动重试',
+      exhausted: '自动重试已达上限（{{count}} 次）。手动重试将开启新一轮计数。',
+      nextAttemptLabel: '下次自动重试'
     },
     terminal: {
       selectSession: '选择终端会话',

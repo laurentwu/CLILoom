@@ -116,3 +116,56 @@ describe('DesignerNodeConfig', () => {
     }
   )
 })
+
+describe('DesignerNodeConfig auto-retry state isolation', () => {
+  it('resets the cron draft when switching between terminal nodes', () => {
+    const makeNode = (id: string, cron: string) => ({
+      id,
+      type: 'non-interactive-terminal' as const,
+      name: `Terminal ${id}`,
+      config: {
+        command: 'echo hi',
+        cwd: '/repo',
+        successExitCodes: [0],
+        autoRetry: { enabled: true, mode: 'cron' as const, cron, maxRetries: 5 }
+      },
+      x: 0,
+      y: 0
+    })
+    const onUpdateNode = vi.fn()
+    const view = render(
+      <I18nextProvider i18n={i18n}>
+        <DesignerNodeConfig
+          node={makeNode('node-a', '*/5 * * * *')}
+          nodes={[]}
+          edges={[]}
+          onUpdateNode={onUpdateNode}
+        />
+      </I18nextProvider>
+    )
+
+    const inputA = screen.getByLabelText('Cron expression') as HTMLInputElement
+    expect(inputA.value).toBe('*/5 * * * *')
+
+    view.rerender(
+      <I18nextProvider i18n={i18n}>
+        <DesignerNodeConfig
+          node={makeNode('node-b', '0 12 * * *')}
+          nodes={[]}
+          edges={[]}
+          onUpdateNode={onUpdateNode}
+        />
+      </I18nextProvider>
+    )
+
+    const inputB = screen.getByLabelText('Cron expression') as HTMLInputElement
+    expect(inputB.value).toBe('0 12 * * *')
+    // Editing node B cannot write node A's draft back into the config.
+    fireEvent.change(inputB, { target: { value: '*/15 * * * *' } })
+    expect(onUpdateNode).toHaveBeenLastCalledWith('node-b', expect.objectContaining({
+      config: expect.objectContaining({
+        autoRetry: expect.objectContaining({ cron: '*/15 * * * *' })
+      })
+    }))
+  })
+})
