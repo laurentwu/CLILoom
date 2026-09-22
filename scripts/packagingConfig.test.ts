@@ -78,6 +78,57 @@ function uuidV5(name: string, namespace: string): string {
 }
 
 describe('packaging configuration', () => {
+  it('keeps dependency declarations and locked packages consistent', () => {
+    const dependencyKinds = ['dependencies', 'devDependencies'] as const
+    const packageJson = JSON.parse(readProjectFile('package.json')) as {
+      dependencies: Record<string, string>
+      devDependencies: Record<string, string>
+    }
+    const packageLock = JSON.parse(readProjectFile('package-lock.json')) as {
+      packages: Record<string, {
+        version?: string
+        dependencies?: Record<string, string>
+        devDependencies?: Record<string, string>
+      }>
+    }
+    const requiredDependencies = {
+      dependencies: ['electron-updater'],
+      devDependencies: ['electron', 'electron-builder', 'js-yaml']
+    }
+
+    expect(packageLock.packages, 'package-lock.json packages').toBeTruthy()
+    const rootLockPackage = packageLock.packages['']
+    expect(rootLockPackage, 'package-lock.json packages[""]').toBeTruthy()
+
+    for (const kind of dependencyKinds) {
+      expect(packageJson[kind], `package.json ${kind}`).toBeTruthy()
+
+      for (const [name, declaration] of Object.entries(packageJson[kind])) {
+        const declarationPath = `package.json ${kind}.${name}`
+        expect(declaration, declarationPath).toBeTypeOf('string')
+        expect(declaration, declarationPath).toMatch(/\S/)
+        expect(rootLockPackage[kind]?.[name], `package-lock.json packages[""].${kind}.${name}`)
+          .toBe(declaration)
+
+        const lockKey = `node_modules/${name}`
+        const lockPath = `package-lock.json packages["${lockKey}"]`
+        const lockedPackage = packageLock.packages[lockKey]
+        expect(lockedPackage, lockPath).toBeTruthy()
+        expect(lockedPackage.version, `${lockPath}.version`).toBeTypeOf('string')
+        expect(lockedPackage.version, `${lockPath}.version`).toMatch(SEMVER_PATTERN)
+      }
+      expect(rootLockPackage[kind], `package-lock.json packages[""].${kind}`)
+        .toEqual(packageJson[kind])
+
+      const otherKind = kind === 'dependencies' ? 'devDependencies' : 'dependencies'
+      for (const name of requiredDependencies[kind]) {
+        expect(packageJson[kind], `package.json ${kind}.${name}`).toHaveProperty(name)
+        expect(packageJson[otherKind], `package.json ${otherKind}.${name}`)
+          .not.toHaveProperty(name)
+      }
+    }
+  })
+
   it('pins the public application identity across runtime and packaging metadata', () => {
     const builderConfig = readProjectFile('electron-builder.yml')
     const filesConfig = getTopLevelSection(builderConfig, 'files')
@@ -132,7 +183,12 @@ describe('packaging configuration', () => {
     expect(thirdPartyNotices).toContain('# Third-party notices')
     expect(thirdPartyNotices).toContain('@fontsource-variable/jetbrains-mono')
     expect(thirdPartyNotices).not.toContain('@fontsource-variable/noto-sans-sc')
-    expect(thirdPartyNotices).toContain('electron@43.3.0')
+    const electronLockPackage = packageLock.packages['node_modules/electron']
+    const electronLockPath = 'package-lock.json packages["node_modules/electron"]'
+    expect(electronLockPackage, electronLockPath).toBeTruthy()
+    expect(electronLockPackage.version, `${electronLockPath}.version`).toBeTypeOf('string')
+    expect(electronLockPackage.version, `${electronLockPath}.version`).toMatch(SEMVER_PATTERN)
+    expect(thirdPartyNotices).toContain(`\`electron@${electronLockPackage.version}\``)
     expect(packageJson.scripts['licenses:check'])
       .toBe('node scripts/generate-third-party-notices.cjs --check')
     expect(packageJson.scripts.prebuild).toContain('npm run licenses:check')
@@ -236,9 +292,6 @@ describe('packaging configuration', () => {
   it('uses a complete macOS icon set with correctly sized Retina frames', () => {
     const builderConfig = readProjectFile('electron-builder.yml')
     const macConfig = getTopLevelSection(builderConfig, 'mac')
-    const packageJson = JSON.parse(readProjectFile('package.json')) as {
-      devDependencies: Record<string, string>
-    }
     const icon = readProjectBuffer('build/icons/icon.icns')
     const expectedChunks = [
       { type: 'ic04', size: 16, encoding: 'argb' },
@@ -254,7 +307,6 @@ describe('packaging configuration', () => {
     ]
 
     expect(getYamlScalar(macConfig, 'icon')).toBe('icons/icon.icns')
-    expect(packageJson.devDependencies['electron-builder']).toBe('^26.15.7')
     expect(icon.toString('ascii', 0, 4)).toBe('icns')
     expect(icon.readUInt32BE(4)).toBe(icon.length)
 
@@ -350,25 +402,12 @@ describe('packaging configuration', () => {
     const builderConfig = readProjectFile('electron-builder.yml')
     const workflow = readProjectFile('.github/workflows/package.yml')
     const packageJson = JSON.parse(readProjectFile('package.json')) as {
-      dependencies: Record<string, string>
-      devDependencies: Record<string, string>
       scripts: Record<string, string>
-    }
-    const packageLock = JSON.parse(readProjectFile('package-lock.json')) as {
-      packages: Record<string, {
-        version?: string
-        dependencies?: Record<string, string>
-        devDependencies?: Record<string, string>
-      }>
     }
     const preload = readProjectFile('src/main/preload.ts')
     const mainSource = readProjectFile('src/main/main.ts')
     const updateService = readProjectFile('src/main/updateService.ts')
 
-    expect(packageJson.dependencies['electron-updater']).toBe('^6.8.9')
-    expect(packageLock.packages[''].dependencies?.['electron-updater']).toBe('^6.8.9')
-    expect(packageLock.packages['node_modules/electron-updater'].version).toBe('6.8.9')
-    expect(packageJson.devDependencies['js-yaml']).toBe('^4.3.1')
     expect(getYamlScalar(builderConfig, 'electronUpdaterCompatibility')).toBe("'>=2.16'")
     expect(builderConfig).toMatch(/^publish:\n  - provider: github$/m)
     expect(getYamlScalar(builderConfig, 'owner')).toBe('laurentwu')
