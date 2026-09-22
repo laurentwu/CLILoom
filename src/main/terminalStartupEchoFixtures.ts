@@ -100,3 +100,11 @@ export const WIN32_CAPTURED_REDRAW = [
 
 export const WIN32_CAPTURED_STREAM = `${WIN32_CAPTURED_PREFIX}CLILOOM$ ${WIN32_CAPTURED_REDRAW}\r\n${CAPTURED_PROGRAM_OUTPUT}`
 export const WIN32_CAPTURED_EXPECTED = `${WIN32_CAPTURED_PREFIX}CLILOOM$ ${WIN32_CAPTURED_DISPLAY_COMMAND}\r\n${CAPTURED_PROGRAM_OUTPUT}`
+
+// Captured in precheck 35710238451: at 80 columns the first explicit ConPTY
+// reposition is on the second row, after one implicit terminal wrap.
+export const WIN32_80_COLUMN_REDRAW = WIN32_CAPTURED_COMMAND.replace(
+  '结果。',
+  ' \u001b[?2004l\u001b[2;80H 结果。'
+)
+export const WIN32_80_COLUMN_STREAM = `${WIN32_CAPTURED_PREFIX}CLILOOM$ ${WIN32_80_COLUMN_REDRAW}\r\n${CAPTURED_PROGRAM_OUTPUT}`

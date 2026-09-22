@@ -48,7 +48,7 @@ type ControlKind =
   | { type: 'erase-fragment' }
   | { type: 'sgr' }
   | { type: 'paste-toggle' }
-  | { type: 'positioning'; column: number }
+  | { type: 'positioning'; column: number; row?: number }
   | { type: 'prefix-control' }
   | { type: 'other' }
 
@@ -184,14 +184,17 @@ function classifyControlSequence(text: string, start: number, end: number): Cont
   }
   if ((finalByte === 'H' || finalByte === 'f' || finalByte === 'G') && /^[\d;]*$/.test(body)) {
     const parameters = body.split(';')
+    if (parameters.length > (finalByte === 'G' ? 1 : 2)) return { type: 'other' }
     const columnParameter = finalByte === 'G'
       ? parameters[0]
       : parameters.length > 1
         ? parameters[1]
         : '1'
     const column = Number.parseInt(columnParameter || '1', 10)
-    return Number.isFinite(column) && column >= 1
-      ? { type: 'positioning', column }
+    const row = finalByte === 'G' ? undefined : Number.parseInt(parameters[0] || '1', 10)
+    return Number.isFinite(column) && column >= 1 &&
+      (row === undefined || (Number.isFinite(row) && row >= 1))
+      ? { type: 'positioning', column, row }
       : { type: 'other' }
   }
   return { type: 'other' }
@@ -549,11 +552,14 @@ function acceptDrawControl(
   if (kind.type === 'paste-toggle') return tolerance.pasteToggles ? visualColumn : null
   if (kind.type === 'positioning') {
     if (!tolerance.positioning) return null
-    if (visualColumn < tolerance.positioning.cols - 1) return null
+    const { cols } = tolerance.positioning
+    if (visualColumn === 0 || visualColumn % cols !== 0) return null
     // Only a no-op reposition to the column the cursor already sits on (the
-    // pending-wrap cell at the terminal edge) is accepted; any other target
-    // column falls back to the original bytes.
-    return kind.column === visualColumn ? visualColumn : null
+    // pending-wrap cell at the terminal edge) is accepted. ConPTY uses screen
+    // coordinates after wrapping, while visualColumn counts the whole draw.
+    // Reject an incorrect row too: it would overwrite earlier command text.
+    if (kind.row !== undefined && kind.row !== visualColumn / cols) return null
+    return kind.column === cols ? visualColumn : null
   }
   return null
 }

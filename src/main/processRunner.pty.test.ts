@@ -28,6 +28,7 @@ import {
   MACOS_CAPTURED_DISPLAY_COMMAND,
   MACOS_CAPTURED_EXPECTED,
   MACOS_CAPTURED_STREAM,
+  WIN32_80_COLUMN_STREAM,
   WIN32_CAPTURED_COMMAND,
   WIN32_CAPTURED_DISPLAY_COMMAND,
   WIN32_CAPTURED_EXPECTED,
@@ -1901,7 +1902,10 @@ describe('ProcessRunner captured platform startup echo integration', () => {
     db.close()
   })
 
-  it('normalizes the captured Windows first draw without a bare echo', async () => {
+  it.each([
+    { cols: 40, stream: WIN32_CAPTURED_STREAM },
+    { cols: 80, stream: WIN32_80_COLUMN_STREAM }
+  ])('normalizes the captured Windows first draw at $cols columns without a bare echo', async ({ cols, stream }) => {
     const { db, runner, sends, ptyWrite } = createCapturedRunner('win32')
     const neutral = capturedNeutralCommand(WIN32_CAPTURED_COMMAND, WIN32_CAPTURED_DISPLAY_COMMAND)
     const run = runner.run({
@@ -1911,7 +1915,7 @@ describe('ProcessRunner captured platform startup echo integration', () => {
       command: neutral.command,
       displayCommand: neutral.displayCommand,
       cwd: 'C:\\repo',
-      cols: 40,
+      cols,
       rows: 24
     })
     const sessionId = (db.prepare('select id from terminal_sessions limit 1').get() as { id: string }).id
@@ -1919,11 +1923,11 @@ describe('ProcessRunner captured platform startup echo integration', () => {
     expect(ptyWrite).toHaveBeenCalledTimes(1)
     expect(ptyWrite).toHaveBeenCalledWith(`${WIN32_CAPTURED_COMMAND}\r`)
 
-    mocks.ptyDataHandlers[0](WIN32_CAPTURED_STREAM.slice(0, 90))
-    mocks.ptyDataHandlers[0](WIN32_CAPTURED_STREAM.slice(90))
+    mocks.ptyDataHandlers[0](stream.slice(0, 90))
+    mocks.ptyDataHandlers[0](stream.slice(90))
     mocks.ptyExitHandlers[0]({ exitCode: 0 })
     const result = await run
-    expect(result.stdout).toBe(WIN32_CAPTURED_STREAM)
+    expect(result.stdout).toBe(stream)
     expect(result.exitCode).toBe(0)
     expect(transcriptView(sends, sessionId)).toBe(WIN32_CAPTURED_EXPECTED)
     const session = db.prepare('select transcript from terminal_sessions where id = ?')

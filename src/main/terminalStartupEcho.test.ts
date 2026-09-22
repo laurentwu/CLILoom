@@ -12,6 +12,7 @@ import {
   MACOS_CAPTURED_COMMAND,
   MACOS_CAPTURED_REDRAW,
   MACOS_CAPTURED_STREAM,
+  WIN32_80_COLUMN_STREAM,
   WIN32_CAPTURED_COMMAND,
   WIN32_CAPTURED_PREFIX,
   WIN32_CAPTURED_REDRAW,
@@ -427,6 +428,28 @@ describe('createInitialCommandEchoFilter captured macOS Bash startup', () => {
 })
 
 describe('createInitialCommandEchoFilter captured Windows Git Bash startup', () => {
+  it('recognizes the captured second-row boundary at 80 columns across every split', () => {
+    for (let split = 0; split <= WIN32_80_COLUMN_STREAM.length; split++) {
+      const filter = createInitialCommandEchoFilter(WIN32_CAPTURED_COMMAND, { ...WIN32_CONTEXT, cols: 80 })!
+      expect(mapAll(filter, [WIN32_80_COLUMN_STREAM.slice(0, split), WIN32_80_COLUMN_STREAM.slice(split)]))
+        .toBe(`${WIN32_CAPTURED_PREFIX}CLILOOM$ ${WIN32_CAPTURED_COMMAND}\r\n${CAPTURED_PROGRAM_OUTPUT}`)
+    }
+  })
+
+  it.each([40, 80, 100, 120])('accepts only the actual row and column at a %i-column wrap', (cols) => {
+    const before = `printf "${'a'.repeat(cols * 2 - 'CLILOOM$ '.length - 'printf "'.length - 1)}`
+    const command = `${before}😀"; exit`
+    const redraw = `${before} \u001b[?2004l\u001b[2;${cols}H 😀"; exit`
+    const stream = `${WIN32_CAPTURED_PREFIX}CLILOOM$ ${redraw}\r\n`
+    const filter = createInitialCommandEchoFilter(command, { ...WIN32_CONTEXT, cols })!
+    expect(mapAll(filter, Array.from(stream))).toBe(`${WIN32_CAPTURED_PREFIX}CLILOOM$ ${command}\r\n`)
+    for (const position of [`1;${cols}`, `3;${cols}`, `2;${cols - 1}`]) {
+      const invalid = stream.replace(`[2;${cols}H`, `[${position}H`)
+      const fallback = createInitialCommandEchoFilter(command, { ...WIN32_CONTEXT, cols })!
+      expect(mapAll(fallback, Array.from(invalid))).toBe(invalid)
+    }
+  })
+
   it('normalizes the first prompted draw without a bare echo', () => {
     const filter = createInitialCommandEchoFilter(WIN32_COMMAND, WIN32_CONTEXT)!
     expect(filter.isPending()).toBe(true)
