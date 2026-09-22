@@ -24,6 +24,7 @@ import {
   type ProcessTreeTerminator
 } from './processRunner'
 import { ShellUnavailableError } from './shellService'
+import type { ShellNeutralCommand } from '../shared/shell'
 import {
   MAX_PERSISTED_TERMINAL_TRANSCRIPT_CHARS,
   MAX_PROCESS_RESULT_CHARS,
@@ -1007,6 +1008,306 @@ describe('ProcessRunner interactive PTY lifecycle', () => {
 
     mocks.ptyExitHandlers[0]({ exitCode: 0 })
     expect(sends.filter((event) => event.channel === 'terminal:closed')).toHaveLength(1)
+    db.close()
+  })
+})
+
+describe('ProcessRunner interactive startup echo recognition', () => {
+  const BINDING_NAME = 'CLILOOM_INTERNAL_VALUE_0'
+  const STARTUP_COMMAND = `printf '%s' "UI 😀改动\${CLILOOM_INTERNAL_VALUE_0}"; exit`
+  const STARTUP_DISPLAY_COMMAND = `printf '%s' "UI 😀改动实际参数"; exit`
+  const STARTUP_PROMPT = '\u001b]0;cliloom\u0007\u001b[32muser@host:/repo\u001b[0m$ '
+  const PROGRAM_OUTPUT = '程序输出 😀 done\r\n'
+
+  function startupNeutralCommand(): ShellNeutralCommand {
+    return {
+      version: 1,
+      segments: [
+        { type: 'literal', value: `printf '%s' "UI 😀改动` },
+        { type: 'binding', name: BINDING_NAME },
+        { type: 'literal', value: '"; exit' }
+      ],
+      bindings: { [BINDING_NAME]: '实际参数' }
+    }
+  }
+
+  function buildPaddedRedraw(command: string): string {
+    const fragments: Array<{ afterIndex: number; fragment: string }> = [
+      { afterIndex: command.indexOf('改'), fragment: ' \u001b[K' },
+      { afterIndex: command.indexOf('${'), fragment: ' \u001b[0K' }
+    ]
+    const sorted = [...fragments].sort((a, b) => b.afterIndex - a.afterIndex)
+    let redrawn = command
+    for (const insertion of sorted) {
+      redrawn = redrawn.slice(0, insertion.afterIndex) + insertion.fragment + redrawn.slice(insertion.afterIndex)
+    }
+    return redrawn
+  }
+
+  function createMockPty() {
+    const ptyWrite = vi.fn()
+    mocks.ptySpawn.mockReturnValue({
+      pid: 1314,
+      onData: vi.fn((callback: (data: string) => void) => {
+        mocks.ptyDataHandlers.push(callback)
+      }),
+      onExit: vi.fn((callback: (event: { exitCode: number }) => void) => {
+        mocks.ptyExitHandlers.push(callback)
+      }),
+      write: ptyWrite,
+      kill: vi.fn()
+    })
+    return { ptyWrite }
+  }
+
+  it('deduplicates a padded startup redraw, expands bindings and keeps raw stdout', async () => {
+    const { ptyWrite } = createMockPty()
+    const sends: Array<{ channel: string; payload: { content?: string; sessionId?: string } }> = []
+    const { db, runner } = createRunner(() => ({
+      webContents: {
+        send: (channel: string, payload: unknown) => {
+          sends.push({ channel, payload: payload as { content?: string; sessionId?: string } })
+        }
+      }
+    }))
+
+    const redrawn = buildPaddedRedraw(STARTUP_COMMAND)
+    const rawStream = `${STARTUP_COMMAND}\r\n${STARTUP_PROMPT}${redrawn}\r\n${PROGRAM_OUTPUT}`
+    const expectedTranscript = `${STARTUP_PROMPT}${STARTUP_DISPLAY_COMMAND}\r\n${PROGRAM_OUTPUT}`
+
+    const run = runner.run({
+      taskId: 'task-padded-echo',
+      nodeId: 'node-padded-echo',
+      kind: 'interactive',
+      command: startupNeutralCommand(),
+      displayCommand: STARTUP_DISPLAY_COMMAND,
+      cwd: '/repo'
+    })
+    const sessionId = (db.prepare('select id from terminal_sessions limit 1').get() as { id: string }).id
+
+    expect(mocks.ptySpawn).toHaveBeenCalledWith('/bin/bash', ['-il'], expect.objectContaining({
+      name: 'xterm-256color'
+    }))
+    expect(ptyWrite).toHaveBeenCalledTimes(1)
+    expect(ptyWrite).toHaveBeenCalledWith(`${STARTUP_COMMAND}\n`)
+
+    // Split points land inside the bare echo's surrogate pair, the OSC
+    // sequence and the draw fragment; all before the redraw's line ending.
+    const fragmentStart = rawStream.indexOf('\u001b[0K') - 1
+    const emojiIndex = rawStream.indexOf('😀')
+    const boundaries = [12, emojiIndex + 1, rawStream.indexOf('\u001b]') + 3, fragmentStart + 2]
+      .sort((a, b) => a - b)
+      .filter((value, index, values) => value > 0 && (index === 0 || value > values[index - 1]))
+    let cursor = 0
+    for (const boundary of boundaries) {
+      mocks.ptyDataHandlers[0](rawStream.slice(cursor, boundary))
+      cursor = boundary
+      expect(sends.filter((event) => event.channel === 'terminal:data')).toHaveLength(0)
+      expect(runner.getLiveTranscript(sessionId, 'task-padded-echo')).toBe('')
+    }
+    mocks.ptyDataHandlers[0](rawStream.slice(cursor))
+
+    const snapshot = runner.getLiveTranscriptSnapshot(sessionId, 'task-padded-echo')
+    expect(snapshot?.transcript).toBe(expectedTranscript)
+
+    mocks.ptyExitHandlers[0]({ exitCode: 0 })
+    const result = await run
+    expect(result.stdout).toBe(rawStream)
+    expect(result.stderr).toBe('')
+    expect(result.exitCode).toBe(0)
+
+    const ipcContent = sends
+      .filter((event) => event.channel === 'terminal:data' && event.payload.sessionId === sessionId)
+      .map((event) => event.payload.content)
+      .join('')
+    expect(ipcContent).toBe(expectedTranscript)
+    const session = db.prepare('select transcript from terminal_sessions where id = ?')
+      .get(sessionId) as { transcript: string }
+    expect(session.transcript).toBe(expectedTranscript)
+    expect(session.transcript.split('改动').length - 1).toBe(1)
+    expect(session.transcript).not.toContain('CLILOOM_INTERNAL_VALUE_0')
+    expect(sends.filter((event) => event.channel === 'terminal:closed')).toHaveLength(1)
+    db.close()
+  })
+
+  it('releases pending startup recognition exactly once when killed mid-redraw', async () => {
+    const sends: Array<{ channel: string; payload: { content?: string } }> = []
+    mocks.ptySpawn.mockReturnValue({
+      pid: 1315,
+      onData: vi.fn((callback: (data: string) => void) => {
+        mocks.ptyDataHandlers.push(callback)
+      }),
+      onExit: vi.fn((callback: (event: { exitCode: number }) => void) => {
+        mocks.ptyExitHandlers.push(callback)
+      }),
+      write: vi.fn(),
+      kill: vi.fn()
+    })
+    const { db, runner } = createRunner(() => ({
+      webContents: {
+        send: (channel: string, payload: unknown) => {
+          sends.push({ channel, payload: payload as { content?: string } })
+        }
+      }
+    }))
+
+    const partialRedraw = `${STARTUP_PROMPT}${STARTUP_COMMAND.slice(0, 26)} \u001b[K`
+    const run = runner.run({
+      taskId: 'task-mid-redraw-kill',
+      nodeId: 'node-mid-redraw-kill',
+      kind: 'interactive',
+      command: startupNeutralCommand(),
+      displayCommand: STARTUP_DISPLAY_COMMAND,
+      cwd: '/repo'
+    })
+    const sessionId = (db.prepare('select id from terminal_sessions limit 1').get() as { id: string }).id
+    mocks.ptyDataHandlers[0](`${STARTUP_COMMAND}\r\n${partialRedraw}`)
+
+    await expect(runner.kill(sessionId)).resolves.toBe(true)
+    await expect(run).resolves.toMatchObject({ status: 'killed', exitCode: null })
+    const session = db.prepare('select transcript from terminal_sessions where id = ?')
+      .get(sessionId) as { transcript: string }
+    expect(session.transcript).toBe(`${STARTUP_DISPLAY_COMMAND}\r\n${partialRedraw}`)
+    expect(session.transcript.split('改动').length - 1).toBe(2)
+
+    await expect(runner.kill(sessionId)).resolves.toBe(false)
+    const unchanged = db.prepare('select transcript from terminal_sessions where id = ?')
+      .get(sessionId) as { transcript: string }
+    expect(unchanged.transcript).toBe(session.transcript)
+    expect(sends.filter((event) => event.channel === 'terminal:closed')).toHaveLength(1)
+    db.close()
+  })
+
+  it('shows prompts without newlines immediately while the session stays interactive', async () => {
+    vi.useFakeTimers()
+    const sends: Array<{ channel: string; payload: { content?: string } }> = []
+    const ptyWrite = vi.fn()
+    mocks.ptySpawn.mockReturnValue({
+      pid: 1316,
+      onData: vi.fn((callback: (data: string) => void) => {
+        mocks.ptyDataHandlers.push(callback)
+      }),
+      onExit: vi.fn((callback: (event: { exitCode: number }) => void) => {
+        mocks.ptyExitHandlers.push(callback)
+      }),
+      write: ptyWrite,
+      kill: vi.fn()
+    })
+    const { db, runner } = createRunner(() => ({
+      webContents: {
+        send: (channel: string, payload: unknown) => {
+          sends.push({ channel, payload: payload as { content?: string } })
+        }
+      }
+    }))
+
+    try {
+      const run = runner.run({
+        taskId: 'task-password-prompt',
+        nodeId: 'node-password-prompt',
+        kind: 'interactive',
+        command: 'deploy-app',
+        cwd: '/repo'
+      })
+      const sessionId = (db.prepare('select id from terminal_sessions limit 1').get() as { id: string }).id
+      mocks.ptyDataHandlers[0]('Password: ')
+      await vi.advanceTimersByTimeAsync(TERMINAL_DATA_FLUSH_INTERVAL_FOR_TEST_MS)
+
+      expect(sends.filter((event) => event.channel === 'terminal:data').map((event) => event.payload.content))
+        .toEqual(['Password: '])
+      expect(runner.getLiveTranscript(sessionId, 'task-password-prompt')).toBe('Password: ')
+      expect(runner.isInputReady(sessionId)).toBe(true)
+      expect(runner.write(sessionId, 'secret\n')).toBe(true)
+      expect(ptyWrite).toHaveBeenCalledWith('secret\n')
+
+      mocks.ptyDataHandlers[0]('wty@host:/repo$ ')
+      await vi.advanceTimersByTimeAsync(TERMINAL_DATA_FLUSH_INTERVAL_FOR_TEST_MS)
+      expect(runner.getLiveTranscript(sessionId, 'task-password-prompt')).toBe('Password: wty@host:/repo$ ')
+
+      mocks.ptyExitHandlers[0]({ exitCode: 0 })
+      await expect(run).resolves.toMatchObject({ exitCode: 0 })
+    } finally {
+      vi.useRealTimers()
+      db.close()
+    }
+  })
+
+  it('resets startup recognition on retry and applies the retried command', async () => {
+    const sends: Array<{ channel: string; payload: { content?: string } }> = []
+    const { ptyWrite } = createMockPty()
+    const { db, runner } = createRunner(() => ({
+      webContents: {
+        send: (channel: string, payload: unknown) => {
+          sends.push({ channel, payload: payload as { content?: string } })
+        }
+      }
+    }))
+
+    const run = runner.run({
+      taskId: 'task-retry-echo',
+      nodeId: 'node-retry-echo',
+      kind: 'interactive',
+      command: startupNeutralCommand(),
+      displayCommand: STARTUP_DISPLAY_COMMAND,
+      cwd: '/repo'
+    })
+    const sessionId = (db.prepare('select id from terminal_sessions limit 1').get() as { id: string }).id
+    const firstRaw = `${STARTUP_COMMAND}\r\n${STARTUP_PROMPT}${buildPaddedRedraw(STARTUP_COMMAND)}\r\n${PROGRAM_OUTPUT}`
+    mocks.ptyDataHandlers[0](firstRaw)
+    mocks.ptyExitHandlers[0]({ exitCode: 0 })
+    await expect(run).resolves.toMatchObject({ exitCode: 0 })
+
+    const retryCommand = `printf '%s' "重试 改动\${CLILOOM_INTERNAL_VALUE_0}"; exit`
+    const retryDisplayCommand = `printf '%s' "重试 改动重试参数"; exit`
+    const retryNeutral: ShellNeutralCommand = {
+      version: 1,
+      segments: [
+        { type: 'literal', value: `printf '%s' "重试 改动` },
+        { type: 'binding', name: BINDING_NAME },
+        { type: 'literal', value: '"; exit' }
+      ],
+      bindings: { [BINDING_NAME]: '重试参数' }
+    }
+    const retryRaw = `${retryCommand}\r\n$ ${buildPaddedRedraw(retryCommand)}\r\nretry output\r\n`
+    const retried = runner.retry(sessionId, {
+      command: retryNeutral,
+      displayCommand: retryDisplayCommand
+    })
+    expect(ptyWrite).toHaveBeenLastCalledWith(`${retryCommand}\n`)
+    mocks.ptyDataHandlers[1](retryRaw)
+    mocks.ptyExitHandlers[1]({ exitCode: 0 })
+    await expect(retried.result).resolves.toMatchObject({ exitCode: 0 })
+
+    const session = db.prepare('select transcript from terminal_sessions where id = ?')
+      .get(sessionId) as { transcript: string }
+    expect(session.transcript).toBe(`$ ${retryDisplayCommand}\r\nretry output\r\n`)
+    expect(session.transcript).not.toContain('CLILOOM_INTERNAL_VALUE_0')
+    expect(ptyWrite).toHaveBeenCalledTimes(2)
+    db.close()
+  })
+
+  it('keeps single fragmented redraws untouched when no bare echo exists', async () => {
+    createMockPty()
+    const { db, runner } = createRunner()
+    const command = STARTUP_COMMAND
+    const redrawn = buildPaddedRedraw(command)
+    const run = runner.run({
+      taskId: 'task-fragmented-single',
+      nodeId: 'node-fragmented-single',
+      kind: 'interactive',
+      command: startupNeutralCommand(),
+      displayCommand: STARTUP_DISPLAY_COMMAND,
+      cwd: '/repo'
+    })
+    const stream = `${STARTUP_PROMPT}${redrawn}\r\n${PROGRAM_OUTPUT}`
+    mocks.ptyDataHandlers[0](stream.slice(0, 30))
+    mocks.ptyDataHandlers[0](stream.slice(30))
+    mocks.ptyExitHandlers[0]({ exitCode: 0 })
+    await run
+
+    const session = db.prepare('select transcript from terminal_sessions limit 1')
+      .get() as { transcript: string }
+    expect(session.transcript).toBe(stream)
     db.close()
   })
 })
