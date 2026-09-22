@@ -52,9 +52,30 @@ export type TerminalAutoRetryState = {
   phase: TerminalAutoRetryPhase
   attemptsStarted: number
   lastFailureAt?: number
+  /** Epoch milliseconds when the latest automatic retry in this cycle entered running. */
+  lastRetryStartedAt?: number
   scheduleId?: string
   nextRetryAt?: number
   reason?: TerminalAutoRetryReason
+}
+
+/** Upper bound for accepted epoch-millisecond timestamps (Date range). */
+const AUTO_RETRY_MAX_EPOCH_MS = 8_640_000_000_000_000
+
+/**
+ * Validate an optional stored `lastRetryStartedAt` value. Accepts any safe
+ * integer epoch millisecond value within the Date range, including zero;
+ * everything else (missing, non-number, fractional, negative, NaN, Infinity,
+ * out of range) is ignored without invalidating the remaining retry state.
+ */
+export function parseLastRetryStartedAt(
+  value: unknown,
+  attemptsStarted: number
+): number | undefined {
+  if (attemptsStarted <= 0) return undefined
+  if (typeof value !== 'number' || !Number.isSafeInteger(value)) return undefined
+  if (value < 0 || value > AUTO_RETRY_MAX_EPOCH_MS) return undefined
+  return value
 }
 
 export type AutoRetryClock = {
@@ -197,6 +218,10 @@ export function parseTerminalAutoRetryState(value: unknown): TerminalAutoRetrySt
   }
   if (typeof raw.lastFailureAt === 'number' && Number.isFinite(raw.lastFailureAt)) {
     state.lastFailureAt = raw.lastFailureAt
+  }
+  const lastRetryStartedAt = parseLastRetryStartedAt(raw.lastRetryStartedAt, state.attemptsStarted)
+  if (lastRetryStartedAt !== undefined) {
+    state.lastRetryStartedAt = lastRetryStartedAt
   }
   if (raw.reason !== undefined) {
     if (typeof raw.reason !== 'string' || !AUTO_RETRY_REASONS.includes(raw.reason as TerminalAutoRetryReason)) {

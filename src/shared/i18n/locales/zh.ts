@@ -1013,9 +1013,11 @@ export default {
         'task-stopped': '任务已停止，自动重试已取消。'
       },
       nextRetry: '第 {{attempt}} 次自动重试将在 {{time}} 执行',
-      statsLimited: '已自动重试 {{started}} / {{max}} 次 · {{timezone}} · 还剩 {{remaining}}',
-      statsUnlimited: '已自动重试 {{started}} 次 · 不限次数 · {{timezone}}',
+      statsLimited: '已自动重试 {{started}} / {{max}} 次 · 还剩 {{remaining}}',
+      statsUnlimited: '已自动重试 {{started}} 次 · 不限次数',
       attemptsOnly: '已自动重试 {{started}} 次',
+      lastRetryStartedAt: '上次重试开始于 {{time}}',
+      lastRetryStartedAtUnknown: '上次重试开始时间未知',
       retryNow: '立即重试',
       cancel: '取消自动重试',
       preparing: '准备重试…',

@@ -42,6 +42,8 @@ function renderPanel(options: {
   node?: WorkflowNode
   run?: Parameters<typeof NodeDetailPanel>[0]['run']
   sessions?: TerminalSession[]
+  autoRetryTimeZone?: string
+  autoRetryMaxRetries?: number | null
   onRetryNode?: () => void
   onRetryTerminal?: (sessionId: string, mode: string) => Promise<void>
   onCancelAutoRetry?: (nodeId: string) => Promise<void>
@@ -67,6 +69,8 @@ function renderPanel(options: {
         onSendTerminalInput={vi.fn()}
         onRetryTerminal={options.onRetryTerminal ?? vi.fn()}
         {...(options.onCancelAutoRetry ? { onCancelAutoRetry: options.onCancelAutoRetry } : {})}
+        autoRetryTimeZone={options.autoRetryTimeZone}
+        autoRetryMaxRetries={options.autoRetryMaxRetries}
       />
     </I18nextProvider>
   )
@@ -201,5 +205,85 @@ describe('NodeDetailPanel automatic retry banner', () => {
 
     resolveCancel()
     await waitFor(() => expect((cancelButton as HTMLButtonElement).disabled).toBe(false))
+  })
+
+  it('renders the retry start time from run.autoRetry with the frozen task zone', () => {
+    // 2026-09-21T21:30Z is 14:30 in Los Angeles.
+    const view = renderPanel({
+      run: {
+        nodeId: terminalNode.id,
+        status: 'failed',
+        sessionId: 'session-current',
+        autoRetry: {
+          version: 1,
+          cycleId: 'cycle-1',
+          phase: 'running',
+          attemptsStarted: 1,
+          lastRetryStartedAt: Date.UTC(2026, 8, 21, 21, 30, 0)
+        }
+      },
+      sessions: [interruptedSession],
+      autoRetryTimeZone: 'America/Los_Angeles',
+      autoRetryMaxRetries: 5
+    })
+
+    expect(screen.getByText(/Last automatic retry started at .*14:30/)).toBeTruthy()
+    expect(document.body.textContent ?? '').not.toMatch(/GMT|UTC|Los_Angeles/i)
+
+    // Switching to another node's data must not leak the previous time.
+    const otherNode: WorkflowNode = {
+      id: 'other',
+      type: 'non-interactive-terminal',
+      name: 'Other',
+      config: { command: 'echo ok', cwd: '/repo', successExitCodes: [0] }
+    }
+    view.rerender(
+      <I18nextProvider i18n={i18n}>
+        <NodeDetailPanel
+          node={otherNode}
+          run={{ nodeId: otherNode.id, status: 'failed' }}
+          sessions={[]}
+          variables={{}}
+          editableVariables={[]}
+          canOperate
+          isWaitingForInput={false}
+          onVariableChange={vi.fn()}
+          onRun={vi.fn()}
+          onRetryNode={vi.fn()}
+          onContinue={vi.fn()}
+          onStopTerminal={vi.fn()}
+          onShowGraph={vi.fn()}
+          onLoadTerminalTranscript={vi.fn()}
+          onSendTerminalInput={vi.fn()}
+          onRetryTerminal={vi.fn()}
+          autoRetryTimeZone="America/Los_Angeles"
+          autoRetryMaxRetries={5}
+        />
+      </I18nextProvider>
+    )
+    expect(screen.queryByText(/Last automatic retry started at/)).toBeNull()
+  })
+
+  it('shows the unknown fallback when a retried record lacks a usable time', () => {
+    renderPanel({
+      run: {
+        nodeId: terminalNode.id,
+        status: 'failed',
+        sessionId: 'session-current',
+        autoRetry: {
+          version: 1,
+          cycleId: 'cycle-1',
+          phase: 'waiting',
+          attemptsStarted: 2,
+          scheduleId: 'sched-1',
+          nextRetryAt: Date.now() + 42_000
+        }
+      },
+      sessions: [interruptedSession],
+      autoRetryTimeZone: 'UTC',
+      autoRetryMaxRetries: 5
+    })
+
+    expect(screen.getByText('Last automatic retry start time unknown')).toBeTruthy()
   })
 })

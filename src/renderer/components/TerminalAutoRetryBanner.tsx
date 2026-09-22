@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AlarmClock, Ban, RotateCcw } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import type { TerminalAutoRetryReason, TerminalAutoRetryState } from '../../shared/terminalAutoRetry'
+import { isValidTimeZone } from '../../shared/cronSchedule'
+import { parseLastRetryStartedAt, type TerminalAutoRetryReason, type TerminalAutoRetryState } from '../../shared/terminalAutoRetry'
 import { formatCountdown, formatScheduleTime } from '../designer/cronAssistant'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -53,10 +54,15 @@ export function TerminalAutoRetryBanner({
     }
   }
 
+  // A missing or unusable task time zone falls back to UTC without surfacing
+  // any zone name in the banner text.
+  const zone = timeZone !== undefined && isValidTimeZone(timeZone) ? timeZone : 'UTC'
+  const withoutZone = { showTimeZone: false } as const
+
   const title = waiting
     ? t('node:autoRetry.nextRetry', {
       attempt: nextAttempt,
-      time: formatScheduleTime(autoRetry.nextRetryAt!, timeZone ?? 'UTC', locale)
+      time: formatScheduleTime(autoRetry.nextRetryAt!, zone, locale, withoutZone)
     })
     : autoRetry.phase === 'running'
       ? t('node:autoRetry.running', { attempt: autoRetry.attemptsStarted })
@@ -65,31 +71,42 @@ export function TerminalAutoRetryBanner({
   const detail = waiting || autoRetry.phase === 'running' ? undefined : describeTerminalOutcome(autoRetry, t)
 
   const statsLine = () => {
-    const zone = timeZone ?? 'UTC'
     if (waiting) {
       // Past the due time but not yet confirmed by the main process: the
       // renderer only reports that a retry is being prepared.
       if (remainingMs <= 0) return t('node:autoRetry.preparing')
       if (maxRetries === undefined) {
-        return `${t('node:autoRetry.attemptsOnly', { started: autoRetry.attemptsStarted })} · ${zone} · ${formatCountdown(remainingMs)}`
+        return `${t('node:autoRetry.attemptsOnly', { started: autoRetry.attemptsStarted })} · ${formatCountdown(remainingMs)}`
       }
       return maxRetries === null
         ? t('node:autoRetry.statsUnlimited', {
-          started: autoRetry.attemptsStarted,
-          timezone: zone
+          started: autoRetry.attemptsStarted
         })
         : t('node:autoRetry.statsLimited', {
           started: autoRetry.attemptsStarted,
           max: maxRetries,
-          timezone: zone,
           remaining: formatCountdown(remainingMs)
         })
     }
     if (autoRetry.phase === 'running') {
-      return `${t('node:autoRetry.attemptsOnly', { started: autoRetry.attemptsStarted })} · ${zone}`
+      return t('node:autoRetry.attemptsOnly', { started: autoRetry.attemptsStarted })
     }
     return undefined
   }
+
+  // The latest accepted retry start time is shown in every phase of a cycle
+  // that has already started at least one automatic retry.
+  const lastRetryStartedAt = parseLastRetryStartedAt(
+    autoRetry.lastRetryStartedAt,
+    autoRetry.attemptsStarted
+  )
+  const lastRetryLine = autoRetry.attemptsStarted > 0
+    ? lastRetryStartedAt !== undefined
+      ? t('node:autoRetry.lastRetryStartedAt', {
+        time: formatScheduleTime(lastRetryStartedAt, zone, locale, withoutZone)
+      })
+      : t('node:autoRetry.lastRetryStartedAtUnknown')
+    : undefined
 
   return (
     <Alert
@@ -99,8 +116,14 @@ export function TerminalAutoRetryBanner({
     >
       <AlarmClock />
       <AlertTitle>{title}</AlertTitle>
-      <AlertDescription className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <span className="min-w-0 break-words">{detail ?? statsLine()}</span>
+      {/* The description row wraps below the sm breakpoint and whenever a
+          narrow panel (for example a 380px parallel-branch column inside a
+          wide window) cannot fit the text beside the actions. */}
+      <AlertDescription className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+        <span className="flex min-w-0 flex-col gap-1">
+          <span className="min-w-0 break-words">{detail ?? statsLine()}</span>
+          {lastRetryLine && <span className="min-w-0 break-words">{lastRetryLine}</span>}
+        </span>
         {waiting && (
           <span className="flex shrink-0 flex-wrap items-center gap-2">
             <Button disabled={disabled} onClick={onRetryNow} size="sm" variant="outline">

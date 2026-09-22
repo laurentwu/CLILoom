@@ -97,4 +97,28 @@ describe('formatScheduleTime', () => {
   it('falls back when the zone is unusable', () => {
     expect(() => formatScheduleTime(Date.UTC(2026, 8, 20, 6, 30, 0), 'Not/AZone', 'en-US')).not.toThrow()
   })
+
+  it('omits any timezone text when showTimeZone is false', () => {
+    // 2026-09-21T21:30Z is 14:30 in Los Angeles and 05:30 the next day in Shanghai.
+    const epoch = Date.UTC(2026, 8, 21, 21, 30, 0)
+    const losAngeles = formatScheduleTime(epoch, 'America/Los_Angeles', 'en-US', { showTimeZone: false })
+    const shanghai = formatScheduleTime(epoch, 'Asia/Shanghai', 'en-US', { showTimeZone: false })
+    const utc = formatScheduleTime(epoch, 'UTC', 'en-US', { showTimeZone: false })
+
+    expect(losAngeles).toContain('14:30')
+    expect(losAngeles).toContain('2026')
+    expect(shanghai).toContain('05:30')
+    expect(shanghai).toContain('2026')
+    expect(utc).toContain('21:30')
+
+    for (const text of [losAngeles, shanghai, utc]) {
+      expect(text).not.toMatch(/GMT|UTC|Los_Angeles|Shanghai/i)
+    }
+  })
+
+  it('keeps the default three-argument behavior with the UTC offset', () => {
+    const text = formatScheduleTime(Date.UTC(2026, 8, 21, 21, 30, 0), 'America/Los_Angeles', 'en-US')
+    expect(text).toContain('GMT-7')
+    expect(text).toContain('14:30')
+  })
 })

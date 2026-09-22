@@ -1013,9 +1013,11 @@ export default {
         'task-stopped': 'The task was stopped, so automatic retries were cancelled.'
       },
       nextRetry: 'Automatic retry #{{attempt}} will run at {{time}}',
-      statsLimited: '{{started}} / {{max}} automatic retries used · {{timezone}} · {{remaining}} left',
-      statsUnlimited: '{{started}} automatic retries used · unlimited · {{timezone}}',
+      statsLimited: '{{started}} / {{max}} automatic retries used · {{remaining}} left',
+      statsUnlimited: '{{started}} automatic retries used · unlimited',
       attemptsOnly: '{{started}} automatic retries used',
+      lastRetryStartedAt: 'Last automatic retry started at {{time}}',
+      lastRetryStartedAtUnknown: 'Last automatic retry start time unknown',
       retryNow: 'Retry now',
       cancel: 'Cancel automatic retry',
       preparing: 'Preparing retry…',

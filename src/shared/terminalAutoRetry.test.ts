@@ -147,6 +147,70 @@ describe('parseTerminalAutoRetryState', () => {
   })
 })
 
+describe('parseTerminalAutoRetryState lastRetryStartedAt', () => {
+  function stateWith(extra: Record<string, unknown>, phase = 'waiting') {
+    return {
+      version: 1,
+      cycleId: 'cycle-1',
+      phase,
+      attemptsStarted: 2,
+      lastFailureAt: 123,
+      scheduleId: 'sched-1',
+      nextRetryAt: 456,
+      ...extra
+    }
+  }
+
+  it('keeps the field across waiting, running and terminal phases', () => {
+    for (const phase of ['waiting', 'running', 'exhausted', 'cancelled', 'blocked'] as const) {
+      const parsed = parseTerminalAutoRetryState(stateWith({ lastRetryStartedAt: 789 }, phase))
+      expect(parsed?.lastRetryStartedAt).toBe(789)
+    }
+  })
+
+  it('still parses legacy objects that predate the field', () => {
+    const legacy = stateWith({})
+    expect(parseTerminalAutoRetryState(legacy)).toEqual(legacy)
+  })
+
+  it('accepts zero as a valid epoch value', () => {
+    expect(parseTerminalAutoRetryState(stateWith({ lastRetryStartedAt: 0 }))?.lastRetryStartedAt).toBe(0)
+  })
+
+  it('drops invalid values without invalidating the rest of the state', () => {
+    for (const invalid of [
+      null,
+      '789',
+      true,
+      -1,
+      1.5,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      8_640_000_000_000_001
+    ]) {
+      const parsed = parseTerminalAutoRetryState(stateWith({ lastRetryStartedAt: invalid }))
+      expect(parsed).not.toBeNull()
+      expect(parsed?.lastRetryStartedAt).toBeUndefined()
+      expect(parsed?.nextRetryAt).toBe(456)
+      expect(parsed?.scheduleId).toBe('sched-1')
+    }
+  })
+
+  it('never keeps a dirty history value when no retry has started', () => {
+    const parsed = parseTerminalAutoRetryState({
+      version: 1,
+      cycleId: 'cycle-1',
+      phase: 'waiting',
+      attemptsStarted: 0,
+      lastFailureAt: 123,
+      scheduleId: 'sched-1',
+      nextRetryAt: 456,
+      lastRetryStartedAt: 789
+    })
+    expect(parsed?.lastRetryStartedAt).toBeUndefined()
+  })
+})
+
 describe('parseWorkflowAutoRetryContext', () => {
   it('accepts a valid context', () => {
     expect(parseWorkflowAutoRetryContext({ runId: 'run-1', timeZone: 'Asia/Shanghai' }))

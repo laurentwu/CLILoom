@@ -1,6 +1,11 @@
 import { Maximize2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import type { VariableValue, WorkflowNode } from '../../shared/workflow'
+import type {
+  InteractiveTerminalConfig,
+  NonInteractiveTerminalConfig,
+  VariableValue,
+  WorkflowNode
+} from '../../shared/workflow'
 import type { WorkflowRuntimeBranchRun, WorkflowRuntimeNodeRun } from '../../shared/workflowRuntime'
 import type { TerminalRetryMode } from '../../shared/terminalSession'
 import type { TerminalRetryDraft, TerminalRetryEdit } from '../../shared/terminalRetry'
@@ -15,6 +20,7 @@ type ParallelBranchGroupProps = {
   workflowNodes: WorkflowNode[]
   nodeRuns: Record<string, WorkflowRuntimeNodeRun>
   sessions: TerminalSession[]
+  autoRetryTimeZone?: string
   onBranchVariableChange: (branchId: string, key: string, value: VariableValue) => void
   onBranchContinue: (branchId: string) => void
   onRetryNode: (branchId: string, nodeId: string) => void
@@ -34,6 +40,7 @@ export function ParallelBranchGroup({
   workflowNodes,
   nodeRuns,
   sessions,
+  autoRetryTimeZone,
   onBranchVariableChange,
   onBranchContinue,
   onRetryNode,
@@ -96,6 +103,9 @@ export function ParallelBranchGroup({
             const nodeSessions = sessions.filter((session) => session.node_id === node.id)
             const isCurrentBranchNode = branch.currentNodeId === node.id
             const isZoomed = effectiveZoomedNodeId === node.id
+            const autoRetryConfig = node.type === 'interactive-terminal' || node.type === 'non-interactive-terminal'
+              ? (node.config as InteractiveTerminalConfig | NonInteractiveTerminalConfig).autoRetry
+              : undefined
             return (
               <NodeDetailPanel
                 key={`${branch.branchId}:${node.id}`}
@@ -115,6 +125,8 @@ export function ParallelBranchGroup({
                 onSendTerminalInput={onSendTerminalInput}
                 onGetTerminalRetryDraft={onGetTerminalRetryDraft}
                 onRetryTerminal={onRetryTerminal}
+                autoRetryTimeZone={autoRetryTimeZone}
+                autoRetryMaxRetries={autoRetryConfig?.maxRetries}
                 zoomTitle={isZoomed ? t('node:zoom.backToGateway') : t('node:zoom.zoomIn')}
               />
             )
