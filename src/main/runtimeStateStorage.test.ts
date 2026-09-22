@@ -215,4 +215,38 @@ describe('runtime state storage', () => {
       parallelResults: 'legacy-parallel-results'
     })
   })
+
+  it('keeps automatic-retry metadata, including lastRetryStartedAt, through compaction', () => {
+    const startedAt = 1_761_000_000_000
+    const autoRetry: WorkflowRuntimeState['nodeRuns'][string]['autoRetry'] = {
+      version: 1,
+      cycleId: 'cycle-1',
+      phase: 'waiting',
+      attemptsStarted: 2,
+      lastFailureAt: 1234,
+      lastRetryStartedAt: startedAt,
+      scheduleId: 'sched-7',
+      nextRetryAt: 5678
+    }
+    const source = state()
+    source.nodeRuns.terminal.autoRetry = autoRetry
+    source.parallelResults.split.branches['edge-left'].nodeRuns.left.autoRetry = autoRetry
+
+    const compacted = compactRuntimeState(source)
+
+    expect(compacted.nodeRuns.terminal.autoRetry).toEqual(autoRetry)
+    expect(compacted.parallelResults.split.branches['edge-left'].nodeRuns.left.autoRetry)
+      .toEqual(autoRetry)
+
+    const stored = compactStoredRuntimeContext({
+      nodeRuns: {
+        terminal: {
+          stdout: oversizedOutput('stored'),
+          autoRetry: { ...autoRetry }
+        }
+      }
+    })
+    expect((stored.nodeRuns as Record<string, { autoRetry?: unknown }>).terminal.autoRetry)
+      .toEqual(autoRetry)
+  })
 })

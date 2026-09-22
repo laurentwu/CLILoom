@@ -100,42 +100,36 @@ function parseSingleNumber(field: string, min: number, max: number): number | nu
   return value
 }
 
-/** Render an epoch-millisecond time in the given zone with its UTC offset. */
-export function formatScheduleTime(timeMs: number, timeZone: string, locale: string): string {
-  const attempt = (options: Intl.DateTimeFormatOptions): string => (
-    new Intl.DateTimeFormat(locale, options).format(new Date(timeMs))
+/**
+ * Render an epoch-millisecond time in the given zone. Includes the UTC offset
+ * unless `showTimeZone` is explicitly false, in which case the formatting
+ * options omit `timeZoneName` entirely instead of stripping rendered text.
+ */
+export function formatScheduleTime(
+  timeMs: number,
+  timeZone: string,
+  locale: string,
+  options?: { showTimeZone?: boolean }
+): string {
+  const dateOptions: Intl.DateTimeFormatOptions = {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    ...(options?.showTimeZone === false ? {} : { timeZoneName: 'shortOffset' })
+  }
+  const attempt = (formatOptions: Intl.DateTimeFormatOptions): string => (
+    new Intl.DateTimeFormat(locale, formatOptions).format(new Date(timeMs))
   )
   try {
-    return attempt({
-      timeZone,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-      timeZoneName: 'shortOffset'
-    })
+    return attempt({ timeZone, ...dateOptions })
   } catch {
     try {
-      return attempt({
-        timeZone,
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: false
-      })
+      return attempt({ timeZone, ...dateOptions, timeZoneName: undefined })
     } catch {
-      return attempt({
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: false
-      })
+      return attempt({ ...dateOptions, timeZoneName: undefined })
     }
   }
 }

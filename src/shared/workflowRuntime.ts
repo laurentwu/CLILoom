@@ -504,7 +504,9 @@ export class WorkflowRuntimeEngine {
       cycleId: autoRetry.cycleId,
       phase: 'running',
       attemptsStarted: autoRetry.attemptsStarted + 1,
-      lastFailureAt: autoRetry.lastFailureAt
+      lastFailureAt: autoRetry.lastFailureAt,
+      // The accepted-start clock value, not the (possibly overdue) plan time.
+      lastRetryStartedAt: this.autoRetryClock.now()
     }
     run.autoRetry = next
     return next
@@ -1310,7 +1312,12 @@ export class WorkflowRuntimeEngine {
       cycleId,
       phase: 'waiting',
       attemptsStarted,
-      lastFailureAt
+      lastFailureAt,
+      // Keep the display-only start time of the latest accepted retry across
+      // waiting, exhausted, missing-session and schedule-error rebuilds.
+      ...(continuingCycle?.lastRetryStartedAt !== undefined
+        ? { lastRetryStartedAt: continuingCycle.lastRetryStartedAt }
+        : {})
     }
     if (!result.sessionId) {
       state.phase = 'blocked'
@@ -1354,6 +1361,9 @@ export class WorkflowRuntimeEngine {
           phase: 'blocked' as const,
           attemptsStarted: priorAutoRetry.attemptsStarted,
           lastFailureAt: priorAutoRetry.lastFailureAt,
+          ...(priorAutoRetry.lastRetryStartedAt !== undefined
+            ? { lastRetryStartedAt: priorAutoRetry.lastRetryStartedAt }
+            : {}),
           reason: 'hook-failed' as const
         }
       : undefined

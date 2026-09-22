@@ -2643,6 +2643,7 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
                   workflowNodes={workflow.nodes}
                   nodeRuns={nodeRuns}
                   sessions={sessions.filter((session) => session.task_id === activeTaskId)}
+                  autoRetryTimeZone={runtimeState?.taskId === activeTaskId ? runtimeState.autoRetryContext?.timeZone : undefined}
                   onBranchVariableChange={setBranchVariable}
                   onBranchContinue={continueBranchWithVariables}
                   onRetryNode={(branchId, nodeId) => void retryNode(nodeId, branchId)}

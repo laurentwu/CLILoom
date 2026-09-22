@@ -16,6 +16,7 @@ import {
   restoreWorkflowRuntimeState
 } from './runtimePersistence'
 import type { WorkflowDefinition } from '../shared/workflow'
+import type { TerminalAutoRetryReason } from '../shared/terminalAutoRetry'
 import type {
   WorkflowRuntimeState,
   WorkflowRuntimeStatus
@@ -852,5 +853,186 @@ describe('terminal auto-retry persistence', () => {
     })
     // Idempotent: a second sweep changes nothing.
     expect(cancelWaitingAutoRetriesInDb(db, 'task-1', 'task-stopped')).toBe(0)
+  })
+
+  it('persists lastRetryStartedAt into node_runs.output_json and back', () => {
+    const db = createDb()
+    const startedAt = 1_761_000_000_000
+    const waitingState = state({
+      status: 'failed',
+      autoRetryContext: { runId: 'run-9', timeZone: 'UTC' },
+      nodeRuns: {
+        terminal: {
+          nodeId: 'terminal',
+          status: 'failed',
+          sessionId: 'session-1',
+          autoRetry: {
+            version: 1,
+            cycleId: 'cycle-1',
+            phase: 'waiting',
+            attemptsStarted: 1,
+            lastFailureAt: 1234,
+            lastRetryStartedAt: startedAt,
+            scheduleId: 'sched-7',
+            nextRetryAt: 5678
+          }
+        }
+      }
+    })
+    persistState(db, waitingState, 'failed')
+
+    const stored = db.prepare(
+      'select output_json from node_runs where run_id = ? and node_id = ?'
+    ).get('task-1', 'terminal') as { output_json: string }
+    expect(JSON.parse(stored.output_json).autoRetry.lastRetryStartedAt).toBe(startedAt)
+
+    const restored = restoreWorkflowRuntimeState(db, 'task-1').state
+    expect(restored?.nodeRuns.terminal.autoRetry?.lastRetryStartedAt).toBe(startedAt)
+  })
+
+  it('keeps lastRetryStartedAt across cancelled, exhausted and blocked restores', () => {
+    const db = createDb()
+    const startedAt = 1_761_000_000_000
+    const phaseCase = (
+      phase: 'cancelled' | 'exhausted' | 'blocked',
+      reason?: TerminalAutoRetryReason
+    ) => state({
+      status: 'failed',
+      autoRetryContext: { runId: 'run-9', timeZone: 'UTC' },
+      nodeRuns: {
+        terminal: {
+          nodeId: 'terminal',
+          status: 'failed',
+          sessionId: 'session-1',
+          autoRetry: {
+            version: 1,
+            cycleId: 'cycle-1',
+            phase,
+            attemptsStarted: 3,
+            lastFailureAt: 1234,
+            lastRetryStartedAt: startedAt,
+            ...(reason ? { reason } : {})
+          }
+        }
+      }
+    })
+
+    for (const [phase, reason] of [
+      ['cancelled', 'user-cancelled'],
+      ['exhausted', undefined],
+      ['blocked', 'task-stopped']
+    ] as const) {
+      persistState(db, phaseCase(phase, reason), 'failed')
+      const restored = restoreWorkflowRuntimeState(db, 'task-1').state
+      expect(restored?.nodeRuns.terminal.autoRetry).toMatchObject({
+        phase,
+        attemptsStarted: 3,
+        lastRetryStartedAt: startedAt
+      })
+    }
+  })
+
+  it('keeps lastRetryStartedAt when an in-flight retry is reconciled to interrupted', () => {
+    const db = createDb()
+    const startedAt = 1_761_000_000_000
+    persistState(db, state({
+      status: 'running',
+      autoRetryContext: { runId: 'run-9', timeZone: 'UTC' },
+      nodeRuns: {
+        start: { nodeId: 'start', status: 'completed' },
+        terminal: {
+          nodeId: 'terminal',
+          status: 'running',
+          sessionId: 'session-1',
+          autoRetry: {
+            version: 1,
+            cycleId: 'cycle-1',
+            phase: 'running',
+            attemptsStarted: 2,
+            lastRetryStartedAt: startedAt
+          }
+        }
+      }
+    }), 'running')
+
+    reconcileRecoverableRuntimeState(db, { isTerminalSessionLive: () => false })
+
+    const restored = restoreWorkflowRuntimeState(db, 'task-1').state
+    expect(restored?.nodeRuns.terminal.autoRetry).toMatchObject({
+      phase: 'blocked',
+      reason: 'interrupted',
+      attemptsStarted: 2,
+      lastRetryStartedAt: startedAt
+    })
+  })
+
+  it('preserves lastRetryStartedAt when directly cancelling a waiting plan in storage', () => {
+    const db = createDb()
+    const startedAt = 1_761_000_000_000
+    persistState(db, state({
+      status: 'failed',
+      autoRetryContext: { runId: 'run-9', timeZone: 'UTC' },
+      nodeRuns: {
+        terminal: {
+          nodeId: 'terminal',
+          status: 'failed',
+          sessionId: 'session-1',
+          autoRetry: {
+            version: 1,
+            cycleId: 'cycle-1',
+            phase: 'waiting',
+            attemptsStarted: 1,
+            lastFailureAt: 1234,
+            lastRetryStartedAt: startedAt,
+            scheduleId: 's',
+            nextRetryAt: 1
+          }
+        }
+      }
+    }), 'failed')
+
+    expect(cancelWaitingAutoRetriesInDb(db, 'task-1', 'task-stopped')).toBe(1)
+
+    const restored = restoreWorkflowRuntimeState(db, 'task-1').state
+    expect(restored?.nodeRuns.terminal.autoRetry).toMatchObject({
+      phase: 'blocked',
+      reason: 'task-stopped',
+      lastRetryStartedAt: startedAt
+    })
+    expect(restored?.nodeRuns.terminal.autoRetry?.nextRetryAt).toBeUndefined()
+  })
+
+  it('ignores an invalid lastRetryStartedAt without invalidating a usable waiting plan', () => {
+    const db = createDb()
+    persistState(db, state({
+      status: 'failed',
+      autoRetryContext: { runId: 'run-9', timeZone: 'UTC' },
+      nodeRuns: {
+        terminal: {
+          nodeId: 'terminal',
+          status: 'failed',
+          sessionId: 'session-1',
+          autoRetry: {
+            version: 1,
+            cycleId: 'cycle-1',
+            phase: 'waiting',
+            attemptsStarted: 1,
+            lastFailureAt: 1234,
+            lastRetryStartedAt: 'yesterday' as unknown as number,
+            scheduleId: 'sched-7',
+            nextRetryAt: 5678
+          }
+        }
+      }
+    }), 'failed')
+
+    const restored = restoreWorkflowRuntimeState(db, 'task-1').state
+    expect(restored?.nodeRuns.terminal.autoRetry).toMatchObject({
+      phase: 'waiting',
+      attemptsStarted: 1,
+      scheduleId: 'sched-7',
+      nextRetryAt: 5678
+    })
+    expect(restored?.nodeRuns.terminal.autoRetry?.lastRetryStartedAt).toBeUndefined()
   })
 })
