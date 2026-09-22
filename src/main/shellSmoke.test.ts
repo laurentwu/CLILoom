@@ -21,6 +21,7 @@ import {
   type ShellFamily,
   type ShellNeutralCommand
 } from '../shared/shell'
+import { bindShellCommand, interpolate } from '../shared/workflow'
 import { openDatabase, type AppDatabase } from './database'
 import { ProcessRunner } from './processRunner'
 import { CMD_MAX_COMMAND_CHARS, getCmdCommandLineLength } from './shellExecution'
@@ -592,4 +593,100 @@ describe('native shell smoke', () => {
     },
     30_000
   )
+
+  it('deduplicates the startup echo of a long interactive Bash command', async () => {
+    const { directory, db, runner, shells, workingDirectory } = createNativeContext()
+    const bash = shells.getSnapshot().candidates.find((candidate) => (
+      candidate.family === 'posix' && /bash(\.exe)?$/.test(path.basename(candidate.executablePath))
+    ))
+    if (!bash) return
+    shells.select(bash.id)
+
+    const isolatedHome = path.join(directory, 'isolated-home')
+    mkdirSync(isolatedHome)
+    const profile = [
+      'export LANG=C.UTF-8',
+      'export LC_ALL=C.UTF-8',
+      'export TERM=xterm-256color',
+      'export HISTFILE=/dev/null',
+      'export HISTSIZE=0',
+      'export HISTCONTROL=ignoreall',
+      'PROMPT_COMMAND=',
+      "PS1='CLILOOM$ '",
+      'set +m'
+    ].join('\n')
+    writeFileSync(path.join(isolatedHome, '.bash_profile'), `${profile}\n`)
+    writeFileSync(path.join(isolatedHome, '.bashrc'), `${profile}\n`)
+    writeFileSync(path.join(isolatedHome, '.hushlogin'), '')
+
+    // The working directory contains a space and an emoji, so the quoted
+    // redirect in the command template is required for the marker file.
+    const markerFile = path.join(workingDirectory, 'startup-echo-count.txt')
+    const taskHint = '实际参数-$(echo 注入)'
+    const template = [
+      "printf '%s ' \"任务说明：请先检查 UI 布局与主题样式改动，",
+      '再运行 npm test 与 npm run typecheck，修复全部失败用例，',
+      '最后用中文总结本次改动、影响范围和验证结果。提示词：${taskHint}\";',
+      `printf x >> "${markerFile}"; exit`
+    ].join('')
+    const bound = bindShellCommand(template, { taskHint })
+    const displayCommand = interpolate(template, { taskHint })
+    const commandLineMarker = `printf '%s ' \"任务说明：`
+
+    let sawPaddingFragment = false
+    let executions = 0
+    for (const cols of [40, 80, 100, 120]) {
+      const interactive = withTimeout(runner.run({
+        taskId: 'native-startup-echo',
+        nodeId: `width-${cols}`,
+        kind: 'interactive',
+        command: bound,
+        displayCommand,
+        cwd: workingDirectory,
+        cols,
+        rows: 24,
+        env: {
+          HOME: isolatedHome,
+          TERM: 'xterm-256color',
+          // Force the binding-collision rename path (CLILOOM_INTERNAL_VALUE_0
+          // is reserved, so the executed command uses the next free index).
+          CLILOOM_INTERNAL_VALUE_0: 'collision-probe'
+        }
+      }), `interactive startup echo smoke at ${cols} columns`, 20_000)
+      const sessionId = newestSessionId(db)
+      const result = await interactive
+      executions += 1
+
+      const executedCommand = (db.prepare(
+        'select command from terminal_sessions where id = ?'
+      ).get(sessionId) as { command: string }).command
+      expect(result.exitCode, `exit code at ${cols} columns`).toBe(0)
+      expect(result.stdout, `raw echo at ${cols} columns`).toContain(executedCommand)
+      if (result.stdout.includes(' \u001b[K') || result.stdout.includes(' \u001b[0K')) {
+        sawPaddingFragment = true
+      }
+
+      const session = db.prepare(
+        'select transcript from terminal_sessions where id = ?'
+      ).get(sessionId) as { transcript: string }
+      expect(session.transcript, `transcript at ${cols} columns`).toContain(`CLILOOM$ ${displayCommand}`)
+      expect(session.transcript).not.toContain('CLILOOM_INTERNAL_VALUE')
+      expect(
+        session.transcript.split(commandLineMarker).length - 1,
+        `single startup command at ${cols} columns`
+      ).toBe(1)
+      expect(session.transcript, `program output at ${cols} columns`).toContain(taskHint)
+      expect(readFileSync(markerFile, 'utf8'), `execution count at ${cols} columns`).toBe('x'.repeat(executions))
+    }
+
+    if (!sawPaddingFragment) {
+      // Deterministic fixtures in terminalStartupEcho.test.ts and
+      // processRunner.pty.test.ts cover the padding fragments; record when the
+      // host Readline never draws them so the gap is visible in test output.
+      console.warn(
+        '[shellSmoke] host Bash/Readline did not emit " ESC[K"/" ESC[0K" padding ' +
+        'fragments at columns 40/80/100/120; tolerant redraw coverage relied on fixtures'
+      )
+    }
+  }, 120_000)
 })

@@ -30,6 +30,7 @@ import {
 import { getInteractiveCommandTerminator } from './shellExecution'
 import { discoverShells, selectDefaultShell, ShellUnavailableError } from './shellService'
 import { terminateProcessTree, type ProcessTerminationResult, type ProcessTreeHandle } from './processTermination'
+import { createInitialCommandEchoFilter, type TerminalOutputMapper } from './terminalStartupEcho'
 import {
   prepareExecutionInvocation,
   type PreparedExecutionInvocation
@@ -45,11 +46,6 @@ import {
 
 const SESSION_PERSIST_INTERVAL_MS = 5000
 const TERMINAL_DATA_FLUSH_INTERVAL_MS = 16
-
-type TerminalOutputMapper = {
-  map: (content: string) => string
-  flush: () => string
-}
 
 function createCommandDisplayMapper(
   command: string,
@@ -86,61 +82,6 @@ function createCommandDisplayMapper(
       const mapped = pending
       pending = ''
       return mapped
-    }
-  }
-}
-
-function createInitialCommandEchoFilter(command: string): TerminalOutputMapper | null {
-  if (!command) return null
-
-  // Input written before an interactive shell initializes its prompt can be
-  // echoed once by the TTY and then drawn again by the shell with its prompt.
-  const echoedLines = [`${command}\r\n`, `${command}\n`]
-  let heldEcho = ''
-  let pending = ''
-  let state: 'matching-echo' | 'awaiting-redraw' | 'passthrough' = 'matching-echo'
-
-  const releasePending = (includeHeldEcho: boolean) => {
-    const mapped = `${includeHeldEcho ? heldEcho : ''}${pending}`
-    heldEcho = ''
-    pending = ''
-    state = 'passthrough'
-    return mapped
-  }
-
-  const resolveRedraw = () => {
-    const redrawIndex = pending.indexOf(command)
-    const nextLineEnd = pending.indexOf('\n')
-    if (redrawIndex >= 0 && (nextLineEnd < 0 || redrawIndex <= nextLineEnd)) {
-      return releasePending(false)
-    }
-    if (nextLineEnd >= 0) return releasePending(true)
-    return ''
-  }
-
-  return {
-    map(content) {
-      if (state === 'passthrough') return content
-      pending += content
-
-      if (state === 'matching-echo') {
-        const echoedLine = echoedLines.find((candidate) => pending.startsWith(candidate))
-        if (echoedLine) {
-          heldEcho = echoedLine
-          pending = pending.slice(echoedLine.length)
-          state = 'awaiting-redraw'
-        } else if (echoedLines.some((candidate) => candidate.startsWith(pending))) {
-          return ''
-        } else {
-          return releasePending(false)
-        }
-      }
-
-      return resolveRedraw()
-    },
-    flush() {
-      if (state === 'passthrough') return ''
-      return releasePending(state === 'awaiting-redraw')
     }
   }
 }
