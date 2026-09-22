@@ -23,6 +23,17 @@ import {
   type EffectiveShellResolver,
   type ProcessTreeTerminator
 } from './processRunner'
+import {
+  MACOS_CAPTURED_COMMAND,
+  MACOS_CAPTURED_DISPLAY_COMMAND,
+  MACOS_CAPTURED_EXPECTED,
+  MACOS_CAPTURED_STREAM,
+  WIN32_CAPTURED_COMMAND,
+  WIN32_CAPTURED_DISPLAY_COMMAND,
+  WIN32_CAPTURED_EXPECTED,
+  WIN32_CAPTURED_PREFIX,
+  WIN32_CAPTURED_STREAM
+} from './terminalStartupEchoFixtures'
 import { ShellUnavailableError } from './shellService'
 import type { ShellNeutralCommand } from '../shared/shell'
 import {
@@ -1798,6 +1809,370 @@ describe('ProcessRunner hooks', () => {
       status: 'failed',
       exit_code: -1
     })
+    db.close()
+  })
+})
+
+describe('ProcessRunner captured platform startup echo integration', () => {
+  function createCapturedRunner(platform: NodeJS.Platform) {
+    const sends: Array<{ channel: string; payload: Record<string, unknown> }> = []
+    const ptyWrite = vi.fn()
+    mocks.ptySpawn.mockReturnValue({
+      pid: 1717,
+      onData: vi.fn((callback: (data: string) => void) => {
+        mocks.ptyDataHandlers.push(callback)
+      }),
+      onExit: vi.fn((callback: (event: { exitCode: number }) => void) => {
+        mocks.ptyExitHandlers.push(callback)
+      }),
+      write: ptyWrite,
+      resize: vi.fn(),
+      kill: vi.fn()
+    })
+    const { db, runner } = createRunner(() => ({
+      webContents: {
+        send: (channel: string, payload: unknown) => {
+          sends.push({ channel, payload: payload as Record<string, unknown> })
+        }
+      }
+    }), undefined, undefined, platform)
+    return { db, runner, sends, ptyWrite }
+  }
+
+  function capturedNeutralCommand(command: string, display: string) {
+    const prefixLength = command.indexOf('${CLILOOM_INTERNAL_VALUE_1}')
+    const suffix = command.slice(prefixLength + '${CLILOOM_INTERNAL_VALUE_1}'.length)
+    return {
+      command: {
+        version: 1 as const,
+        segments: [
+          { type: 'literal' as const, value: command.slice(0, prefixLength) },
+          { type: 'binding' as const, name: 'CLILOOM_INTERNAL_VALUE_1' },
+          { type: 'literal' as const, value: suffix }
+        ],
+        bindings: { CLILOOM_INTERNAL_VALUE_1: '实际参数-$(echo 注入)' }
+      },
+      displayCommand: display
+    }
+  }
+
+  function transcriptView(sends: Array<{ channel: string; payload: Record<string, unknown> }>, sessionId: string) {
+    return sends
+      .filter((event) => event.channel === 'terminal:data' && event.payload.sessionId === sessionId)
+      .map((event) => event.payload.content)
+      .join('')
+  }
+
+  it('normalizes the captured macOS startup across all transcript views', async () => {
+    const { db, runner, sends, ptyWrite } = createCapturedRunner('darwin')
+    const neutral = capturedNeutralCommand(MACOS_CAPTURED_COMMAND, MACOS_CAPTURED_DISPLAY_COMMAND)
+    const run = runner.run({
+      taskId: 'task-macos-startup',
+      nodeId: 'node-macos-startup',
+      kind: 'interactive',
+      command: neutral.command,
+      displayCommand: neutral.displayCommand,
+      cwd: '/repo',
+      cols: 40,
+      rows: 24
+    })
+    const sessionId = (db.prepare('select id from terminal_sessions limit 1').get() as { id: string }).id
+
+    expect(ptyWrite).toHaveBeenCalledTimes(1)
+    expect(ptyWrite).toHaveBeenCalledWith(`${MACOS_CAPTURED_COMMAND}\n`)
+
+    const bannerEnd = MACOS_CAPTURED_STREAM.indexOf('CLILOOM$ ')
+    mocks.ptyDataHandlers[0](MACOS_CAPTURED_STREAM.slice(0, bannerEnd))
+    mocks.ptyDataHandlers[0](MACOS_CAPTURED_STREAM.slice(bannerEnd))
+    const snapshot = runner.getLiveTranscriptSnapshot(sessionId, 'task-macos-startup')
+    expect(snapshot?.transcript).toBe(MACOS_CAPTURED_EXPECTED)
+
+    mocks.ptyExitHandlers[0]({ exitCode: 0 })
+    const result = await run
+    expect(result.stdout).toBe(MACOS_CAPTURED_STREAM)
+    expect(result.stderr).toBe('')
+    expect(result.exitCode).toBe(0)
+    expect(transcriptView(sends, sessionId)).toBe(MACOS_CAPTURED_EXPECTED)
+    const session = db.prepare('select transcript from terminal_sessions where id = ?')
+      .get(sessionId) as { transcript: string }
+    expect(session.transcript).toBe(MACOS_CAPTURED_EXPECTED)
+    expect(session.transcript).not.toContain('CLILOOM_INTERNAL_VALUE_1')
+    expect(session.transcript.split('任务说明：').length - 1).toBe(2)
+    db.close()
+  })
+
+  it('normalizes the captured Windows first draw without a bare echo', async () => {
+    const { db, runner, sends, ptyWrite } = createCapturedRunner('win32')
+    const neutral = capturedNeutralCommand(WIN32_CAPTURED_COMMAND, WIN32_CAPTURED_DISPLAY_COMMAND)
+    const run = runner.run({
+      taskId: 'task-win32-startup',
+      nodeId: 'node-win32-startup',
+      kind: 'interactive',
+      command: neutral.command,
+      displayCommand: neutral.displayCommand,
+      cwd: 'C:\\repo',
+      cols: 40,
+      rows: 24
+    })
+    const sessionId = (db.prepare('select id from terminal_sessions limit 1').get() as { id: string }).id
+
+    expect(ptyWrite).toHaveBeenCalledTimes(1)
+    expect(ptyWrite).toHaveBeenCalledWith(`${WIN32_CAPTURED_COMMAND}\r`)
+
+    mocks.ptyDataHandlers[0](WIN32_CAPTURED_STREAM.slice(0, 90))
+    mocks.ptyDataHandlers[0](WIN32_CAPTURED_STREAM.slice(90))
+    mocks.ptyExitHandlers[0]({ exitCode: 0 })
+    const result = await run
+    expect(result.stdout).toBe(WIN32_CAPTURED_STREAM)
+    expect(result.exitCode).toBe(0)
+    expect(transcriptView(sends, sessionId)).toBe(WIN32_CAPTURED_EXPECTED)
+    const session = db.prepare('select transcript from terminal_sessions where id = ?')
+      .get(sessionId) as { transcript: string }
+    expect(session.transcript).toBe(WIN32_CAPTURED_EXPECTED)
+    expect(session.transcript).not.toContain('CLILOOM_INTERNAL_VALUE_1')
+    db.close()
+  })
+
+  it('releases undecided startup bytes exactly once when the window expires', async () => {
+    vi.useFakeTimers()
+    const { db, runner, sends } = createCapturedRunner('win32')
+    try {
+      const neutral = capturedNeutralCommand(WIN32_CAPTURED_COMMAND, WIN32_CAPTURED_DISPLAY_COMMAND)
+      const run = runner.run({
+        taskId: 'task-win32-deadline',
+        nodeId: 'node-win32-deadline',
+        kind: 'interactive',
+        command: neutral.command,
+        displayCommand: neutral.displayCommand,
+        cwd: 'C:\\repo',
+        cols: 40,
+        rows: 24
+      })
+      const sessionId = (db.prepare('select id from terminal_sessions limit 1').get() as { id: string }).id
+
+      // Ends inside the OSC title so the display mapper has no command prefix
+      // to hold back.
+      const pendingSlice = WIN32_CAPTURED_STREAM.slice(0, 40)
+      mocks.ptyDataHandlers[0](pendingSlice)
+      expect(runner.getLiveTranscriptSnapshot(sessionId, 'task-win32-deadline')?.transcript).toBe('')
+
+      await vi.advanceTimersByTimeAsync(2_000)
+      expect(runner.getLiveTranscriptSnapshot(sessionId, 'task-win32-deadline')?.transcript)
+        .toBe(pendingSlice)
+
+      // The window is never extended or repeated: more pending output and time
+      // do not trigger a second release, and later bytes pass through as-is.
+      const later = `${WIN32_CAPTURED_STREAM.slice(40, 120)}`
+      mocks.ptyDataHandlers[0](later)
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(runner.getLiveTranscriptSnapshot(sessionId, 'task-win32-deadline')?.transcript)
+        .toBe(`${pendingSlice}${later}`)
+
+      mocks.ptyExitHandlers[0]({ exitCode: 0 })
+      const result = await run
+      expect(result.stdout).toBe(`${pendingSlice}${later}`)
+      expect(transcriptView(sends, sessionId)).toBe(`${pendingSlice}${later}`)
+      db.close()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('clears the recognition timer as soon as a later chunk settles recognition', async () => {
+    vi.useFakeTimers()
+    const schedule = vi.spyOn(globalThis, 'setTimeout')
+    const cancel = vi.spyOn(globalThis, 'clearTimeout')
+    const { db, runner, sends } = createCapturedRunner('win32')
+    try {
+      const neutral = capturedNeutralCommand(WIN32_CAPTURED_COMMAND, WIN32_CAPTURED_DISPLAY_COMMAND)
+      const run = runner.run({
+        taskId: 'task-win32-settled',
+        nodeId: 'node-win32-settled',
+        kind: 'interactive',
+        command: neutral.command,
+        displayCommand: neutral.displayCommand,
+        cwd: 'C:\\repo',
+        cols: 40,
+        rows: 24
+      })
+      const sessionId = (db.prepare('select id from terminal_sessions limit 1').get() as { id: string }).id
+      mocks.ptyDataHandlers[0](WIN32_CAPTURED_STREAM.slice(0, 40))
+      const timerIndex = schedule.mock.calls.findIndex((args) => args[1] === 2_000)
+      expect(timerIndex).toBeGreaterThanOrEqual(0)
+      const recognitionTimer = schedule.mock.results[timerIndex].value
+      mocks.ptyDataHandlers[0](WIN32_CAPTURED_STREAM.slice(40))
+      expect(cancel).toHaveBeenCalledWith(recognitionTimer)
+      const settled = runner.getLiveTranscriptSnapshot(sessionId, 'task-win32-settled')?.transcript
+      expect(settled).toBe(WIN32_CAPTURED_EXPECTED)
+
+      await vi.advanceTimersByTimeAsync(6_000)
+      mocks.ptyDataHandlers[0]('later output\r\n')
+      expect(schedule.mock.calls.filter((args) => args[1] === 2_000)).toHaveLength(1)
+      mocks.ptyExitHandlers[0]({ exitCode: 0 })
+      await run
+      expect(transcriptView(sends, sessionId)).toBe(`${WIN32_CAPTURED_EXPECTED}later output\r\n`)
+      db.close()
+    } finally {
+      schedule.mockRestore()
+      cancel.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not arm the window when the first output already passes through', async () => {
+    vi.useFakeTimers()
+    const { db, runner } = createCapturedRunner('linux')
+    try {
+      const run = runner.run({
+        taskId: 'task-linux-prompt',
+        nodeId: 'node-linux-prompt',
+        kind: 'interactive',
+        command: 'deploy-app',
+        cwd: '/repo'
+      })
+      const sessionId = (db.prepare('select id from terminal_sessions limit 1').get() as { id: string }).id
+      mocks.ptyDataHandlers[0]('Password: ')
+      expect(runner.getLiveTranscriptSnapshot(sessionId, 'task-linux-prompt')?.transcript)
+        .toBe('Password: ')
+
+      await vi.advanceTimersByTimeAsync(4_000)
+      expect(runner.getLiveTranscriptSnapshot(sessionId, 'task-linux-prompt')?.transcript)
+        .toBe('Password: ')
+
+      mocks.ptyExitHandlers[0]({ exitCode: 0 })
+      await run
+      db.close()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('releases pending recognition on resize and stops interpreting stale columns', async () => {
+    vi.useFakeTimers()
+    const { db, runner, sends } = createCapturedRunner('win32')
+    try {
+      const neutral = capturedNeutralCommand(WIN32_CAPTURED_COMMAND, WIN32_CAPTURED_DISPLAY_COMMAND)
+      const run = runner.run({
+        taskId: 'task-win32-resize',
+        nodeId: 'node-win32-resize',
+        kind: 'interactive',
+        command: neutral.command,
+        displayCommand: neutral.displayCommand,
+        cwd: 'C:\\repo',
+        cols: 40,
+        rows: 24
+      })
+      const sessionId = (db.prepare('select id from terminal_sessions limit 1').get() as { id: string }).id
+
+      const pendingSlice = WIN32_CAPTURED_STREAM.slice(0, 40)
+      mocks.ptyDataHandlers[0](pendingSlice)
+      expect(runner.getLiveTranscriptSnapshot(sessionId, 'task-win32-resize')?.transcript).toBe('')
+
+      expect(runner.resize(sessionId, 120, 30)).toBe(true)
+      expect(runner.getLiveTranscriptSnapshot(sessionId, 'task-win32-resize')?.transcript)
+        .toBe(pendingSlice)
+
+      await vi.advanceTimersByTimeAsync(3_000)
+      expect(runner.getLiveTranscriptSnapshot(sessionId, 'task-win32-resize')?.transcript)
+        .toBe(pendingSlice)
+
+      // After the release the recognizer is inert: the remaining captured
+      // bytes (including the boundary insert) pass through unchanged.
+      const rest = WIN32_CAPTURED_STREAM.slice(40)
+      mocks.ptyDataHandlers[0](rest)
+      expect(runner.getLiveTranscriptSnapshot(sessionId, 'task-win32-resize')?.transcript)
+        .toBe(WIN32_CAPTURED_STREAM)
+
+      mocks.ptyExitHandlers[0]({ exitCode: 0 })
+      const result = await run
+      expect(result.stdout).toBe(WIN32_CAPTURED_STREAM)
+      expect(transcriptView(sends, sessionId)).toBe(WIN32_CAPTURED_STREAM)
+      db.close()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('flushes pending startup bytes once when the session is killed mid-recognition', async () => {
+    vi.useFakeTimers()
+    const { db, runner, sends } = createCapturedRunner('darwin')
+    try {
+      const neutral = capturedNeutralCommand(MACOS_CAPTURED_COMMAND, MACOS_CAPTURED_DISPLAY_COMMAND)
+      const run = runner.run({
+        taskId: 'task-macos-kill',
+        nodeId: 'node-macos-kill',
+        kind: 'interactive',
+        command: neutral.command,
+        displayCommand: neutral.displayCommand,
+        cwd: '/repo',
+        cols: 40,
+        rows: 24
+      })
+      const sessionId = (db.prepare('select id from terminal_sessions limit 1').get() as { id: string }).id
+      const partial = `${MACOS_CAPTURED_COMMAND}\r\n\r\nThe default interactive shell`
+      mocks.ptyDataHandlers[0](partial)
+      expect(runner.getLiveTranscriptSnapshot(sessionId, 'task-macos-kill')?.transcript).toBe('')
+
+      await expect(runner.kill(sessionId)).resolves.toBe(true)
+      await expect(run).resolves.toMatchObject({ status: 'killed', exitCode: null })
+      const flushed = db.prepare('select transcript from terminal_sessions where id = ?')
+        .get(sessionId) as { transcript: string }
+      expect(flushed.transcript)
+        .toBe(`${MACOS_CAPTURED_DISPLAY_COMMAND}\r\n\r\nThe default interactive shell`)
+
+      await vi.advanceTimersByTimeAsync(4_000)
+      await expect(runner.kill(sessionId)).resolves.toBe(false)
+      const session = db.prepare('select transcript from terminal_sessions where id = ?')
+        .get(sessionId) as { transcript: string }
+      expect(session.transcript).toBe(flushed.transcript)
+      expect(sends.filter((event) => event.channel === 'terminal:closed')).toHaveLength(1)
+      db.close()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('retries with a fresh recognition state on the new command', async () => {
+    const { db, runner, sends, ptyWrite } = createCapturedRunner('win32')
+    const neutral = capturedNeutralCommand(WIN32_CAPTURED_COMMAND, WIN32_CAPTURED_DISPLAY_COMMAND)
+    const first = runner.run({
+      taskId: 'task-win32-retry',
+      nodeId: 'node-win32-retry',
+      kind: 'interactive',
+      command: neutral.command,
+      displayCommand: neutral.displayCommand,
+      cwd: 'C:\\repo',
+      cols: 40,
+      rows: 24
+    })
+    const sessionId = (db.prepare('select id from terminal_sessions limit 1').get() as { id: string }).id
+    mocks.ptyDataHandlers[0](WIN32_CAPTURED_STREAM)
+    mocks.ptyExitHandlers[0]({ exitCode: 0 })
+    await expect(first).resolves.toMatchObject({ exitCode: 0 })
+
+    const retryPrefix = WIN32_CAPTURED_PREFIX
+    const retryCommand = `printf '%s ' "重试任务检查任务${'$'}{CLILOOM_INTERNAL_VALUE_1}"; exit`
+    const retryDisplay = `printf '%s ' "重试任务检查任务重试参数"; exit`
+    const retryNeutral = capturedNeutralCommand(retryCommand, retryDisplay)
+    // The boundary insert lands exactly at the 40-column edge: prompt (9) +
+    // "printf '%s \"" (14) + eight wide glyphs (16) = column 39, padding
+    // space brings the cursor to column 40 where ConPTY repositions.
+    const retryRedraw = `${retryCommand.slice(0, 22)} \u001b[?2004l\u001b[1;40H ${retryCommand.slice(22)}`
+    const retryStream = `${retryPrefix}CLILOOM$ ${retryRedraw}\r\nretry output\r\n`
+    sends.length = 0
+    const retried = runner.retry(sessionId, {
+      command: retryNeutral.command,
+      displayCommand: retryDisplay
+    })
+    expect(ptyWrite).toHaveBeenLastCalledWith(`${retryCommand}\r`)
+    mocks.ptyDataHandlers[1](retryStream)
+    mocks.ptyExitHandlers[1]({ exitCode: 0 })
+    await expect(retried.result).resolves.toMatchObject({ exitCode: 0 })
+
+    const session = db.prepare('select transcript from terminal_sessions where id = ?')
+      .get(sessionId) as { transcript: string }
+    expect(session.transcript).toBe(`${retryPrefix}CLILOOM$ ${retryDisplay}\r\nretry output\r\n`)
+    expect(transcriptView(sends, sessionId)).toBe(session.transcript)
     db.close()
   })
 })

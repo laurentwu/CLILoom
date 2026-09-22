@@ -28,6 +28,11 @@ import type { UserSkin } from '../src/shared/appSettings'
  * below executes the private workspace `cliloom` launcher for each job the
  * test submits. No real AI service is involved and no unauthenticated entry
  * point is added to production code.
+ *
+ * The whole assistant configuration lifecycle runs as one stateful scenario:
+ * each step continues the exact database, running windows, and assistant
+ * session left by the previous step, so a mid-scenario failure cannot cascade
+ * into misleading "persistence lost" reports from later tests.
  */
 
 const projectRoot = path.join(__dirname, '..')
@@ -80,6 +85,7 @@ done
 `
 
 let appDataDirectory = ''
+let fixtureDirectory = ''
 let jobsDirectory = ''
 let resultsDirectory = ''
 let scriptDirectory = ''
@@ -89,6 +95,20 @@ let electronApp: ElectronApplication
 let mainPage: Page
 
 test.skip(process.platform !== 'linux', 'The assistant configuration e2e runs on the Linux validation job')
+
+let lastJob: { name: string; body: string; stdout: string; stderr: string; exit: string } | null = null
+
+function jobDiagnostics(): string {
+  if (!lastJob) return 'no job ran yet'
+  const listing = existsSync(resultsDirectory) ? readdirSync(resultsDirectory).join(', ') : ''
+  return [
+    `last job: ${lastJob.name}`,
+    `exit=${lastJob.exit}`,
+    `stderr=${lastJob.stderr.slice(0, 500)}`,
+    `stdout=${lastJob.stdout.slice(0, 500)}`,
+    `results: ${listing}`
+  ].join(' | ')
+}
 
 async function waitForResultFile(name: string, timeoutMs = 90_000): Promise<void> {
   const startedAt = Date.now()
@@ -101,13 +121,46 @@ async function waitForResultFile(name: string, timeoutMs = 90_000): Promise<void
   }
 }
 
-async function runJob(name: string, body: string): Promise<{ stdout: string; stderr: string; exit: string }> {
+async function runJob(name: string, body: string): Promise<JobResult> {
   writeFileSync(path.join(jobsDirectory, `${name}.sh`), `${body}\n`)
   await waitForResultFile(`${name}.sh.done`)
-  return {
+  const result = {
+    name,
     stdout: readFileSync(path.join(resultsDirectory, `${name}.sh.stdout`), 'utf8'),
     stderr: readFileSync(path.join(resultsDirectory, `${name}.sh.stderr`), 'utf8'),
     exit: readFileSync(path.join(resultsDirectory, `${name}.sh.exit`), 'utf8')
+  }
+  lastJob = { body, ...result }
+  return result
+}
+
+/** Parses job stdout as JSON with the failing job's diagnostics attached. */
+type JobResult = { name: string; stdout: string; stderr: string; exit: string }
+function parseJobJson<T>(job: Pick<JobResult, 'name' | 'stdout'>, label: string): T {
+  try {
+    return JSON.parse(job.stdout) as T
+  } catch (error) {
+    throw new Error(
+      `${label}: ${job.name} returned invalid JSON (${error instanceof Error ? error.message : String(error)}); ${jobDiagnostics()}`
+    )
+  }
+}
+
+/** Parses a failed job's stderr JSON error with diagnostics attached. */
+function parseJobError<T>(job: JobResult, label: string): T {
+  try {
+    return JSON.parse(job.stderr) as T
+  } catch (error) {
+    throw new Error(
+      `${label}: ${job.name} returned invalid JSON error (${error instanceof Error ? error.message : String(error)}); ${jobDiagnostics()}`
+    )
+  }
+}
+
+/** Asserts a job's exit code with full diagnostics instead of a bare expect. */
+function expectJobExit(job: JobResult, label: string, expected: string): void {
+  if (job.exit !== expected) {
+    throw new Error(`${label}: ${job.name} exited with ${job.exit}, expected ${expected}; ${jobDiagnostics()}`)
   }
 }
 
@@ -166,7 +219,7 @@ async function readTaskSidebarWidth(): Promise<string> {
 
 test.beforeAll(async () => {
   appDataDirectory = mkdtempSync(path.join(tmpdir(), 'cliloom-assistant-config-data-'))
-  const fixtureDirectory = mkdtempSync(path.join(tmpdir(), 'cliloom-assistant-config-fixture-'))
+  fixtureDirectory = mkdtempSync(path.join(tmpdir(), 'cliloom-assistant-config-fixture-'))
   scriptDirectory = path.join(fixtureDirectory, 'bin')
   jobsDirectory = path.join(fixtureDirectory, 'jobs')
   resultsDirectory = path.join(fixtureDirectory, 'results')
@@ -189,6 +242,7 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
   await electronApp?.close()
   if (appDataDirectory) rmSync(appDataDirectory, { recursive: true, force: true })
+  if (fixtureDirectory) rmSync(fixtureDirectory, { recursive: true, force: true })
 })
 
 function withTermAutoRetry(definition: WorkflowDefinition, autoRetry: unknown): WorkflowDefinition {
@@ -202,254 +256,258 @@ function withTermAutoRetry(definition: WorkflowDefinition, autoRetry: unknown): 
   }
 }
 
-test('assistant discovers capabilities and configures terminal auto-retry', async () => {
-  const context = await runJob('10-context', 'cliloom context --json')
-  expect(context.exit).toBe('0')
-  expect(context.stderr).toBe('')
-  const contextData = JSON.parse(context.stdout) as {
-    schemaVersion: number
-    commandDescriptors: Array<{ id: string }>
-    publicSettings: Array<{ key: string }>
-    workflows: Array<{ id: string; revision: number }>
-  }
-  expect(contextData.schemaVersion).toBe(2)
-  const descriptorIds = contextData.commandDescriptors.map((descriptor) => descriptor.id)
-  expect(descriptorIds).toContain('workflow.save')
-  expect(descriptorIds).not.toContain('workflow.auto-retry.get')
-  expect(descriptorIds).not.toContain('workflow.auto-retry.set')
-  expect(contextData.publicSettings.map((setting) => setting.key)).toContain('layout.projectRailWidth')
-  expect(contextData.workflows).toEqual([expect.objectContaining({ id: 'assistant-config-e2e', revision: 1 })])
-  expect(context.stdout).not.toContain('CLILOOM_ASSISTANT_BRIDGE_TOKEN')
+test('assistant configuration lifecycle', async () => {
+  test.setTimeout(180_000)
 
-  const schema = await runJob('20-schema', 'cliloom workflow schema --json')
-  expect(schema.exit).toBe('0')
-  const schemaData = JSON.parse(schema.stdout) as {
-    schemaVersion: number
-    save: { usage: string }
-    nodeConfigs: Record<string, unknown>
-    terminalAutoRetry: { examples: Record<string, unknown> }
-    examples: Record<string, unknown>
-  }
-  expect(schemaData.schemaVersion).toBe(2)
-  expect(schemaData.save.usage).toContain('cliloom workflow save')
-  expect(Object.keys(schemaData.nodeConfigs)).toEqual([
-    'start',
-    'interactive-terminal',
-    'non-interactive-terminal',
-    'input',
-    'exclusive-gateway',
-    'parallel-gateway',
-    'end'
-  ])
+  await test.step('discovers capabilities and saves the full workflow lifecycle', async () => {
+    const context = await runJob('10-context', 'cliloom context --json')
+    expectJobExit(context, 'context', '0')
+    expect(context.stderr, `context stderr; ${jobDiagnostics()}`).toBe('')
+    const contextData = parseJobJson<{
+      schemaVersion: number
+      commandDescriptors: Array<{ id: string }>
+      publicSettings: Array<{ key: string }>
+      workflows: Array<{ id: string; revision: number }>
+    }>(context, 'context')
+    expect(contextData.schemaVersion).toBe(2)
+    const descriptorIds = contextData.commandDescriptors.map((descriptor) => descriptor.id)
+    expect(descriptorIds).toContain('workflow.save')
+    expect(descriptorIds).not.toContain('workflow.auto-retry.get')
+    expect(descriptorIds).not.toContain('workflow.auto-retry.set')
+    expect(contextData.publicSettings.map((setting) => setting.key)).toContain('layout.projectRailWidth')
+    expect(contextData.workflows).toEqual([expect.objectContaining({ id: 'assistant-config-e2e', revision: 1 })])
+    expect(context.stdout).not.toContain('CLILOOM_ASSISTANT_BRIDGE_TOKEN')
 
-  const read = await runJob('30-workflow-get', 'cliloom workflow get assistant-config-e2e --json')
-  expect(read.exit).toBe('0')
-  const record = JSON.parse(read.stdout) as {
-    workflow: WorkflowDefinition
-    revision: number
-  }
-  expect(record.revision).toBe(1)
-  expect(record.workflow.id).toBe('assistant-config-e2e')
+    const schema = await runJob('20-schema', 'cliloom workflow schema --json')
+    expectJobExit(schema, 'schema', '0')
+    const schemaData = parseJobJson<{
+      schemaVersion: number
+      save: { usage: string }
+      nodeConfigs: Record<string, unknown>
+      terminalAutoRetry: { examples: Record<string, unknown> }
+      examples: Record<string, unknown>
+    }>(schema, 'schema')
+    expect(schemaData.schemaVersion).toBe(2)
+    expect(schemaData.save.usage).toContain('cliloom workflow save')
+    expect(Object.keys(schemaData.nodeConfigs)).toEqual([
+      'start',
+      'interactive-terminal',
+      'non-interactive-terminal',
+      'input',
+      'exclusive-gateway',
+      'parallel-gateway',
+      'end'
+    ])
 
-  const set = await runJob('40-workflow-save-recommended', [
-    `printf '%s' '${JSON.stringify(withTermAutoRetry(record.workflow, { enabled: true, mode: 'recommended', maxRetries: 5 }))}' | cliloom workflow save --stdin --expected-revision ${record.revision} --json`
-  ].join('\n'))
-  expect(set.exit, `set stderr: ${set.stderr}`).toBe('0')
-  expect(set.stderr).toBe('')
-  expect(JSON.parse(set.stdout)).toMatchObject({
-    command: 'workflow.save',
-    created: false,
-    revision: 2
+    const read = await runJob('30-workflow-get', 'cliloom workflow get assistant-config-e2e --json')
+    expectJobExit(read, 'workflow get', '0')
+    const record = parseJobJson<{ workflow: WorkflowDefinition; revision: number }>(read, 'workflow get')
+    expect(record.revision).toBe(1)
+    expect(record.workflow.id).toBe('assistant-config-e2e')
+
+    const set = await runJob('40-workflow-save-recommended', [
+      `printf '%s' '${JSON.stringify(withTermAutoRetry(record.workflow, { enabled: true, mode: 'recommended', maxRetries: 5 }))}' | cliloom workflow save --stdin --expected-revision ${record.revision} --json`
+    ].join('\n'))
+    expectJobExit(set, 'recommended save', '0')
+    expect(set.stderr, `recommended save stderr; ${jobDiagnostics()}`).toBe('')
+    expect(parseJobJson<{ revision: number }>(set, 'recommended save')).toMatchObject({
+      command: 'workflow.save',
+      created: false,
+      revision: 2
+    })
+
+    const savedInApp = await mainPage.evaluate(async () => {
+      if (!window.cliLoom) throw new Error('Missing main preload API')
+      const records = (await window.cliLoom.listWorkflows()) as Array<{
+        revision: number
+        workflow: WorkflowDefinition
+      }>
+      const record = records.find((item) => item.workflow.id === 'assistant-config-e2e')
+      if (!record) throw new Error('Workflow missing from the main window')
+      return record
+    })
+    expect(savedInApp.revision).toBe(2)
+    const terminal = savedInApp.workflow.nodes.find((node) => node.id === 'term')
+    expect(terminal?.config).toMatchObject({
+      command: 'sleep 30',
+      retryCommand: 'sleep 30 --retry',
+      autoRetry: { enabled: true, mode: 'recommended', maxRetries: 5 }
+    })
+
+    // The designer's unsaved-edit protection blocks assistant writes.
+    await mainPage.evaluate(async (workflowId) => {
+      if (!window.cliLoom) throw new Error('Missing main preload API')
+      await window.cliLoom.setDesignerState({ workflowId, open: true, dirty: true })
+    }, 'assistant-config-e2e')
+    const dirty = await runJob('50-workflow-save-dirty', [
+      `printf '%s' '${JSON.stringify(withTermAutoRetry(record.workflow, { enabled: true, mode: 'cron', cron: '*/15 * * * *', maxRetries: null }))}' | cliloom workflow save --stdin --expected-revision 2 --json`
+    ].join('\n'))
+    expect(dirty.exit, `dirty-guard stderr; ${jobDiagnostics()}`).toBe('2')
+    expect(parseJobError<{ error: { code: string } }>(dirty, 'dirty guard').error.code).toBe('VALIDATION_ERROR')
+
+    await mainPage.evaluate(async () => {
+      if (!window.cliLoom) throw new Error('Missing main preload API')
+      await window.cliLoom.setDesignerState({ workflowId: null, open: false, dirty: false })
+    })
+    const stale = await runJob('60-workflow-save-stale', [
+      `printf '%s' '${JSON.stringify(withTermAutoRetry(record.workflow, { enabled: true, mode: 'cron', cron: '*/15 * * * *', maxRetries: null }))}' | cliloom workflow save --stdin --expected-revision 1 --json`
+    ].join('\n'))
+    expect(stale.exit).toBe('5')
+    expect(parseJobError<{ error: { code: string } }>(stale, 'stale revision').error.code).toBe('WORKFLOW_REVISION_CONFLICT')
+
+    const removal = await runJob('65-workflow-save-removal', [
+      `printf '%s' '${JSON.stringify(withTermAutoRetry(record.workflow, undefined))}' | cliloom workflow save --stdin --expected-revision 2 --json`
+    ].join('\n'))
+    expectJobExit(removal, 'auto-retry removal', '0')
+    expect(removal.stderr, jobDiagnostics()).toBe('')
+    expect(parseJobJson<{ revision: number }>(removal, 'auto-retry removal')).toMatchObject({ revision: 3 })
+    const afterRemoval = await runJob('66-workflow-get-removed', 'cliloom workflow get assistant-config-e2e --json')
+    const removedRecord = parseJobJson<{ workflow: WorkflowDefinition; revision: number }>(afterRemoval, 'removed auto-retry get')
+    const removedTerminal = removedRecord.workflow.nodes.find((node) => node.id === 'term')
+    expect((removedTerminal?.config as Record<string, unknown>).autoRetry).toBeUndefined()
+    expect(removedTerminal?.config).toMatchObject({ command: 'sleep 30', retryCommand: 'sleep 30 --retry' })
+
+    const retry = await runJob('70-workflow-save-cron', [
+      `printf '%s' '${JSON.stringify(withTermAutoRetry(removedRecord.workflow, { enabled: true, mode: 'cron', cron: '*/15 * * * *', maxRetries: null }))}' | cliloom workflow save --stdin --expected-revision 3 --json`
+    ].join('\n'))
+    expectJobExit(retry, 'cron save', '0')
+    expect(retry.stderr, jobDiagnostics()).toBe('')
+    expect(parseJobJson<{ revision: number }>(retry, 'cron save')).toMatchObject({
+      revision: 4
+    })
+
+    const legacyGet = await runJob('75-legacy-auto-retry-get', 'cliloom workflow auto-retry get assistant-config-e2e term --json')
+    expect(legacyGet.exit).toBe('2')
+    expect(parseJobError<{ error: { code: string } }>(legacyGet, 'legacy get').error.code).toBe('INVALID_ARGUMENT')
+    const legacySet = await runJob('76-legacy-auto-retry-set', [
+      `printf '%s' '{"enabled":true,"mode":"recommended"}' | cliloom workflow auto-retry set assistant-config-e2e term --stdin --expected-revision 4 --json`
+    ].join('\n'))
+    expect(legacySet.exit).toBe('2')
+    expect(parseJobError<{ error: { code: string } }>(legacySet, 'legacy set').error.code).toBe('INVALID_ARGUMENT')
   })
 
-  const savedInApp = await mainPage.evaluate(async () => {
-    if (!window.cliLoom) throw new Error('Missing main preload API')
-    const records = (await window.cliLoom.listWorkflows()) as Array<{
-      revision: number
-      workflow: WorkflowDefinition
-    }>
-    const record = records.find((item) => item.workflow.id === 'assistant-config-e2e')
-    if (!record) throw new Error('Workflow missing from the main window')
-    return record
-  })
-  expect(savedInApp.revision).toBe(2)
-  const terminal = savedInApp.workflow.nodes.find((node) => node.id === 'term')
-  expect(terminal?.config).toMatchObject({
-    command: 'sleep 30',
-    retryCommand: 'sleep 30 --retry',
-    autoRetry: { enabled: true, mode: 'recommended', maxRetries: 5 }
-  })
+  await test.step('syncs layout, shell, and skin settings into running windows', async () => {
+    const width = await runJob('80-layout', 'cliloom settings set layout.projectRailWidth 200 --json')
+    expectJobExit(width, 'layout', '0')
+    expect(parseJobJson<{ key: string; value: string; appliesTo: string }>(width, 'layout')).toMatchObject({
+      key: 'layout.projectRailWidth',
+      value: '200',
+      appliesTo: 'immediate'
+    })
+    await expect.poll(readProjectRailWidth).toBe('200px')
+    await expect.poll(readTaskSidebarWidth).toBe('168px')
 
-  // The designer's unsaved-edit protection blocks assistant writes.
-  await mainPage.evaluate(async (workflowId) => {
-    if (!window.cliLoom) throw new Error('Missing main preload API')
-    await window.cliLoom.setDesignerState({ workflowId, open: true, dirty: true })
-  }, 'assistant-config-e2e')
-  const dirty = await runJob('50-workflow-save-dirty', [
-    `printf '%s' '${JSON.stringify(withTermAutoRetry(record.workflow, { enabled: true, mode: 'cron', cron: '*/15 * * * *', maxRetries: null }))}' | cliloom workflow save --stdin --expected-revision 2 --json`
-  ].join('\n'))
-  expect(dirty.exit).toBe('2')
-  expect(JSON.parse(dirty.stderr).error.code).toBe('VALIDATION_ERROR')
+    const shells = await runJob('90-shell-list', 'cliloom shell list --json')
+    expectJobExit(shells, 'shell list', '0')
+    const shellSnapshot = parseJobJson<{ shell: ShellSnapshot }>(shells, 'shell list')
+    expect(shellSnapshot.shell.candidates.length).toBeGreaterThan(0)
+    expect(shells.stdout).not.toContain('CLILOOM_ASSISTANT_BRIDGE_TOKEN')
+    const candidate = shellSnapshot.shell.candidates[0]
 
-  await mainPage.evaluate(async () => {
-    if (!window.cliLoom) throw new Error('Missing main preload API')
-    await window.cliLoom.setDesignerState({ workflowId: null, open: false, dirty: false })
-  })
-  const stale = await runJob('60-workflow-save-stale', [
-    `printf '%s' '${JSON.stringify(withTermAutoRetry(record.workflow, { enabled: true, mode: 'cron', cron: '*/15 * * * *', maxRetries: null }))}' | cliloom workflow save --stdin --expected-revision 1 --json`
-  ].join('\n'))
-  expect(stale.exit).toBe('5')
-  expect(JSON.parse(stale.stderr).error.code).toBe('WORKFLOW_REVISION_CONFLICT')
+    const select = await runJob('100-shell-select', `cliloom shell select '${candidate.id}' --json`)
+    expectJobExit(select, 'shell select', '0')
+    expect(parseJobJson<{ command: string; appliesTo: string }>(select, 'shell select')).toMatchObject({
+      command: 'shell.select',
+      appliesTo: 'new-workflows-and-next-assistant-session'
+    })
+    await expect.poll(async () => (
+      (await mainPage.evaluate(() => window.cliLoom?.getShells())) as ShellSnapshot
+    ).preferences.selection.mode).toBe('explicit')
 
-  const removal = await runJob('65-workflow-save-removal', [
-    `printf '%s' '${JSON.stringify(withTermAutoRetry(record.workflow, undefined))}' | cliloom workflow save --stdin --expected-revision 2 --json`
-  ].join('\n'))
-  expect(removal.exit, `removal stderr: ${removal.stderr}`).toBe('0')
-  expect(JSON.parse(removal.stdout)).toMatchObject({ revision: 3 })
-  const afterRemoval = await runJob('66-workflow-get-removed', 'cliloom workflow get assistant-config-e2e --json')
-  const removedRecord = JSON.parse(afterRemoval.stdout) as { workflow: WorkflowDefinition; revision: number }
-  const removedTerminal = removedRecord.workflow.nodes.find((node) => node.id === 'term')
-  expect((removedTerminal?.config as Record<string, unknown>).autoRetry).toBeUndefined()
-  expect(removedTerminal?.config).toMatchObject({ command: 'sleep 30', retryCommand: 'sleep 30 --retry' })
+    // The running assistant session keeps its bridge: another job still works.
+    const alive = await runJob('110-alive', 'cliloom settings get layout.taskSidebarWidth')
+    expectJobExit(alive, 'alive check', '0')
+    expect(alive.stdout.trim()).toBe('168')
 
-  const retry = await runJob('70-workflow-save-cron', [
-    `printf '%s' '${JSON.stringify(withTermAutoRetry(removedRecord.workflow, { enabled: true, mode: 'cron', cron: '*/15 * * * *', maxRetries: null }))}' | cliloom workflow save --stdin --expected-revision 3 --json`
-  ].join('\n'))
-  expect(retry.exit).toBe('0')
-  expect(JSON.parse(retry.stdout)).toMatchObject({
-    revision: 4
-  })
+    const skin = await runJob('120-skin-duplicate', 'cliloom skin duplicate builtin.dark.neutral --json')
+    expectJobExit(skin, 'skin duplicate', '0')
+    const created = (parseJobJson<{ skin: { id: string; name: string; builtin: boolean; content: UserSkin } }>(skin, 'skin duplicate')).skin
+    expect(created.builtin).toBe(false)
+    expect(created.id).not.toBe('builtin.dark.neutral')
 
-  const legacyGet = await runJob('75-legacy-auto-retry-get', 'cliloom workflow auto-retry get assistant-config-e2e term --json')
-  expect(legacyGet.exit).toBe('2')
-  const legacySet = await runJob('76-legacy-auto-retry-set', [
-    `printf '%s' '{"enabled":true,"mode":"recommended"}' | cliloom workflow auto-retry set assistant-config-e2e term --stdin --expected-revision 4 --json`
-  ].join('\n'))
-  expect(legacySet.exit).toBe('2')
-  expect(JSON.parse(legacySet.stderr).error.code).toBe('INVALID_ARGUMENT')
-})
+    const updatePayload = JSON.stringify({
+      mode: created.content.mode,
+      colors: created.content.colors,
+      typography: { codeFontFamily: 'Test Mono', fontSize: 18, lineHeight: 1.6 },
+      radius: 1,
+      background: created.content.background,
+      spacingScale: 1.25
+    })
+    const updated = await runJob('130-skin-update', [
+      `printf '%s' '${updatePayload}' | cliloom skin update '${created.id}' --stdin --json`
+    ].join('\n'))
+    expectJobExit(updated, `skin update; ${jobDiagnostics()}`, '0')
+    expect((parseJobJson<{ skin: { content: UserSkin } }>(updated, 'skin update')).skin.content.typography.fontSize).toBe(18)
+    expect((parseJobJson<{ skin: { name: string } }>(updated, 'skin update')).skin.name).toContain('copy')
 
-test('assistant updates widths, shells, and skins with live application sync', async () => {
-  const width = await runJob('80-layout', 'cliloom settings set layout.projectRailWidth 200 --json')
-  expect(width.exit).toBe('0')
-  expect(JSON.parse(width.stdout)).toMatchObject({
-    key: 'layout.projectRailWidth',
-    value: '200',
-    appliesTo: 'immediate'
-  })
-  await expect.poll(readProjectRailWidth).toBe('200px')
-  await expect.poll(readTaskSidebarWidth).toBe('168px')
+    const userSkins = await mainPage.evaluate(async () => {
+      const response = await window.cliLoom?.bootstrap()
+      return (response?.settings.skins ?? []) as UserSkin[]
+    })
+    const fromApp = userSkins.find((item) => item.id === created.id)
+    expect(fromApp?.typography.codeFontFamily).toBe('Test Mono')
+    createdSkinId = created.id
+    selectedCandidatePath = candidate.executablePath
 
-  const shells = await runJob('90-shell-list', 'cliloom shell list --json')
-  expect(shells.exit).toBe('0')
-  const shellSnapshot = JSON.parse(shells.stdout) as { shell: ShellSnapshot }
-  expect(shellSnapshot.shell.candidates.length).toBeGreaterThan(0)
-  expect(shells.stdout).not.toContain('CLILOOM_ASSISTANT_BRIDGE_TOKEN')
-  const candidate = shellSnapshot.shell.candidates[0]
+    // Activating the skin through the assistant syncs both existing windows.
+    const assistantPage = electronApp.windows().find((page) => page.url().includes('assistant.html'))
+    expect(assistantPage).toBeTruthy()
+    const readThemeBackground = async (page: Page): Promise<string> => page.evaluate(() => (
+      getComputedStyle(document.documentElement).getPropertyValue('--background').trim()
+    ))
+    const mainBefore = await readThemeBackground(mainPage)
+    const assistantBefore = await readThemeBackground(assistantPage!)
+    expect(mainBefore).toBe(assistantBefore)
 
-  const select = await runJob('100-shell-select', `cliloom shell select '${candidate.id}' --json`)
-  expect(select.exit).toBe('0')
-  expect(JSON.parse(select.stdout)).toMatchObject({
-    command: 'shell.select',
-    appliesTo: 'new-workflows-and-next-assistant-session'
-  })
-  await expect.poll(async () => (
-    (await mainPage.evaluate(() => window.cliLoom?.getShells())) as ShellSnapshot
-  ).preferences.selection.mode).toBe('explicit')
+    const activated = await runJob(
+      '135-skin-activate',
+      `cliloom settings set appearance.skin '${created.id}' --json`
+    )
+    expectJobExit(activated, 'skin activate', '0')
 
-  // The running assistant session keeps its bridge: another job still works.
-  const alive = await runJob('110-alive', 'cliloom settings get layout.taskSidebarWidth')
-  expect(alive.exit).toBe('0')
-  expect(alive.stdout.trim()).toBe('168')
-
-  const skin = await runJob('120-skin-duplicate', 'cliloom skin duplicate builtin.dark.neutral --json')
-  expect(skin.exit).toBe('0')
-  const created = (JSON.parse(skin.stdout) as { skin: { id: string; name: string; builtin: boolean; content: UserSkin } }).skin
-  expect(created.builtin).toBe(false)
-  expect(created.id).not.toBe('builtin.dark.neutral')
-
-  const updatePayload = JSON.stringify({
-    mode: created.content.mode,
-    colors: created.content.colors,
-    typography: { codeFontFamily: 'Test Mono', fontSize: 18, lineHeight: 1.6 },
-    radius: 1,
-    background: created.content.background,
-    spacingScale: 1.25
-  })
-  const updated = await runJob('130-skin-update', [
-    `printf '%s' '${updatePayload}' | cliloom skin update '${created.id}' --stdin --json`
-  ].join('\n'))
-  expect(updated.exit, `skin update stderr: ${updated.stderr}`).toBe('0')
-  expect((JSON.parse(updated.stdout) as { skin: { content: UserSkin } }).skin.content.typography.fontSize).toBe(18)
-  expect((JSON.parse(updated.stdout) as { skin: { name: string } }).skin.name).toContain('copy')
-
-  const userSkins = await mainPage.evaluate(async () => {
-    const response = await window.cliLoom?.bootstrap()
-    return (response?.settings.skins ?? []) as UserSkin[]
-  })
-  const fromApp = userSkins.find((item) => item.id === created.id)
-  expect(fromApp?.typography.codeFontFamily).toBe('Test Mono')
-  createdSkinId = created.id
-  selectedCandidatePath = candidate.executablePath
-
-  // Activating the skin through the assistant syncs both existing windows.
-  const assistantPage = electronApp.windows().find((page) => page.url().includes('assistant.html'))
-  expect(assistantPage).toBeTruthy()
-  const readThemeBackground = async (page: Page): Promise<string> => page.evaluate(() => (
-    getComputedStyle(document.documentElement).getPropertyValue('--background').trim()
-  ))
-  const mainBefore = await readThemeBackground(mainPage)
-  const assistantBefore = await readThemeBackground(assistantPage!)
-  expect(mainBefore).toBe(assistantBefore)
-
-  const activated = await runJob(
-    '135-skin-activate',
-    `cliloom settings set appearance.skin '${created.id}' --json`
-  )
-  expect(activated.exit).toBe('0')
-
-  await expect.poll(() => readThemeBackground(mainPage)).not.toBe(mainBefore)
-  await expect.poll(() => readThemeBackground(assistantPage!)).not.toBe(assistantBefore)
-})
-
-test('assistant configuration persists across an application restart', async () => {
-  await electronApp.close()
-  await launchApplication()
-
-  const record = await mainPage.evaluate(async () => {
-    if (!window.cliLoom) throw new Error('Missing main preload API')
-    const records = (await window.cliLoom.listWorkflows()) as Array<{
-      revision: number
-      workflow: WorkflowDefinition
-    }>
-    return records.find((item) => item.workflow.id === 'assistant-config-e2e')
-  })
-  expect(record?.revision).toBe(4)
-  const terminal = record?.workflow.nodes.find((node) => node.id === 'term')
-  expect(terminal?.config).toMatchObject({
-    autoRetry: { enabled: true, mode: 'cron', cron: '*/15 * * * *', maxRetries: null }
+    await expect.poll(() => readThemeBackground(mainPage)).not.toBe(mainBefore)
+    await expect.poll(() => readThemeBackground(assistantPage!)).not.toBe(assistantBefore)
   })
 
-  await expect.poll(readProjectRailWidth).toBe('200px')
-  await expect.poll(readTaskSidebarWidth).toBe('168px')
+  await test.step('persists configuration across a restart and the next assistant session', async () => {
+    await electronApp.close()
+    await launchApplication()
 
-  const shellSnapshot = await mainPage.evaluate(() => window.cliLoom?.getShells()) as ShellSnapshot
-  expect(shellSnapshot.preferences.selection.mode).toBe('explicit')
+    const record = await mainPage.evaluate(async () => {
+      if (!window.cliLoom) throw new Error('Missing main preload API')
+      const records = (await window.cliLoom.listWorkflows()) as Array<{
+        revision: number
+        workflow: WorkflowDefinition
+      }>
+      return records.find((item) => item.workflow.id === 'assistant-config-e2e')
+    })
+    expect(record?.revision).toBe(4)
+    const terminal = record?.workflow.nodes.find((node) => node.id === 'term')
+    expect(terminal?.config).toMatchObject({
+      autoRetry: { enabled: true, mode: 'cron', cron: '*/15 * * * *', maxRetries: null }
+    })
 
-  const settingsSnapshot = await mainPage.evaluate(async () => {
-    const response = await window.cliLoom?.bootstrap()
-    return response?.settings
+    await expect.poll(readProjectRailWidth).toBe('200px')
+    await expect.poll(readTaskSidebarWidth).toBe('168px')
+
+    const shellSnapshot = await mainPage.evaluate(() => window.cliLoom?.getShells()) as ShellSnapshot
+    expect(shellSnapshot.preferences.selection.mode).toBe('explicit')
+
+    const settingsSnapshot = await mainPage.evaluate(async () => {
+      const response = await window.cliLoom?.bootstrap()
+      return response?.settings
+    })
+    expect(settingsSnapshot?.appearance.activeSkinId).toBe(createdSkinId)
+
+    // The next assistant session resolves the newly selected shell.
+    await openAssistantAndWaitForFirstJob()
+    const doctor = await runJob('140-post-restart-doctor', 'cliloom doctor --json')
+    expectJobExit(doctor, 'post-restart doctor', '0')
+    expect(doctor.stdout).not.toContain('CLILOOM_ASSISTANT_BRIDGE_TOKEN')
+    const doctorShell = (parseJobJson<{
+      shell: { selection: string; executablePath: string | null }
+    }>(doctor, 'post-restart doctor')).shell
+    expect(doctorShell.selection).toBe('explicit')
+    expect(doctorShell.executablePath).toBe(selectedCandidatePath)
   })
-  expect(settingsSnapshot?.appearance.activeSkinId).toBe(createdSkinId)
-
-  // The next assistant session resolves the newly selected shell.
-  await openAssistantAndWaitForFirstJob()
-  const doctor = await runJob('140-post-restart-doctor', 'cliloom doctor --json')
-  expect(doctor.exit).toBe('0')
-  expect(doctor.stdout).not.toContain('CLILOOM_ASSISTANT_BRIDGE_TOKEN')
-  const doctorShell = (JSON.parse(doctor.stdout) as {
-    shell: { selection: string; executablePath: string | null }
-  }).shell
-  expect(doctorShell.selection).toBe('explicit')
-  expect(doctorShell.executablePath).toBe(selectedCandidatePath)
 })

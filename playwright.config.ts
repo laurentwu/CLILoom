@@ -1,6 +1,7 @@
 import { defineConfig } from 'playwright/test'
 
 export default defineConfig({
+  globalSetup: './scripts/playwright-session.cjs',
   fullyParallel: false,
   reporter: 'line',
   testDir: './e2e',

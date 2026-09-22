@@ -31,6 +31,16 @@ RPM creation on Debian or Ubuntu also requires:
 sudo apt-get install --no-install-recommends rpm
 ```
 
+Running the Electron E2E suite (`npm run test:e2e`) on Linux additionally requires `dbus-run-session`, `dbus-update-activation-environment`, and, on hosts without an X display, `xvfb-run`:
+
+```sh
+sudo apt-get install --no-install-recommends dbus-daemon dbus-bin xvfb
+```
+
+After Xvfb starts, the Playwright global setup copies `DISPLAY` and `XAUTHORITY` into the isolated bus's activation environment. This lets on-demand desktop portal helpers connect to the same display. Only the wrapper-created test session is updated; the normal desktop bus is not reconfigured.
+
+The E2E entry (`scripts/playwright-electron.cjs`) always wraps the Linux test run in its own isolated D-Bus session (`dbus-run-session -- [xvfb-run -a] node playwright test ...`) so a stale or missing `DBUS_SESSION_BUS_ADDRESS` never leaks Electron D-Bus diagnostics into the CLI stderr contract, and so the Playwright/Electron/assistant-PTY process chain shares one session across application restarts. Missing wrappers are hard failures with install instructions — the suite never falls back to a D-Bus-less run. macOS and Windows invoke Playwright directly.
+
 On Linux, Electron must have either a correctly configured SUID sandbox helper or usable unprivileged user namespaces. `npm run electron:dev` checks this before launching and fails with setup instructions instead of adding `--no-sandbox`. The most predictable development setup is to configure the helper printed by that command as `root:root` with mode `4755`; reinstalling Electron can replace it, so repeat the check after `npm ci` or dependency upgrades.
 
 The AppImage uses electron-builder's pinned static runtime (`toolsets.appimage: 1.0.3`), so it does not require a FUSE 2 package. Because a SUID helper cannot elevate from an AppImage mount, its fail-closed launcher passes `--disable-setuid-sandbox` and requires Chromium's primary user-namespace sandbox; this is distinct from `--no-sandbox`, which remains forbidden. Ubuntu 23.10 and newer restrict user namespaces for downloaded applications through AppArmor by default, so the AppImage is not the recommended package on that baseline. The isolated Ubuntu CI runner temporarily lifts that kernel policy only while exercising the AppImage, restores it immediately afterward, and then separately verifies the installed DEB/SUID path.
@@ -243,7 +253,7 @@ After satisfying the Linux sandbox prerequisite above, launch the `package:dir` 
 
 The `Package` workflow runs manually through `workflow_dispatch` or when a `v*` tag is pushed. Tag names must exactly match `v${package.json.version}`. The workflow:
 
-1. **Validates the source** on Ubuntu: runs tests, type checks, builds the application, then runs Electron end-to-end tests.
+1. **Validates the source** on Ubuntu: runs tests, type checks, builds the application, installs `dbus-daemon`, `dbus-bin`, and `xvfb`, then runs Electron end-to-end tests inside an isolated D-Bus session (plus Xvfb on the headless runner). A failed validation uploads Playwright traces and `test-results/` as a `validation-diagnostics` artifact (14-day retention, never matching the `CLILoom-*` release artifact prefix).
 2. **Runs native shell smoke** on Windows, macOS, and Linux: cleanup contract tests first (`scripts/clean.test.ts`), then real Shell/PTY smoke tests.
 3. **Packages all six combinations** on native runners: after `npm ci`, runs the database/PTY smoke test on the target architecture, then builds and packages. Windows jobs verify the final unpacked Console CLI with a real PowerShell stdin pipeline. Linux jobs first launch the generated AppImage, then install the generated DEB, and exercise both under Xvfb. Each job creates a manifest containing the platform, architecture, version, file sizes, and SHA-256 values before uploading packages, updater channel metadata, and sidecars as isolated workflow artifacts.
 4. **Assembles a release only for a tag push** after every preceding job succeeds. The release job validates all six manifests, rejects unknown or colliding assets, merges Windows NSIS and macOS ZIP metadata across x64/ARM64, keeps separate Linux architecture channels, removes legacy top-level `path`/`sha512`, and writes `SHA256SUMS.txt`. It refuses an existing Release and creates a Draft with generated notes; prerelease SemVer versions are marked as prereleases. `workflow_dispatch` runs stop at Actions artifacts and never create a Release.
@@ -253,6 +263,21 @@ Node setup uses `node-version: 24` (satisfying `>=24.15.0 <25`, matching `.nvmrc
 Repository permissions default to `contents: read`; only the final tag-only release job receives `contents: write`. Local package scripts and every native package job retain `--publish never`, so electron-builder writes updater configuration and metadata but cannot publish or mutate a Release itself.
 
 Before publishing the Draft, verify all six architecture jobs, compare at least one downloaded asset with `SHA256SUMS.txt`, confirm that Windows metadata contains only both NSIS installers, macOS metadata contains both ZIPs, and each Linux channel contains only its own AppImage/DEB/RPM files. Review the generated notes and retain the unsigned/macOS-download-only warning. Publish manually in GitHub only after an installation and launch smoke test. If a release is faulty, increment the version and tag; never replace a published tag, asset, or channel file.
+
+### Recovering a failed, never-published tag
+
+Published versions, tags, and assets are never replaced or deleted. The single controlled exception documented here is recovering a tag whose Package run failed before any Release (draft or published) was created — the recovery of the never-published `v0.2.0` after run 35694396922. The procedure:
+
+1. Land the fixes on a dedicated branch and run a full precheck against that branch (`gh workflow run package.yml --ref <branch>`; never against the tag). All validate, native-smoke, and package jobs must succeed with six complete `CLILoom-*` artifacts before anything touches a tag.
+2. Fast-forward `main` (or merge via PR, then precheck the final `main` SHA) so the verified commit is the tip. Never force-push `main`.
+3. Re-verify with authenticated queries that no Release of any state exists for the tag and that the remote tag still points to the known old tag object. Record the old tag object SHA, resolved commit, and failed run URL.
+4. Delete the old tag only after verifying the remote reference, using a compare-and-delete push so a concurrent update can never be overwritten:
+   `git push --force-with-lease=refs/tags/v<X.Y.Z>:<verified-old-tag-object-SHA> origin :refs/tags/v<X.Y.Z>` — the lease value is the annotated **tag object** SHA, not the commit it resolves to.
+5. Delete the matching local tag, create a fresh annotated tag on the verified fix commit stating that it recovers the failed never-published build, and push it normally to trigger a new Package run.
+6. Track the new run through all jobs (1 validate + 3 native smoke + 6 package + 1 draft release), download the draft assets into a temporary directory, and verify every file against `SHA256SUMS.txt`. The draft must carry all 14 main installers, the required blockmaps and sidecars, the four channel metadata files, `draft=true`, and `prerelease` per the version.
+7. Do not run `gh run rerun` on the old failed run (it keeps the original SHA/ref), do not delete the failed run's record, and do not publish the draft (`gh release edit --draft=false`) — publishing is a separate manual decision.
+
+If a Release of any state already exists for the tag, or the tag moved unexpectedly, stop and report instead of deleting.
 
 ## Signing
 

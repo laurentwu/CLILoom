@@ -9,6 +9,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { execFileSync } from 'node:child_process'
 import path from 'node:path'
 import { Readable, Writable } from 'node:stream'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -594,12 +595,22 @@ describe('native shell smoke', () => {
     30_000
   )
 
-  it('deduplicates the startup echo of a long interactive Bash command', async () => {
+  it('deduplicates the startup echo of a long interactive Bash command', async (context) => {
     const { directory, db, runner, shells, workingDirectory } = createNativeContext()
     const bash = shells.getSnapshot().candidates.find((candidate) => (
       candidate.family === 'posix' && /bash(\.exe)?$/.test(path.basename(candidate.executablePath))
     ))
-    if (!bash) return
+    if (!bash) {
+      // The controlled CI matrix must actually exercise Bash on every host;
+      // only real developer machines without an optional Bash may skip.
+      if (process.env.CI === 'true') {
+        throw new Error(
+          `No Bash candidate detected on CI host ${process.platform}; the startup-echo matrix requires Bash`
+        )
+      }
+      context.skip('host has no Bash candidate; startup-echo matrix requires Bash')
+      return
+    }
     shells.select(bash.id)
 
     const isolatedHome = path.join(directory, 'isolated-home')
@@ -632,6 +643,17 @@ describe('native shell smoke', () => {
     const bound = bindShellCommand(template, { taskHint })
     const displayCommand = interpolate(template, { taskHint })
     const commandLineMarker = `printf '%s ' \"任务说明：`
+    const expectedProgramOutput = `任务说明：请先检查 UI 布局与主题样式改动，再运行 npm test 与 npm run typecheck，修复全部失败用例，最后用中文总结本次改动、影响范围和验证结果。提示词：${taskHint}`
+
+    const bashVersion = execFileSync(bash.executablePath, ['--version'], {
+      encoding: 'utf8',
+      timeout: 5_000
+    }).split(/\r?\n/)[0]
+    let failedContext = ''
+    const diagnostics = (cols: number): string => (
+      `[shellSmoke] platform=${process.platform} bash=${bashVersion} @ ${bash.executablePath} ` +
+      `cols=${cols}${failedContext ? ` fragment=${failedContext}` : ''}`
+    )
 
     let sawPaddingFragment = false
     let executions = 0
@@ -660,23 +682,38 @@ describe('native shell smoke', () => {
       const executedCommand = (db.prepare(
         'select command from terminal_sessions where id = ?'
       ).get(sessionId) as { command: string }).command
+      expect(executedCommand, `executed command at ${cols} columns`).toContain('${CLILOOM_INTERNAL_VALUE_1}')
+      // Raw PTY bytes are not guaranteed to contain the command contiguously:
+      // ConPTY and Readline interleave redraw controls inside the echo. The
+      // real execution evidence is the program output, exit code, and marker.
       expect(result.exitCode, `exit code at ${cols} columns`).toBe(0)
-      expect(result.stdout, `raw echo at ${cols} columns`).toContain(executedCommand)
+      expect(result.stdout.length, `raw stdout at ${cols} columns`).toBeGreaterThan(0)
+      expect(result.stdout, `program parameters at ${cols} columns`).toContain(expectedProgramOutput)
       if (result.stdout.includes(' \u001b[K') || result.stdout.includes(' \u001b[0K')) {
         sawPaddingFragment = true
       }
+      expect(readFileSync(markerFile, 'utf8'), `execution count at ${cols} columns`).toBe('x'.repeat(executions))
 
       const session = db.prepare(
         'select transcript from terminal_sessions where id = ?'
       ).get(sessionId) as { transcript: string }
-      expect(session.transcript, `transcript at ${cols} columns`).toContain(`CLILOOM$ ${displayCommand}`)
-      expect(session.transcript).not.toContain('CLILOOM_INTERNAL_VALUE')
-      expect(
-        session.transcript.split(commandLineMarker).length - 1,
-        `single startup command at ${cols} columns`
-      ).toBe(1)
-      expect(session.transcript, `program output at ${cols} columns`).toContain(taskHint)
-      expect(readFileSync(markerFile, 'utf8'), `execution count at ${cols} columns`).toBe('x'.repeat(executions))
+      try {
+        expect(session.transcript, `transcript at ${cols} columns ${diagnostics(cols)}`)
+          .toContain(`CLILOOM$ ${displayCommand}`)
+        expect(session.transcript, `binding hiding at ${cols} columns ${diagnostics(cols)}`)
+          .not.toContain('CLILOOM_INTERNAL_VALUE')
+        expect(
+          session.transcript.split(commandLineMarker).length - 1,
+          `single startup command at ${cols} columns ${diagnostics(cols)}`
+        ).toBe(1)
+        expect(session.transcript, `program output at ${cols} columns ${diagnostics(cols)}`)
+          .toContain(taskHint)
+      } catch (error) {
+        failedContext = JSON.stringify(result.stdout.slice(0, 2_000))
+        throw new Error(
+          `${error instanceof Error ? error.message : String(error)}\n${diagnostics(cols)}`
+        )
+      }
     }
 
     if (!sawPaddingFragment) {

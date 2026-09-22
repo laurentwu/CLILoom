@@ -38,6 +38,11 @@ jobs:
             throw new Error('Tag ' + process.env.GITHUB_REF_NAME + ' must equal ' + expected)
           }"
 
+      - name: Install Linux E2E session dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes dbus-daemon dbus-bin xvfb
+
       - name: Run tests
         run: npm test
 
@@ -49,6 +54,17 @@ jobs:
 
       - name: Run Electron end-to-end tests
         run: npm run test:e2e
+
+      - name: Upload validation diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: validation-diagnostics
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: ignore
+          retention-days: 14
 
   shell-smoke:
     name: Native shell smoke (${{ matrix.platform }})

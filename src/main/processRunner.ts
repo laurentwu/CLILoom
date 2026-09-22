@@ -31,6 +31,7 @@ import { getInteractiveCommandTerminator } from './shellExecution'
 import { discoverShells, selectDefaultShell, ShellUnavailableError } from './shellService'
 import { terminateProcessTree, type ProcessTerminationResult, type ProcessTreeHandle } from './processTermination'
 import { createInitialCommandEchoFilter, type TerminalOutputMapper } from './terminalStartupEcho'
+import type { StartupEchoContext } from './terminalStartupEcho'
 import {
   prepareExecutionInvocation,
   type PreparedExecutionInvocation
@@ -46,6 +47,10 @@ import {
 
 const SESSION_PERSIST_INTERVAL_MS = 5000
 const TERMINAL_DATA_FLUSH_INTERVAL_MS = 16
+// Upper bound for the interactive startup-echo recognition window. It starts
+// with the first PTY output chunk, is never extended, and only releases the
+// still-pending original bytes; it is not a fixed delay for all output.
+const STARTUP_ECHO_RECOGNITION_WINDOW_MS = 2000
 
 function createCommandDisplayMapper(
   command: string,
@@ -168,6 +173,7 @@ type Session = {
   finalization?: Promise<boolean>
   inputReady?: boolean
   flushDisplay?: () => void
+  releaseStartupRecognition?: () => void
   finish: (
     status: Extract<TerminalSessionStatus, 'closed' | 'killed' | 'failed' | 'interrupted'>,
     exitCode: number | null,
@@ -741,8 +747,14 @@ export class ProcessRunner {
       return this.cancelUnstartedSession(request, sessionId, initialTranscript)
     }
     const displayCommand = getRequestDisplayCommand(request)
+    const ptyCols = request.cols ?? 100
+    const startupEchoContext: StartupEchoContext = {
+      family: shell.family,
+      platform: this.platform,
+      cols: ptyCols
+    }
     const initialCommandEchoFilter = isInteractive
-      ? createInitialCommandEchoFilter(invocation.command)
+      ? createInitialCommandEchoFilter(invocation.command, startupEchoContext)
       : null
     const displayMapper = isInteractive
       ? createCommandDisplayMapper(invocation.command, displayCommand)
@@ -754,7 +766,7 @@ export class ProcessRunner {
     try {
       term = ptySpawn(invocation.executable, invocation.args, {
         name: 'xterm-256color',
-        cols: request.cols ?? 100,
+        cols: ptyCols,
         rows: request.rows ?? 40,
         cwd: invocation.hostCwd,
         env: invocation.env
@@ -800,6 +812,27 @@ export class ProcessRunner {
       })
     }
 
+    let startupRecognitionTimer: NodeJS.Timeout | null = null
+    let sawFirstStartupOutput = false
+    const clearStartupRecognitionTimer = () => {
+      if (startupRecognitionTimer) {
+        clearTimeout(startupRecognitionTimer)
+        startupRecognitionTimer = null
+      }
+    }
+    // Releases undecided startup bytes through the regular display pipeline;
+    // the display mapper itself keeps waiting for a possible command prefix.
+    const flushStartupRecognition = () => {
+      if (!initialCommandEchoFilter) return
+      const released = initialCommandEchoFilter.flush()
+      const mapped = displayMapper ? displayMapper.map(released) : released
+      if (mapped) appendTerminalContent('stdout', mapped)
+    }
+    session.releaseStartupRecognition = () => {
+      flushStartupRecognition()
+      clearStartupRecognitionTimer()
+    }
+
     const append = (stream: 'stdout' | 'stderr', content: string) => {
       if (session.settled || session.finalizing) return
       if (stream === 'stdout') {
@@ -809,7 +842,22 @@ export class ProcessRunner {
       }
       let terminalContent = content
       if (stream === 'stdout') {
-        if (initialCommandEchoFilter) terminalContent = initialCommandEchoFilter.map(terminalContent)
+        if (initialCommandEchoFilter) {
+          terminalContent = initialCommandEchoFilter.map(terminalContent)
+          if (!sawFirstStartupOutput) {
+            sawFirstStartupOutput = true
+            if (initialCommandEchoFilter.isPending()) {
+              startupRecognitionTimer = setTimeout(() => {
+                startupRecognitionTimer = null
+                if (session.settled || session.finalizing) return
+                if (!initialCommandEchoFilter.isPending()) return
+                flushStartupRecognition()
+              }, STARTUP_ECHO_RECOGNITION_WINDOW_MS)
+            }
+          } else if (!initialCommandEchoFilter.isPending()) {
+            clearStartupRecognitionTimer()
+          }
+        }
         if (displayMapper) terminalContent = displayMapper.map(terminalContent)
       }
       appendTerminalContent(stream, terminalContent)
@@ -850,6 +898,7 @@ export class ProcessRunner {
       const finalization = (async () => {
         session.finalizing = true
         if (timeout) clearTimeout(timeout)
+        clearStartupRecognitionTimer()
         let terminationSucceeded = true
         if (terminate) {
           let terminationError: string | undefined
@@ -942,6 +991,9 @@ export class ProcessRunner {
     if (!session || session.settled || session.finalizing) return false
     const c = Math.max(1, Math.floor(cols))
     const r = Math.max(1, Math.floor(rows))
+    // Pending startup recognition is anchored to the PTY column count, so it
+    // is released and stopped before the geometry changes.
+    session.releaseStartupRecognition?.()
     try {
       session.child.resize(c, r)
     } catch {

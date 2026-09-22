@@ -1,6 +1,41 @@
 import { describe, expect, it } from 'vitest'
 import { MAX_TERMINAL_TRANSCRIPT_CHARS } from '../shared/terminalBuffer'
-import { createInitialCommandEchoFilter, type TerminalOutputMapper } from './terminalStartupEcho'
+import {
+  createInitialCommandEchoFilter,
+  type StartupEchoContext,
+  type TerminalOutputMapper
+} from './terminalStartupEcho'
+import {
+  CAPTURED_PROGRAM_OUTPUT,
+  CAPTURED_ZSH_BANNER,
+  DARWIN_STARTUP_CONTEXT,
+  MACOS_CAPTURED_COMMAND,
+  MACOS_CAPTURED_REDRAW,
+  MACOS_CAPTURED_STREAM,
+  WIN32_CAPTURED_COMMAND,
+  WIN32_CAPTURED_PREFIX,
+  WIN32_CAPTURED_REDRAW,
+  WIN32_CAPTURED_STREAM,
+  WIN32_STARTUP_CONTEXT
+} from './terminalStartupEchoFixtures'
+
+const DARWIN_CONTEXT = DARWIN_STARTUP_CONTEXT
+const WIN32_CONTEXT = WIN32_STARTUP_CONTEXT
+const MACOS_COMMAND = MACOS_CAPTURED_COMMAND
+const MACOS_STREAM = MACOS_CAPTURED_STREAM
+// The filter itself restores the raw executed command; display expansion is
+// the ProcessRunner display mapper's job.
+const MACOS_EXPECTED = [
+  '\r\n',
+  ...CAPTURED_ZSH_BANNER.flatMap((line) => [line, '\r\n']),
+  '\u001b[?1034hCLILOOM$ ',
+  MACOS_CAPTURED_COMMAND,
+  '\r\n',
+  CAPTURED_PROGRAM_OUTPUT
+].join('')
+const WIN32_COMMAND = WIN32_CAPTURED_COMMAND
+const WIN32_STREAM = WIN32_CAPTURED_STREAM
+const WIN32_EXPECTED = `${WIN32_CAPTURED_PREFIX}CLILOOM$ ${WIN32_CAPTURED_COMMAND}\r\n${CAPTURED_PROGRAM_OUTPUT}`
 
 const COMMAND = `printf '%s' "UI 改动\${CLILOOM_INTERNAL_VALUE_0}"; exit`
 const DISPLAY_COMMAND = `printf '%s' "UI 改动实际参数"; exit`
@@ -100,6 +135,11 @@ describe('createInitialCommandEchoFilter', () => {
 })
 
 describe('createInitialCommandEchoFilter exact redraw matching', () => {
+  it('preserves exact matching after a bare echo with a custom prompt', () => {
+    const filter = createInitialCommandEchoFilter(COMMAND)!
+    const stream = `${COMMAND}\r\ncustom> ${COMMAND}\r\n`
+    expect(mapAll(filter, Array.from(stream))).toBe(`custom> ${COMMAND}\r\n`)
+  })
   it('removes the bare echo after an exact redraw with CRLF', () => {
     const filter = createInitialCommandEchoFilter(COMMAND)!
     const stream = `${COMMAND}\r\n${PROMPT}${COMMAND}\r\n${PROGRAM_OUTPUT}`
@@ -309,5 +349,204 @@ describe('createInitialCommandEchoFilter tolerant redraw matching', () => {
     expect(filter.map(stream)).toBe(`${prompt}${command}\r\n`)
     expect(Date.now() - startedAt).toBeLessThan(2_000)
     expect(filter.flush()).toBe('')
+  })
+
+  it('handles long bare echoes and redraws one character at a time without rescanning prefixes', () => {
+    const command = 'a'.repeat(40_000)
+    const stream = `${command}\r\n$ ${command}\r\n`
+    const filter = createInitialCommandEchoFilter(command)!
+    const startedAt = Date.now()
+    expect(mapAll(filter, Array.from(stream))).toBe(`$ ${command}\r\n`)
+    expect(Date.now() - startedAt).toBeLessThan(2_000)
+  })
+})
+
+describe('createInitialCommandEchoFilter captured macOS Bash startup', () => {
+  it('recognizes the migration banner and the CR-segmented redraw', () => {
+    const filter = createInitialCommandEchoFilter(MACOS_COMMAND, DARWIN_CONTEXT)!
+    expect(filter.isPending()).toBe(true)
+    const first = filter.map(MACOS_STREAM.slice(0, 200))
+    expect(first).toBe('')
+    expect(filter.isPending()).toBe(true)
+    expect(first + filter.map(MACOS_STREAM.slice(200))).toBe(MACOS_EXPECTED)
+    expect(filter.isPending()).toBe(false)
+    expect(filter.flush()).toBe('')
+    expect(filter.map(MACOS_COMMAND)).toBe(MACOS_COMMAND)
+  })
+
+  it('produces the same result for every split position of the captured stream', () => {
+    for (let split = 0; split <= MACOS_STREAM.length; split++) {
+      const filter = createInitialCommandEchoFilter(MACOS_COMMAND, DARWIN_CONTEXT)!
+      const output = mapAll(filter, [MACOS_STREAM.slice(0, split), MACOS_STREAM.slice(split)])
+      expect(output, `split at ${split}`).toBe(MACOS_EXPECTED)
+      expect(filter.flush(), `flush after split at ${split}`).toBe('')
+    }
+    for (const size of [1, 7, 1024]) {
+      const filter = createInitialCommandEchoFilter(MACOS_COMMAND, DARWIN_CONTEXT)!
+      expect(mapAll(filter, splitInto(MACOS_STREAM, size)), `chunk size ${size}`).toBe(MACOS_EXPECTED)
+    }
+  })
+
+  it('falls back when the banner is unknown or truncated', () => {
+    const unknownBanner = MACOS_STREAM.replace(
+      CAPTURED_ZSH_BANNER[0],
+      'A completely different notice.'
+    )
+    const filter = createInitialCommandEchoFilter(MACOS_COMMAND, DARWIN_CONTEXT)!
+    expect(filter.map(unknownBanner)).toBe(unknownBanner)
+    expect(filter.isPending()).toBe(false)
+
+    const truncated = createInitialCommandEchoFilter(MACOS_COMMAND, DARWIN_CONTEXT)!
+    const cut = MACOS_STREAM.slice(
+      0,
+      MACOS_STREAM.indexOf('https://support.apple.com') + 12
+    )
+    expect(truncated.map(cut)).toBe('')
+    expect(truncated.isPending()).toBe(true)
+    expect(truncated.flush()).toBe(cut)
+  })
+
+  it('keeps the CR-segment tolerance exclusive to darwin', () => {
+    const linuxContext: StartupEchoContext = { family: 'posix', platform: 'linux', cols: 40 }
+    const filter = createInitialCommandEchoFilter(MACOS_COMMAND, linuxContext)!
+    expect(filter.map(MACOS_STREAM)).toBe(MACOS_STREAM)
+    expect(filter.isPending()).toBe(false)
+  })
+
+  it('does not search for the redraw beyond a non-matching first line', () => {
+    const stream = `${MACOS_COMMAND}\r\n$ unrelated\r\n${MACOS_CAPTURED_REDRAW}\r\n`
+    const filter = createInitialCommandEchoFilter(MACOS_COMMAND, DARWIN_CONTEXT)!
+    expect(filter.map(stream)).toBe(stream)
+  })
+
+  it('falls back when a CR segment does not reproduce the command', () => {
+    const broken = MACOS_STREAM.replace('\rt 与 npm run typecheck', '\rx 与 npm run typecheck')
+    const filter = createInitialCommandEchoFilter(MACOS_COMMAND, DARWIN_CONTEXT)!
+    expect(filter.map(broken)).toBe(broken)
+  })
+})
+
+describe('createInitialCommandEchoFilter captured Windows Git Bash startup', () => {
+  it('normalizes the first prompted draw without a bare echo', () => {
+    const filter = createInitialCommandEchoFilter(WIN32_COMMAND, WIN32_CONTEXT)!
+    expect(filter.isPending()).toBe(true)
+    expect(filter.map(WIN32_STREAM)).toBe(WIN32_EXPECTED)
+    expect(filter.isPending()).toBe(false)
+    expect(filter.flush()).toBe('')
+    expect(filter.map(WIN32_COMMAND)).toBe(WIN32_COMMAND)
+  })
+
+  it('produces the same result for every split position of the captured stream', () => {
+    for (let split = 0; split <= WIN32_STREAM.length; split++) {
+      const filter = createInitialCommandEchoFilter(WIN32_COMMAND, WIN32_CONTEXT)!
+      const output = mapAll(filter, [WIN32_STREAM.slice(0, split), WIN32_STREAM.slice(split)])
+      expect(output, `split at ${split}`).toBe(WIN32_EXPECTED)
+    }
+    for (const size of [1, 7, 1024]) {
+      const filter = createInitialCommandEchoFilter(WIN32_COMMAND, WIN32_CONTEXT)!
+      expect(mapAll(filter, splitInto(WIN32_STREAM, size)), `chunk size ${size}`).toBe(WIN32_EXPECTED)
+    }
+  })
+
+  it('holds the first draw until its line ends and releases it on flush', () => {
+    const filter = createInitialCommandEchoFilter(WIN32_COMMAND, WIN32_CONTEXT)!
+    const partial = WIN32_STREAM.slice(0, WIN32_STREAM.indexOf('\r\n'))
+    expect(filter.map(partial)).toBe('')
+    expect(filter.isPending()).toBe(true)
+    expect(filter.flush()).toBe(partial)
+    expect(filter.flush()).toBe('')
+    expect(filter.isPending()).toBe(false)
+  })
+
+  it('falls back when cursor positioning targets a non-boundary column', () => {
+    for (const column of [30, 41]) {
+      const misplaced = WIN32_STREAM.replace('\u001b[1;40H', `\u001b[1;${column}H`)
+      const filter = createInitialCommandEchoFilter(WIN32_COMMAND, WIN32_CONTEXT)!
+      expect(filter.map(misplaced), `column ${column}`).toBe(misplaced)
+      expect(filter.isPending()).toBe(false)
+    }
+  })
+
+  it('falls back when the paste toggle or positioning appears in other contexts', () => {
+    const darwinFilter = createInitialCommandEchoFilter(WIN32_COMMAND, DARWIN_CONTEXT)!
+    expect(darwinFilter.map(WIN32_STREAM)).toBe(WIN32_STREAM)
+
+    const linuxFilter = createInitialCommandEchoFilter(WIN32_COMMAND, {
+      family: 'posix',
+      platform: 'linux',
+      cols: 40
+    })!
+    expect(linuxFilter.map(WIN32_STREAM)).toBe(WIN32_STREAM)
+  })
+
+  it('falls back when extra text follows the first draw', () => {
+    const stream = `${WIN32_CAPTURED_PREFIX}CLILOOM$ ${WIN32_CAPTURED_REDRAW} extra\r\n`
+    const filter = createInitialCommandEchoFilter(WIN32_COMMAND, WIN32_CONTEXT)!
+    expect(filter.map(stream)).toBe(stream)
+  })
+
+  it('releases plain interactive prompts immediately without a control prefix', () => {
+    const filter = createInitialCommandEchoFilter(WIN32_COMMAND, WIN32_CONTEXT)!
+    expect(filter.map('Password: ')).toBe('Password: ')
+    expect(filter.isPending()).toBe(false)
+    expect(filter.map('wty@host:/repo$ ')).toBe('wty@host:/repo$ ')
+  })
+})
+
+describe('createInitialCommandEchoFilter recognition lifecycle', () => {
+  it('preserves unknown startup controls and trailing draw controls', () => {
+    for (const stream of [
+      `${COMMAND}\r\n\u001b[9A$ ${COMMAND}\r\n`,
+      `${COMMAND}\r\nuser\u001b[9A$ ${COMMAND}\r\n`,
+      `${COMMAND}\r\n$ ${COMMAND}\u001b[0m\r\n`
+    ]) {
+      const filter = createInitialCommandEchoFilter(COMMAND)!
+      expect(filter.map(stream) + filter.flush()).toBe(stream)
+      expect(filter.isPending()).toBe(false)
+    }
+  })
+
+  it('reports pending only until the recognizer reaches a final state', () => {
+    const held = createInitialCommandEchoFilter(COMMAND)!
+    expect(held.isPending()).toBe(true)
+    expect(held.map(COMMAND.slice(0, 10))).toBe('')
+    expect(held.isPending()).toBe(true)
+    expect(held.map('x divergence\r\n')).toBe(`${COMMAND.slice(0, 10)}x divergence\r\n`)
+    expect(held.isPending()).toBe(false)
+    expect(held.map('later')).toBe('later')
+
+    const succeeded = createInitialCommandEchoFilter(COMMAND)!
+    succeeded.map(`${COMMAND}\r\n$ ${COMMAND}\r\n`)
+    expect(succeeded.isPending()).toBe(false)
+
+    const capped = createInitialCommandEchoFilter(COMMAND)!
+    capped.map(`${COMMAND}\r\n`)
+    capped.map('x'.repeat(MAX_TERMINAL_TRANSCRIPT_CHARS))
+    expect(capped.isPending()).toBe(false)
+
+    const flushed = createInitialCommandEchoFilter(COMMAND)!
+    flushed.map(COMMAND.slice(0, 5))
+    flushed.flush()
+    expect(flushed.isPending()).toBe(false)
+  })
+
+  it('recognizes a root-style hash prompt', () => {
+    const filter = createInitialCommandEchoFilter(COMMAND)!
+    const stream = `${COMMAND}\r\nroot@host:/repo# ${COMMAND}\r\nout\r\n`
+    expect(mapAll(filter, [stream])).toBe(`root@host:/repo# ${COMMAND}\r\nout\r\n`)
+  })
+
+  it('keeps exact-only semantics for non-POSIX shell families', () => {
+    const context: StartupEchoContext = { family: 'powershell', platform: 'win32' }
+    const fragmented = createInitialCommandEchoFilter(COMMAND, context)!
+    const redrawn = insertFragments(COMMAND, [
+      { afterIndex: COMMAND.indexOf('改'), fragment: DRAW_FRAGMENT }
+    ])
+    const stream = `${COMMAND}\r\nPS> ${redrawn}\r\n`
+    expect(fragmented.map(stream)).toBe(stream)
+
+    const exact = createInitialCommandEchoFilter(COMMAND, context)!
+    const exactStream = `${COMMAND}\r\nPS> ${COMMAND}\r\n`
+    expect(exact.map(exactStream)).toBe(`PS> ${COMMAND}\r\n`)
   })
 })
