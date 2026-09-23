@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { AppError } from './appError'
 import {
   AUTO_RETRY_DEFAULT_MAX_RETRIES,
   computeNextAutoRetryTime,
@@ -9,6 +10,17 @@ import {
   parseTerminalAutoRetryState,
   parseWorkflowAutoRetryContext
 } from './terminalAutoRetry'
+
+function captureRejection(action: () => unknown): AppError {
+  let thrown: unknown
+  try {
+    action()
+  } catch (error) {
+    thrown = error
+  }
+  expect(thrown, 'expected the call to be rejected').toBeInstanceOf(AppError)
+  return thrown as AppError
+}
 
 describe('parseTerminalAutoRetryConfig', () => {
   it('returns undefined when the field is absent', () => {
@@ -27,16 +39,22 @@ describe('parseTerminalAutoRetryConfig', () => {
   })
 
   it('rejects invalid shapes instead of silently disabling', () => {
-    expect(() => parseTerminalAutoRetryConfig('yes')).toThrow()
-    expect(() => parseTerminalAutoRetryConfig({ enabled: 'true', mode: 'recommended' })).toThrow()
-    expect(() => parseTerminalAutoRetryConfig({ enabled: true, mode: 'weekly' })).toThrow()
-    expect(() => parseTerminalAutoRetryConfig({ enabled: true, mode: 'recommended', maxRetries: 0 })).toThrow()
-    expect(() => parseTerminalAutoRetryConfig({ enabled: true, mode: 'recommended', maxRetries: 10000 })).toThrow()
-    expect(() => parseTerminalAutoRetryConfig({ enabled: true, mode: 'recommended', maxRetries: 1.5 })).toThrow()
-    expect(() => parseTerminalAutoRetryConfig({ enabled: true, mode: 'cron' })).toThrow()
-    expect(() => parseTerminalAutoRetryConfig({ enabled: true, mode: 'cron', cron: 5 })).toThrow()
-    expect(() => parseTerminalAutoRetryConfig({ enabled: true, mode: 'cron', cron: '*\0* * * *' })).toThrow()
-    expect(() => parseTerminalAutoRetryConfig({ enabled: true, mode: 'cron', cron: 'x'.repeat(513) })).toThrow()
+    const invalidShapes: unknown[] = [
+      'yes',
+      { enabled: 'true', mode: 'recommended' },
+      { enabled: true, mode: 'weekly' },
+      { enabled: true, mode: 'recommended', maxRetries: 0 },
+      { enabled: true, mode: 'recommended', maxRetries: 10000 },
+      { enabled: true, mode: 'recommended', maxRetries: 1.5 },
+      { enabled: true, mode: 'cron' },
+      { enabled: true, mode: 'cron', cron: 5 },
+      { enabled: true, mode: 'cron', cron: '*\0* * * *' },
+      { enabled: true, mode: 'cron', cron: 'x'.repeat(513) }
+    ]
+    for (const shape of invalidShapes) {
+      const rejection = captureRejection(() => parseTerminalAutoRetryConfig(shape))
+      expect(rejection.code, `shape ${JSON.stringify(shape)} failed for an unexpected reason`).toBe('WORKFLOW_INVALID')
+    }
   })
 })
 
@@ -89,7 +107,7 @@ describe('computeNextAutoRetryTime', () => {
       attemptsStarted: 0,
       lastFailureAt: failureAt,
       timeZone: 'UTC'
-    })).toThrow()
+    })).toThrow(/Invalid explicit day of month/)
   })
 })
 

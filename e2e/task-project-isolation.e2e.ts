@@ -8,17 +8,16 @@ import {
   type ElectronApplication,
   type Page
 } from 'playwright/test'
+import { createTestResources, type TestResources } from '../test-support/resources'
+import {
+  assertNoCspViolations,
+  ensureCspProbeCoverage,
+  installCspProbe,
+  monitorPage,
+  resetCspProbeFailures
+} from './support/cspProbe'
 import type { ProjectRecord, TaskRecord } from '../src/renderer/appTypes'
 import type { WorkflowDefinition } from '../src/shared/workflow'
-
-type CspViolation = {
-  blockedUri: string
-  directive: string
-}
-
-type WindowWithCspProbe = Window & typeof globalThis & {
-  __cliloomCspViolations?: CspViolation[]
-}
 
 const workflow: WorkflowDefinition = {
   id: 'e2e-project-isolation',
@@ -51,10 +50,10 @@ const workflow: WorkflowDefinition = {
   ]
 }
 
-const failures: string[] = []
 const projectRoot = path.join(__dirname, '..')
+let resources: TestResources
 let appDataDirectory = ''
-let electronApp: ElectronApplication
+let electronApp: ElectronApplication | null = null
 let fixtureDirectory = ''
 let mainPage: Page
 let projectADirectory = ''
@@ -62,20 +61,11 @@ let projectBDirectory = ''
 
 test.skip(process.platform !== 'linux', 'The production-entry isolation test runs on Linux')
 
-function monitorPage(page: Page) {
-  page.on('pageerror', (error) => failures.push(`page error: ${error.message}`))
-  page.on('console', (message) => {
-    if (
-      message.type() === 'error' &&
-      /Content Security Policy|Refused to (?:load|execute|apply|connect)/i.test(message.text())
-    ) {
-      failures.push(`console: ${message.text()}`)
-    }
-  })
-}
+let launchCounter = 0
 
-async function launchApplication() {
-  electronApp = await electron.launch({
+async function launchApplication(): Promise<void> {
+  launchCounter += 1
+  const app = await electron.launch({
     args: [projectRoot],
     cwd: projectRoot,
     env: {
@@ -84,25 +74,72 @@ async function launchApplication() {
       XDG_CONFIG_HOME: appDataDirectory
     }
   })
-  const context = electronApp.context()
-  await context.addInitScript(() => {
-    const target = window as WindowWithCspProbe
-    target.__cliloomCspViolations = []
-    document.addEventListener('securitypolicyviolation', (event) => {
-      target.__cliloomCspViolations?.push({
-        blockedUri: event.blockedURI,
-        directive: event.effectiveDirective
-      })
-    })
-  })
-  mainPage = await electronApp.firstWindow()
-  monitorPage(mainPage)
+  electronApp = app
+  resources.defer(`electron-app-${launchCounter}`, () => app.close())
+  const context = app.context()
+  await installCspProbe(context)
+  mainPage = await app.firstWindow()
+  const stopMonitoring = monitorPage(mainPage)
+  resources.defer('csp-monitor', stopMonitoring)
+  await ensureCspProbeCoverage(mainPage)
   await mainPage.locator('#root > *').first().waitFor()
 }
 
-test.beforeAll(async () => {
+async function registerProjectDirectories(directories: string[]): Promise<ProjectRecord[]> {
+  const app = electronApp!
+  await app.evaluate(({ dialog }, directoriesToRegister) => {
+    const state = globalThis as typeof globalThis & {
+      __cliloomDialogDirectories?: string[]
+      __cliloomOriginalShowOpenDialog?: typeof dialog.showOpenDialog
+    }
+    state.__cliloomDialogDirectories = [...directoriesToRegister]
+    state.__cliloomOriginalShowOpenDialog = dialog.showOpenDialog
+    dialog.showOpenDialog = async () => ({
+      canceled: false,
+      filePaths: [state.__cliloomDialogDirectories?.shift() ?? '']
+    })
+  }, directories)
+  try {
+    const addProject = mainPage.getByRole('button', { name: 'Add project folder' })
+    for (const directory of directories) {
+      await addProject.click()
+      await expect(
+        mainPage.getByRole('button', { name: `Open project ${path.basename(directory)}` })
+      ).toBeVisible()
+    }
+  } finally {
+    await app.evaluate(({ dialog }) => {
+      const state = globalThis as typeof globalThis & {
+        __cliloomDialogDirectories?: string[]
+        __cliloomOriginalShowOpenDialog?: typeof dialog.showOpenDialog
+      }
+      if (state.__cliloomOriginalShowOpenDialog) {
+        dialog.showOpenDialog = state.__cliloomOriginalShowOpenDialog
+      }
+      delete state.__cliloomDialogDirectories
+      delete state.__cliloomOriginalShowOpenDialog
+    })
+  }
+  const projects = await mainPage.evaluate(() => window.cliLoom?.listProjects()) as ProjectRecord[]
+  const registered = directories.map((directory) => {
+    const project = projects.find((item) => item.path === directory)
+    if (!project) throw new Error(`E2E project ${directory} was not registered`)
+    return project
+  })
+  return registered
+}
+
+test.beforeEach(async () => {
+  resetCspProbeFailures()
+  resources = createTestResources()
   appDataDirectory = mkdtempSync(path.join(tmpdir(), 'cliloom-isolation-e2e-data-'))
+  resources.defer('app-data-directory', () => {
+    rmSync(appDataDirectory, { recursive: true, force: true })
+  })
   fixtureDirectory = mkdtempSync(path.join(tmpdir(), 'cliloom-isolation-e2e-projects-'))
+  resources.defer('project-fixture-directory', () => {
+    rmSync(fixtureDirectory, { recursive: true, force: true })
+  })
   projectADirectory = path.join(fixtureDirectory, 'Project A')
   projectBDirectory = path.join(fixtureDirectory, 'Project B')
   mkdirSync(projectADirectory)
@@ -110,51 +147,12 @@ test.beforeAll(async () => {
   await launchApplication()
 })
 
-test.afterAll(async () => {
-  await electronApp?.close()
-  if (appDataDirectory) rmSync(appDataDirectory, { recursive: true, force: true })
-  if (fixtureDirectory) rmSync(fixtureDirectory, { recursive: true, force: true })
+test.afterEach(async () => {
+  await resources.dispose()
 })
 
 test('isolates background task updates and clears unread after a successful project load', async ({}, testInfo) => {
-  failures.splice(0)
-  await electronApp.evaluate(({ dialog }, directories) => {
-    const state = globalThis as typeof globalThis & {
-      __cliloomDialogDirectories?: string[]
-      __cliloomOriginalShowOpenDialog?: typeof dialog.showOpenDialog
-    }
-    state.__cliloomDialogDirectories = [...directories]
-    state.__cliloomOriginalShowOpenDialog = dialog.showOpenDialog
-    dialog.showOpenDialog = async () => ({
-      canceled: false,
-      filePaths: [state.__cliloomDialogDirectories?.shift() ?? '']
-    })
-  }, [projectADirectory, projectBDirectory])
-
-  const addProject = mainPage.getByRole('button', { name: 'Add project folder' })
-  await addProject.click()
-  await expect(mainPage.getByRole('button', { name: 'Open project Project A' })).toBeVisible()
-  await addProject.click()
-  await expect(mainPage.getByRole('button', { name: 'Open project Project B' })).toBeVisible()
-
-  await electronApp.evaluate(({ dialog }) => {
-    const state = globalThis as typeof globalThis & {
-      __cliloomDialogDirectories?: string[]
-      __cliloomOriginalShowOpenDialog?: typeof dialog.showOpenDialog
-    }
-    if (state.__cliloomOriginalShowOpenDialog) {
-      dialog.showOpenDialog = state.__cliloomOriginalShowOpenDialog
-    }
-    delete state.__cliloomDialogDirectories
-    delete state.__cliloomOriginalShowOpenDialog
-  })
-
-  const projects = await mainPage.evaluate(() => window.cliLoom?.listProjects()) as ProjectRecord[]
-  const projectA = projects.find((project) => project.path === projectADirectory)
-  const projectB = projects.find((project) => project.path === projectBDirectory)
-  expect(projectA).toBeTruthy()
-  expect(projectB).toBeTruthy()
-  if (!projectA || !projectB) throw new Error('E2E projects were not registered')
+  const [projectA, projectB] = await registerProjectDirectories([projectADirectory, projectBDirectory])
 
   await mainPage.evaluate(async (definition) => {
     if (!window.cliLoom) throw new Error('Missing main preload API')
@@ -236,17 +234,11 @@ test('isolates background task updates and clears unread after a successful proj
     body: await mainPage.screenshot(),
     contentType: 'image/png'
   })
-  expect(await mainPage.evaluate(() => (
-    (window as WindowWithCspProbe).__cliloomCspViolations ?? []
-  ))).toEqual([])
-  expect(failures).toEqual([])
+  await assertNoCspViolations(mainPage)
 })
 
 test('edits a failed workflow terminal command once through the real runtime chain', async () => {
-  failures.splice(0)
-  const projects = await mainPage.evaluate(() => window.cliLoom?.listProjects()) as ProjectRecord[]
-  const projectA = projects.find((project) => project.path === projectADirectory)
-  if (!projectA) throw new Error('E2E project A was not registered')
+  const [projectA] = await registerProjectDirectories([projectADirectory])
   await mainPage.getByRole('button', { name: 'Open project Project A' }).click()
 
   const retryWorkflow: WorkflowDefinition = {
@@ -345,7 +337,8 @@ test('edits a failed workflow terminal command once through the real runtime cha
     return records.find((record) => record.workflow.id === workflowId)?.workflow
   }, retryWorkflow.id)).toEqual(retryWorkflow)
 
-  await electronApp.close()
+  await electronApp!.close()
+  electronApp = null
   await launchApplication()
   await mainPage.getByRole('button', { name: 'Open project Project A' }).click()
   const restoredTaskButton = mainPage.locator('.task-sidebar button').filter({ hasText: taskTitle }).first()
@@ -358,5 +351,5 @@ test('edits a failed workflow terminal command once through the real runtime cha
   dialog = mainPage.getByRole('dialog')
   await expect(dialog.getByLabel('Retry command')).toHaveValue(originalCommand)
   await dialog.getByRole('button', { name: 'Cancel' }).click()
-  expect(failures).toEqual([])
+  await assertNoCspViolations(mainPage)
 })

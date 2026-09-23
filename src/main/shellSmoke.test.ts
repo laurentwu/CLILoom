@@ -562,12 +562,17 @@ describe('native shell smoke', () => {
 
   it.runIf(process.platform === 'win32')(
     'executes Unicode bindings and hooks through native Git Bash when installed',
-    async () => {
+    async (context) => {
       const { runner, shells, workingDirectory } = createNativeContext()
       const gitBash = shells.getSnapshot().candidates.find((candidate) => (
         candidate.family === 'posix' && candidate.displayName === 'Git Bash'
       ))
-      if (!gitBash) return
+      if (!gitBash) {
+        // Git Bash is an optional host capability; the skip must stay
+        // distinguishable in the report instead of a silent pass.
+        context.skip('host has no Git Bash candidate; optional Git Bash smoke skipped')
+        return
+      }
       shells.select(gitBash.id)
 
       const terminalValue = 'Git Bash 中文 😀 & | < > ^ % ! " \' ( )'
@@ -682,7 +687,13 @@ describe('native shell smoke', () => {
       const executedCommand = (db.prepare(
         'select command from terminal_sessions where id = ?'
       ).get(sessionId) as { command: string }).command
-      expect(executedCommand, `executed command at ${cols} columns`).toContain('${CLILOOM_INTERNAL_VALUE_1}')
+      // The reserved CLILOOM_INTERNAL_VALUE_0 forces the binding-collision
+      // rename: the executed command must still carry a neutral binding (the
+      // raw value is never inlined) and must not use the reserved index. The
+      // concrete index shifts with ambient reserved names on the host.
+      const executedBinding = /\$\{(CLILOOM_INTERNAL_VALUE_\d+)\}/.exec(executedCommand)
+      expect(executedBinding, `neutral binding at ${cols} columns`).not.toBeNull()
+      expect(executedBinding?.[1], `collision rename at ${cols} columns`).not.toBe('CLILOOM_INTERNAL_VALUE_0')
       // Raw PTY bytes are not guaranteed to contain the command contiguously:
       // ConPTY and Readline interleave redraw controls inside the echo. The
       // real execution evidence is the program output, exit code, and marker.

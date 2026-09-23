@@ -8,17 +8,17 @@ import {
   type ElectronApplication,
   type Page
 } from 'playwright/test'
+import { createTestResources, type TestResources } from '../test-support/resources'
+import {
+  assertNoCspViolations,
+  ensureCspProbeCoverage,
+  installCspProbe,
+  monitorPage,
+  resetCspProbeFailures,
+  type WindowWithCspProbe
+} from './support/cspProbe'
 
-type CspViolation = {
-  blockedUri: string
-  directive: string
-}
-
-type WindowWithCspProbe = Window & typeof globalThis & {
-  __cliloomCspViolations?: CspViolation[]
-}
-
-const failures: string[] = []
+let resources: TestResources
 let appDataDirectory = ''
 let assistantPage: Page
 let electronApp: ElectronApplication
@@ -26,29 +26,14 @@ let mainPage: Page
 
 test.skip(process.platform !== 'linux', 'The production-entry smoke runs on the Linux validation job')
 
-function monitorPage(page: Page) {
-  page.on('pageerror', (error) => failures.push(`page error: ${error.message}`))
-  page.on('console', (message) => {
-    if (
-      message.type() === 'error' &&
-      /Content Security Policy|Refused to (?:load|execute|apply|connect)/i.test(message.text())
-    ) {
-      failures.push(`console: ${message.text()}`)
-    }
-  })
-}
-
-async function assertRenderedWithoutCspViolations(page: Page) {
-  await page.locator('#root > *').first().waitFor()
-  await expect(page.locator('#root')).not.toHaveText('')
-  expect(await page.evaluate(() => (
-    (window as WindowWithCspProbe).__cliloomCspViolations ?? []
-  ))).toEqual([])
-}
-
 test.beforeAll(async () => {
+  resetCspProbeFailures()
+  resources = createTestResources()
   const projectRoot = path.join(__dirname, '..')
   appDataDirectory = mkdtempSync(path.join(tmpdir(), 'cliloom-production-e2e-'))
+  resources.defer('app-data-directory', () => {
+    rmSync(appDataDirectory, { recursive: true, force: true })
+  })
   electronApp = await electron.launch({
     args: [projectRoot],
     cwd: projectRoot,
@@ -58,30 +43,23 @@ test.beforeAll(async () => {
       XDG_CONFIG_HOME: appDataDirectory
     }
   })
+  resources.defer('electron-app', () => electronApp.close())
   const context = electronApp.context()
-  await context.addInitScript(() => {
-    const target = window as WindowWithCspProbe
-    target.__cliloomCspViolations = []
-    document.addEventListener('securitypolicyviolation', (event) => {
-      target.__cliloomCspViolations?.push({
-        blockedUri: event.blockedURI,
-        directive: event.effectiveDirective
-      })
-    })
-  })
+  await installCspProbe(context)
   mainPage = await electronApp.firstWindow()
-  electronApp.on('window', monitorPage)
+  const stopMainMonitoring = monitorPage(mainPage)
+  resources.defer('main-page-monitor', stopMainMonitoring)
+  electronApp.on('window', (page) => {
+    if (page !== mainPage) monitorPage(page)
+  })
+  await ensureCspProbeCoverage(mainPage)
 })
 
 test.afterAll(async () => {
-  await electronApp?.close()
-  if (appDataDirectory) rmSync(appDataDirectory, { recursive: true, force: true })
+  await resources.dispose()
 })
 
 test('loads both real production renderer entries without CSP violations', async () => {
-  monitorPage(mainPage)
-  failures.splice(0)
-  await mainPage.reload({ waitUntil: 'domcontentloaded' })
   await assertRenderedWithoutCspViolations(mainPage)
   expect(mainPage.url()).toMatch(/\/dist\/renderer\/index\.html$/)
 
@@ -93,7 +71,18 @@ test('loads both real production renderer entries without CSP violations', async
   assistantPage = await assistantPromise
   await assertRenderedWithoutCspViolations(assistantPage)
   expect(assistantPage.url()).toMatch(/\/dist\/renderer\/assistant\.html$/)
-  expect(failures).toEqual([])
+})
+
+test('rejects a no-violation verdict when the probe is not installed', async () => {
+  await mainPage.bringToFront()
+  await mainPage.evaluate(() => {
+    delete (window as WindowWithCspProbe).__cliloomCspProbeInstalled
+  })
+
+  await expect(assertNoCspViolations(mainPage)).rejects.toThrow(/CSP probe was not installed/)
+
+  await mainPage.reload({ waitUntil: 'domcontentloaded' })
+  await assertRenderedWithoutCspViolations(mainPage)
 })
 
 test('keeps the narrow column dividers draggable', async () => {
@@ -158,6 +147,10 @@ test('keeps settings menu rows on one line within the window', async () => {
 
   await mainPage.keyboard.press('Escape')
 })
+
+async function assertRenderedWithoutCspViolations(page: Page) {
+  await assertNoCspViolations(page)
+}
 
 async function assertSingleLineMenu(menu: ReturnType<Page['locator']>) {
   await expect(menu).toBeVisible()

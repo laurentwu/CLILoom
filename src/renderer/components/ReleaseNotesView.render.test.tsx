@@ -101,6 +101,10 @@ describe('ReleaseNotesView rendering', () => {
     )
 
     await waitFor(() => expect(releaseNotesContent(container).textContent).toContain('Ready to install'))
+    await expect.poll(() => releaseNotesContent(container).textContent).not.toContain("What's Changed")
+    expect(container.querySelector('a')?.getAttribute('href')).not.toBe(
+      'https://github.com/laurentwu/CLILoom/compare/v0.1.0...v0.1.1'
+    )
   })
 
   it('labels the read-only area with the localized release notes title', async () => {

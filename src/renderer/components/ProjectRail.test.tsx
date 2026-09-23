@@ -2,6 +2,7 @@
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { I18nextProvider } from 'react-i18next'
+import type { ComponentProps } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { i18n } from '../i18n'
 import { defaultSkinContent, type UserSkin } from '../../shared/skin'
@@ -98,76 +99,100 @@ vi.mock('@/components/ui/alert-dialog', async () => {
 
 import { ProjectRail } from './ProjectRail'
 
-const defaultUpdateProps = {
-  unreadProjectIds: new Set<string>(),
-  updateState: {
-    status: 'idle' as const,
-    capability: 'installable' as const,
-    packageType: 'nsis' as const,
-    currentVersion: '1.2.3'
-  },
-  onCheckForUpdates: () => undefined,
-  onInstallUpdate: () => undefined,
-  onOpenUpdateRelease: () => undefined
+type ProjectRailProps = ComponentProps<typeof ProjectRail>
+
+type ProjectRecord = Extract<ProjectRailProps['projects'][number], Record<string, unknown>>
+
+function makeProject(overrides: Partial<ProjectRecord> = {}): ProjectRecord {
+  return {
+    id: 'project-1',
+    name: 'Demo',
+    path: '/repo/demo',
+    sort_order: 0,
+    created_at: '2026-08-11T00:00:00.000Z',
+    ...overrides
+  }
+}
+
+function makeShellSnapshot(overrides: Partial<NonNullable<ProjectRailProps['shellSnapshot']>> = {}): NonNullable<ProjectRailProps['shellSnapshot']> {
+  return {
+    platform: 'linux',
+    preferences: { version: 3, selection: { mode: 'automatic' } },
+    candidates: [],
+    effectiveShell: null,
+    error: undefined,
+    ...overrides
+  }
+}
+
+function makeUpdateState(overrides: Partial<UpdateState> = {}): UpdateState {
+  return {
+    status: 'idle',
+    capability: 'installable',
+    packageType: 'nsis',
+    currentVersion: '1.2.3',
+    ...overrides
+  }
+}
+
+function railProps(overrides: Partial<ProjectRailProps> = {}): ProjectRailProps {
+  return {
+    activeProjectId: null,
+    activeSkinId: 'builtin.light.neutral',
+    language: 'en',
+    projects: [],
+    shellSnapshot: makeShellSnapshot(),
+    unreadProjectIds: new Set<string>(),
+    updateState: makeUpdateState(),
+    userSkins: [],
+    onAddProject: () => undefined,
+    onLanguageChange: () => undefined,
+    onOpenAppearance: () => undefined,
+    onDeleteProject: async () => undefined,
+    onOpenAssistant: () => undefined,
+    onOpenDesigner: () => undefined,
+    onOpenUpdateRelease: () => undefined,
+    onCheckForUpdates: () => undefined,
+    onInstallUpdate: () => undefined,
+    onRefreshShells: async () => undefined,
+    onRenameProject: async () => undefined,
+    onReorderProject: () => undefined,
+    onSelectProject: () => undefined,
+    onShellChange: async () => undefined,
+    onSkinChange: () => undefined,
+    ...overrides
+  }
+}
+
+function renderRail(overrides: Partial<ProjectRailProps> = {}) {
+  return render(
+    <I18nextProvider i18n={i18n}>
+      <ProjectRail {...railProps(overrides)} />
+    </I18nextProvider>
+  )
 }
 
 afterEach(() => {
   cleanup()
+  void i18n.changeLanguage('en')
 })
 
 describe('ProjectRail project actions', () => {
   it('renders and removes the unread marker with localized accessible text', async () => {
     await i18n.changeLanguage('en')
     const projects = [
-      {
-        id: 'project-1',
-        name: 'Current',
-        path: '/repo/current',
-        sort_order: 0,
-        created_at: '2026-08-11T00:00:00.000Z'
-      },
-      {
-        id: 'project-2',
-        name: 'Background',
-        path: '/repo/background',
-        sort_order: 1,
-        created_at: '2026-08-11T00:00:00.000Z'
-      }
+      makeProject({ id: 'project-1', name: 'Current', path: '/repo/current', sort_order: 0 }),
+      makeProject({ id: 'project-2', name: 'Background', path: '/repo/background', sort_order: 1 })
     ]
     const onSelectProject = vi.fn()
-    const renderRail = (unreadProjectIds: ReadonlySet<string>) => (
-      <I18nextProvider i18n={i18n}>
-        <ProjectRail
-          {...defaultUpdateProps}
-          activeProjectId="project-2"
-          activeSkinId="builtin.light.neutral"
-          language="en"
-          projects={projects}
-          shellSnapshot={{
-            platform: 'linux',
-            preferences: { version: 3, selection: { mode: 'automatic' } },
-            candidates: [],
-            effectiveShell: null,
-            error: undefined
-          }}
-          unreadProjectIds={unreadProjectIds}
-          onAddProject={() => undefined}
-          onLanguageChange={() => undefined}
-          onOpenAppearance={() => undefined}
-          onDeleteProject={async () => undefined}
-          onOpenAssistant={() => undefined}
-          onOpenDesigner={() => undefined}
-          onRefreshShells={async () => undefined}
-          onRenameProject={async () => undefined}
-          onReorderProject={() => undefined}
-          onSelectProject={onSelectProject}
-          onShellChange={async () => undefined}
-          onSkinChange={() => undefined}
-          userSkins={[]}
-        />
-      </I18nextProvider>
-    )
-    const view = render(renderRail(new Set(['project-2'])))
+    const renderWithUnread = (unreadProjectIds: ReadonlySet<string>) => renderRail({
+      activeProjectId: 'project-2',
+      language: 'en',
+      projects,
+      unreadProjectIds,
+      onSelectProject
+    })
+    const view = renderWithUnread(new Set(['project-2']))
 
     const unreadButton = screen.getByRole('button', {
       name: 'Open project Background, unread task status updates'
@@ -181,61 +206,34 @@ describe('ProjectRail project actions', () => {
     fireEvent.click(unreadButton)
     expect(onSelectProject).toHaveBeenCalledWith(projects[1])
 
-    view.rerender(renderRail(new Set()))
+    view.rerender(
+      <I18nextProvider i18n={i18n}>
+        <ProjectRail {...railProps({
+          activeProjectId: 'project-2',
+          language: 'en',
+          projects,
+          unreadProjectIds: new Set<string>(),
+          onSelectProject
+        })} />
+      </I18nextProvider>
+    )
     expect(view.container.querySelector('[data-project-unread-indicator="true"]')).toBeNull()
     expect(screen.getByRole('button', { name: 'Open project Background' })).toBeTruthy()
     expect(screen.queryByText('Unread task status updates')).toBeNull()
   })
 
   it('moves rename and delete into an ordered project context menu', async () => {
-    i18n.changeLanguage('zh')
-    const project = {
-      id: 'project-1',
-      name: 'Demo',
-      path: '/repo/demo',
-      sort_order: 0,
-      created_at: '2026-08-11T00:00:00.000Z'
-    }
+    await i18n.changeLanguage('zh')
+    const project = makeProject({ name: 'Demo', path: '/repo/demo' })
     const onRenameProject = vi.fn().mockResolvedValue(undefined)
     const onSelectProject = vi.fn()
-    render(<I18nextProvider i18n={i18n}>
-      <ProjectRail
-        {...defaultUpdateProps}
-        activeProjectId="project-1"
-        activeSkinId="builtin.light.neutral"
-        language="zh"
-        projects={[
-          project,
-          {
-            id: 'project-2',
-            name: 'Other',
-            path: '/repo/other',
-            sort_order: 1,
-            created_at: '2026-08-11T00:00:00.000Z'
-          }
-        ]}
-        shellSnapshot={{
-          platform: 'linux',
-          preferences: { version: 3, selection: { mode: 'automatic' } },
-          candidates: [],
-          effectiveShell: null,
-          error: undefined
-        }}
-        onAddProject={() => undefined}
-        onLanguageChange={() => undefined}
-        onOpenAppearance={() => undefined}
-        onDeleteProject={async () => undefined}
-        onOpenAssistant={() => undefined}
-        onOpenDesigner={() => undefined}
-        onRefreshShells={async () => undefined}
-        onRenameProject={onRenameProject}
-        onReorderProject={() => undefined}
-        onSelectProject={onSelectProject}
-        onShellChange={async () => undefined}
-        onSkinChange={() => undefined}
-        userSkins={[]}
-      />
-    </I18nextProvider>)
+    renderRail({
+      activeProjectId: 'project-1',
+      language: 'zh',
+      projects: [project, makeProject({ id: 'project-2', name: 'Other', path: '/repo/other', sort_order: 1 })],
+      onRenameProject,
+      onSelectProject
+    })
 
     const projectButton = screen.getByRole('button', { name: '打开项目 Demo' })
     const projectButtonClasses = projectButton.className.split(/\s+/)
@@ -266,44 +264,15 @@ describe('ProjectRail project actions', () => {
   })
 
   it('disables blank names and submits a valid rename with Enter', async () => {
-    i18n.changeLanguage('zh')
-    const project = {
-      id: 'project-1',
-      name: 'Demo',
-      path: '/repo/demo',
-      sort_order: 0,
-      created_at: '2026-08-11T00:00:00.000Z'
-    }
+    await i18n.changeLanguage('zh')
+    const project = makeProject()
     const onRenameProject = vi.fn().mockResolvedValue(undefined)
-    render(<I18nextProvider i18n={i18n}>
-      <ProjectRail
-        {...defaultUpdateProps}
-        activeProjectId="project-1"
-        activeSkinId="builtin.light.neutral"
-        language="zh"
-        projects={[project]}
-        shellSnapshot={{
-          platform: 'linux',
-          preferences: { version: 3, selection: { mode: 'automatic' } },
-          candidates: [],
-          effectiveShell: null,
-          error: undefined
-        }}
-        onAddProject={() => undefined}
-        onLanguageChange={() => undefined}
-        onOpenAppearance={() => undefined}
-        onDeleteProject={async () => undefined}
-        onOpenAssistant={() => undefined}
-        onOpenDesigner={() => undefined}
-        onRefreshShells={async () => undefined}
-        onRenameProject={onRenameProject}
-        onReorderProject={() => undefined}
-        onSelectProject={() => undefined}
-        onShellChange={async () => undefined}
-        onSkinChange={() => undefined}
-        userSkins={[]}
-      />
-    </I18nextProvider>)
+    renderRail({
+      activeProjectId: 'project-1',
+      language: 'zh',
+      projects: [project],
+      onRenameProject
+    })
 
     fireEvent.contextMenu(screen.getByRole('button', { name: '打开项目 Demo' }), { clientX: 20, clientY: 20 })
     fireEvent.click(await screen.findByRole('menuitem', { name: '重命名' }))
@@ -322,18 +291,14 @@ describe('ProjectRail project actions', () => {
 
 describe('ProjectRail Shell settings', () => {
   it('shows an unavailable persisted choice and keeps it selected after update rejection', async () => {
-    i18n.changeLanguage('zh')
+    await i18n.changeLanguage('zh')
     const onShellChange = vi.fn().mockRejectedValue(new Error('主进程拒绝了 Shell 选择'))
     const onRefreshShells = vi.fn().mockResolvedValue(undefined)
-    render(<I18nextProvider i18n={i18n}>
-      <ProjectRail
-        {...defaultUpdateProps}
-        activeProjectId={null}
-        activeSkinId="builtin.light.neutral"
-        language="en"
-        projects={[]}
-      shellSnapshot={{
-        platform: 'linux',
+    renderRail({
+      language: 'en',
+      onRefreshShells,
+      onShellChange,
+      shellSnapshot: makeShellSnapshot({
         preferences: {
           version: 3,
           selection: {
@@ -354,24 +319,9 @@ describe('ProjectRail Shell settings', () => {
           executablePath: '/bin/bash',
           source: 'system'
         }],
-        effectiveShell: null,
         error: '所选 Shell 不可用：zsh (/missing/zsh)'
-      }}
-      onAddProject={() => undefined}
-      onLanguageChange={() => undefined}
-      onOpenAppearance={() => undefined}
-      onDeleteProject={async () => undefined}
-      onOpenAssistant={() => undefined}
-      onOpenDesigner={() => undefined}
-      onRefreshShells={onRefreshShells}
-      onRenameProject={async () => undefined}
-      onReorderProject={() => undefined}
-      onSelectProject={() => undefined}
-      onShellChange={onShellChange}
-      onSkinChange={() => undefined}
-      userSkins={[]}
-      />
-    </I18nextProvider>)
+      })
+    })
 
     expect(screen.getByText('zsh（不可用）')).toBeTruthy()
     expect(screen.getByText('/missing/zsh')).toBeTruthy()
@@ -395,38 +345,10 @@ describe('ProjectRail Shell settings', () => {
 })
 
 describe('ProjectRail language picker', () => {
-  it('invokes onLanguageChange when a language option is chosen', () => {
-    i18n.changeLanguage('zh')
+  it('invokes onLanguageChange when a language option is chosen', async () => {
+    await i18n.changeLanguage('zh')
     const onLanguageChange = vi.fn()
-    render(<I18nextProvider i18n={i18n}>
-      <ProjectRail
-        {...defaultUpdateProps}
-        activeProjectId={null}
-        activeSkinId="builtin.light.neutral"
-        language="en"
-        projects={[]}
-        shellSnapshot={{
-          platform: 'linux',
-          preferences: { version: 3, selection: { mode: 'automatic' } },
-          candidates: [],
-          effectiveShell: null,
-          error: undefined
-        }}
-        onAddProject={() => undefined}
-        onLanguageChange={onLanguageChange}
-        onOpenAppearance={() => undefined}
-        onDeleteProject={async () => undefined}
-        onOpenAssistant={() => undefined}
-        onOpenDesigner={() => undefined}
-        onRefreshShells={async () => undefined}
-        onRenameProject={async () => undefined}
-        onReorderProject={() => undefined}
-        onSelectProject={() => undefined}
-        onShellChange={async () => undefined}
-        onSkinChange={() => undefined}
-        userSkins={[]}
-      />
-    </I18nextProvider>)
+    renderRail({ language: 'en', onLanguageChange })
 
     fireEvent.click(screen.getByRole('button', { name: '中文' }))
     expect(onLanguageChange).toHaveBeenCalledWith('zh')
@@ -434,111 +356,66 @@ describe('ProjectRail language picker', () => {
 })
 
 describe('ProjectRail update menu', () => {
-  it('shows version and routes manual update actions by state and package capability', () => {
-    i18n.changeLanguage('zh')
+  it('shows version and routes manual update actions by state and package capability', async () => {
+    await i18n.changeLanguage('zh')
     const onCheckForUpdates = vi.fn()
     const onInstallUpdate = vi.fn()
     const onOpenUpdateRelease = vi.fn()
-    const renderRail = (updateState: UpdateState) => (
-      <I18nextProvider i18n={i18n}>
-        <ProjectRail
-          {...defaultUpdateProps}
-          activeProjectId={null}
-          activeSkinId="builtin.light.neutral"
-          language="zh"
-          projects={[]}
-          shellSnapshot={{
-            platform: 'linux',
-            preferences: { version: 3, selection: { mode: 'automatic' } },
-            candidates: [],
-            effectiveShell: null,
-            error: undefined
-          }}
-          updateState={updateState}
-          onAddProject={() => undefined}
-          onLanguageChange={() => undefined}
-          onOpenAppearance={() => undefined}
-          onDeleteProject={async () => undefined}
-          onOpenAssistant={() => undefined}
-          onOpenDesigner={() => undefined}
-          onRefreshShells={async () => undefined}
-          onRenameProject={async () => undefined}
-          onReorderProject={() => undefined}
-          onSelectProject={() => undefined}
-          onShellChange={async () => undefined}
-          onSkinChange={() => undefined}
-          onCheckForUpdates={onCheckForUpdates}
-          onInstallUpdate={onInstallUpdate}
-          onOpenUpdateRelease={onOpenUpdateRelease}
-          userSkins={[]}
-        />
-      </I18nextProvider>
-    )
-    const view = render(renderRail({
-      status: 'idle',
-      capability: 'installable',
-      packageType: 'nsis',
-      currentVersion: '1.2.3'
-    }))
+    const renderUpdateRail = (updateState: UpdateState) => renderRail({
+      language: 'zh',
+      updateState,
+      onCheckForUpdates,
+      onInstallUpdate,
+      onOpenUpdateRelease
+    })
+    const view = renderUpdateRail(makeUpdateState())
 
     fireEvent.click(screen.getByRole('button', { name: '检查更新v1.2.3' }))
     expect(onCheckForUpdates).toHaveBeenCalledOnce()
 
-    view.rerender(renderRail({
-      status: 'downloaded',
-      capability: 'installable',
-      packageType: 'nsis',
-      currentVersion: '1.2.3',
-      targetVersion: '1.3.0'
-    }))
+    view.rerender(
+      <I18nextProvider i18n={i18n}>
+        <ProjectRail {...railProps({
+          language: 'zh',
+          updateState: makeUpdateState({
+            status: 'downloaded',
+            targetVersion: '1.3.0'
+          }),
+          onCheckForUpdates,
+          onInstallUpdate,
+          onOpenUpdateRelease
+        })} />
+      </I18nextProvider>
+    )
     fireEvent.click(screen.getByRole('button', { name: '重启并更新v1.2.3' }))
     expect(onInstallUpdate).toHaveBeenCalledOnce()
 
-    view.rerender(renderRail({
-      status: 'available',
-      capability: 'downloadOnly',
-      packageType: 'portable',
-      currentVersion: '1.2.3',
-      targetVersion: '1.3.0'
-    }))
+    view.rerender(
+      <I18nextProvider i18n={i18n}>
+        <ProjectRail {...railProps({
+          language: 'zh',
+          updateState: makeUpdateState({
+            status: 'available',
+            capability: 'downloadOnly',
+            packageType: 'portable',
+            targetVersion: '1.3.0'
+          }),
+          onCheckForUpdates,
+          onInstallUpdate,
+          onOpenUpdateRelease
+        })} />
+      </I18nextProvider>
+    )
     fireEvent.click(screen.getByRole('button', { name: '查看更新v1.2.3' }))
     expect(onOpenUpdateRelease).toHaveBeenCalledOnce()
   })
 })
 
 describe('ProjectRail skin picker', () => {
-  it('lists preset skins and a custom-skin empty hint, and reports selection', () => {
-    i18n.changeLanguage('zh')
+  it('lists preset skins and a custom-skin empty hint, and reports selection', async () => {
+    await i18n.changeLanguage('zh')
     const onSkinChange = vi.fn()
-    render(<I18nextProvider i18n={i18n}>
-      <ProjectRail
-        {...defaultUpdateProps}
-        activeProjectId={null}
-        activeSkinId="builtin.light.neutral"
-        language="en"
-        projects={[]}
-        shellSnapshot={{
-          platform: 'linux',
-          preferences: { version: 3, selection: { mode: 'automatic' } },
-          candidates: [],
-          effectiveShell: null,
-          error: undefined
-        }}
-        onAddProject={() => undefined}
-        onLanguageChange={() => undefined}
-        onOpenAppearance={() => undefined}
-        onDeleteProject={async () => undefined}
-        onOpenAssistant={() => undefined}
-        onOpenDesigner={() => undefined}
-        onRefreshShells={async () => undefined}
-        onRenameProject={async () => undefined}
-        onReorderProject={() => undefined}
-        onSelectProject={() => undefined}
-        onShellChange={async () => undefined}
-        onSkinChange={onSkinChange}
-        userSkins={[]}
-      />
-    </I18nextProvider>)
+    renderRail({ language: 'en', onSkinChange })
 
     expect(screen.getByText('预设主题')).toBeTruthy()
     expect(screen.getByText('中性浅色')).toBeTruthy()
@@ -550,8 +427,8 @@ describe('ProjectRail skin picker', () => {
     expect(onSkinChange).toHaveBeenCalledWith('builtin.dark.neutral')
   })
 
-  it('uses a custom skin background for both of its icons', () => {
-    i18n.changeLanguage('zh')
+  it('uses a custom skin background for both of its icons', async () => {
+    await i18n.changeLanguage('zh')
     const skin: UserSkin = {
       ...defaultSkinContent('light'),
       id: 'user.gradient',
@@ -563,35 +440,11 @@ describe('ProjectRail skin picker', () => {
         angle: 45
       }
     }
-    const { container } = render(<I18nextProvider i18n={i18n}>
-      <ProjectRail
-        {...defaultUpdateProps}
-        activeProjectId={null}
-        activeSkinId={skin.id}
-        language="zh"
-        projects={[]}
-        shellSnapshot={{
-          platform: 'linux',
-          preferences: { version: 3, selection: { mode: 'automatic' } },
-          candidates: [],
-          effectiveShell: null,
-          error: undefined
-        }}
-        onAddProject={() => undefined}
-        onLanguageChange={() => undefined}
-        onOpenAppearance={() => undefined}
-        onDeleteProject={async () => undefined}
-        onOpenAssistant={() => undefined}
-        onOpenDesigner={() => undefined}
-        onRefreshShells={async () => undefined}
-        onRenameProject={async () => undefined}
-        onReorderProject={() => undefined}
-        onSelectProject={() => undefined}
-        onShellChange={async () => undefined}
-        onSkinChange={() => undefined}
-        userSkins={[skin]}
-      />
-    </I18nextProvider>)
+    const { container } = renderRail({
+      activeSkinId: skin.id,
+      language: 'zh',
+      userSkins: [skin]
+    })
 
     expect(screen.getByText('渐变主题')).toBeTruthy()
     const gradientIcons = Array.from(container.querySelectorAll<HTMLElement>('span'))

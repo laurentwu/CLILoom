@@ -18,6 +18,7 @@ import {
   type ElectronApplication,
   type Page
 } from 'playwright/test'
+import { createTestResources, type TestResources } from '../test-support/resources'
 import type { WorkflowDefinition } from '../src/shared/workflow'
 import type { ShellSnapshot } from '../src/shared/shell'
 import type { UserSkin } from '../src/shared/appSettings'
@@ -84,6 +85,7 @@ while true; do
 done
 `
 
+let resources: TestResources
 let appDataDirectory = ''
 let fixtureDirectory = ''
 let jobsDirectory = ''
@@ -179,7 +181,7 @@ function setAssistantInitializationCommand(command: string): void {
 }
 
 async function launchApplication(): Promise<void> {
-  electronApp = await electron.launch({
+  const app = await electron.launch({
     args: [projectRoot],
     cwd: projectRoot,
     env: {
@@ -190,7 +192,9 @@ async function launchApplication(): Promise<void> {
       CLILOOM_E2E_OUT: resultsDirectory
     }
   })
-  mainPage = await electronApp.firstWindow()
+  electronApp = app
+  resources.defer('electron-app', () => app.close())
+  mainPage = await app.firstWindow()
   await mainPage.locator('#root > *').first().waitFor()
 }
 
@@ -218,8 +222,15 @@ async function readTaskSidebarWidth(): Promise<string> {
 }
 
 test.beforeAll(async () => {
+  resources = createTestResources()
   appDataDirectory = mkdtempSync(path.join(tmpdir(), 'cliloom-assistant-config-data-'))
+  resources.defer('app-data-directory', () => {
+    rmSync(appDataDirectory, { recursive: true, force: true })
+  })
   fixtureDirectory = mkdtempSync(path.join(tmpdir(), 'cliloom-assistant-config-fixture-'))
+  resources.defer('fixture-directory', () => {
+    rmSync(fixtureDirectory, { recursive: true, force: true })
+  })
   scriptDirectory = path.join(fixtureDirectory, 'bin')
   jobsDirectory = path.join(fixtureDirectory, 'jobs')
   resultsDirectory = path.join(fixtureDirectory, 'results')
@@ -240,9 +251,7 @@ test.beforeAll(async () => {
 })
 
 test.afterAll(async () => {
-  await electronApp?.close()
-  if (appDataDirectory) rmSync(appDataDirectory, { recursive: true, force: true })
-  if (fixtureDirectory) rmSync(fixtureDirectory, { recursive: true, force: true })
+  await resources.dispose()
 })
 
 function withTermAutoRetry(definition: WorkflowDefinition, autoRetry: unknown): WorkflowDefinition {

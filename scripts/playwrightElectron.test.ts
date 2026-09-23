@@ -1,7 +1,7 @@
-import { mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs'
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it } from 'vitest'
 import {
   buildE2eLaunchPlan,
   E2eToolUnavailableError,
@@ -12,7 +12,34 @@ import {
 
 const PLAYWRIGHT_CLI = resolvePlaywrightCliPath()
 
-function planFor(platform: NodeJS.Platform, env: NodeJS.ProcessEnv, forwardedArgs: string[] = []) {
+type E2eToolError = InstanceType<typeof E2eToolUnavailableError>
+
+const pathDirectories: string[] = []
+
+function createPathDirectory(): string {
+  const directory = mkdtempSync(path.join(tmpdir(), 'cliloom-e2e-path-'))
+  pathDirectories.push(directory)
+  return directory
+}
+
+function createExecutableFixture(directory: string, name: string): string {
+  const filePath = path.join(directory, name)
+  writeFileSync(filePath, `#!/bin/sh\nexit 0\n`)
+  chmodSync(filePath, 0o755)
+  return filePath
+}
+
+afterAll(() => {
+  for (const directory of pathDirectories.splice(0)) {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+function planFor(
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv,
+  forwardedArgs: string[] = []
+) {
   return buildE2eLaunchPlan({
     platform,
     env,
@@ -22,28 +49,68 @@ function planFor(platform: NodeJS.Platform, env: NodeJS.ProcessEnv, forwardedArg
   })
 }
 
+describe('findExecutableOnPath', () => {
+  it('locates executables with PATH-entry priority and exact hit paths', () => {
+    const firstDirectory = createPathDirectory()
+    const secondDirectory = createPathDirectory()
+    const missingDirectory = createPathDirectory()
+    const onlyInSecond = createExecutableFixture(secondDirectory, 'second-only-tool')
+    const presentInBoth = createExecutableFixture(firstDirectory, 'priority-tool')
+    const shadowedCopy = createExecutableFixture(secondDirectory, 'priority-tool')
+
+    const pathValue = [
+      missingDirectory,
+      firstDirectory,
+      secondDirectory
+    ].join(path.delimiter)
+
+    expect(findExecutableOnPath('definitely-missing-tool', { PATH: pathValue })).toBeNull()
+    expect(findExecutableOnPath('definitely-missing-tool', { PATH: '' })).toBeNull()
+    expect(findExecutableOnPath('second-only-tool', { PATH: pathValue })).toBe(onlyInSecond)
+    expect(findExecutableOnPath('priority-tool', { PATH: pathValue })).toBe(presentInBoth)
+    expect(findExecutableOnPath('priority-tool', { PATH: pathValue })).not.toBe(shadowedCopy)
+  })
+
+  it.runIf(process.platform !== 'win32')('ignores files without the executable bit on POSIX', () => {
+    const directory = createPathDirectory()
+    const nonExecutable = path.join(directory, 'plain-file')
+    writeFileSync(nonExecutable, 'not executable')
+
+    expect(findExecutableOnPath('plain-file', { PATH: directory })).toBeNull()
+  })
+})
+
 describe('buildE2eLaunchPlan', () => {
   it('runs Playwright directly on non-Linux platforms', () => {
     for (const platform of ['darwin', 'win32'] as const) {
-      const plan = planFor(platform, { PATH: '/usr/bin' })
+      const plan = planFor(platform, { PATH: '/nonexistent' })
       expect(plan.executable, platform).toBe('/opt/node/bin/node')
       expect(plan.args, platform).toEqual([PLAYWRIGHT_CLI, 'test'])
     }
   })
 
   it('wraps dbus-run-session around the node command when a display exists', () => {
-    const plan = planFor('linux', { PATH: '/usr/bin', DISPLAY: ':0' })
-    expect(plan.executable).toBe('/usr/bin/dbus-run-session')
+    const directory = createPathDirectory()
+    const dbusRunSession = createExecutableFixture(directory, 'dbus-run-session')
+    const plan = planFor('linux', { PATH: directory, DISPLAY: ':0' })
+    expect(plan.executable).toBe(dbusRunSession)
     expect(plan.args).toEqual(['--', '/opt/node/bin/node', PLAYWRIGHT_CLI, 'test'])
   })
 
   it('adds xvfb-run when DISPLAY is missing or empty', () => {
-    for (const env of [{ PATH: '/usr/bin' }, { PATH: '/usr/bin', DISPLAY: '' }] as const) {
+    const dbusDirectory = createPathDirectory()
+    const xvfbDirectory = createPathDirectory()
+    const dbusRunSession = createExecutableFixture(dbusDirectory, 'dbus-run-session')
+    const xvfbRun = createExecutableFixture(xvfbDirectory, 'xvfb-run')
+    for (const env of [
+      { PATH: [dbusDirectory, xvfbDirectory].join(path.delimiter) },
+      { PATH: [dbusDirectory, xvfbDirectory].join(path.delimiter), DISPLAY: '' }
+    ] as const) {
       const plan = planFor('linux', env)
-      expect(plan.executable).toBe('/usr/bin/dbus-run-session')
+      expect(plan.executable).toBe(dbusRunSession)
       expect(plan.args).toEqual([
         '--',
-        '/usr/bin/xvfb-run',
+        xvfbRun,
         '-a',
         '/opt/node/bin/node',
         PLAYWRIGHT_CLI,
@@ -53,53 +120,53 @@ describe('buildE2eLaunchPlan', () => {
   })
 
   it('forwards original CLI arguments verbatim without shell reassembly', () => {
+    const directory = createPathDirectory()
+    const dbusRunSession = createExecutableFixture(directory, 'dbus-run-session')
     const forwarded = ['--reporter=line', 'e2e/terminal.e2e.ts', 'a path with spaces.spec.ts']
-    const plan = planFor('linux', { PATH: '/usr/bin', DISPLAY: ':1' }, forwarded)
+    const plan = planFor('linux', { PATH: directory, DISPLAY: ':1' }, forwarded)
+    expect(plan.executable).toBe(dbusRunSession)
     expect(plan.args.slice(-forwarded.length)).toEqual(forwarded)
-    const plain = planFor('darwin', { PATH: '/usr/bin' }, forwarded)
+    const plain = planFor('darwin', { PATH: '/nonexistent' }, forwarded)
     expect(plain.args.slice(-forwarded.length)).toEqual(forwarded)
   })
 
   it('fails closed when dbus-run-session is missing on Linux', () => {
-    expect(() => planFor('linux', { PATH: '/nonexistent', DISPLAY: ':0' }))
+    const emptyDirectory = createPathDirectory()
+    expect(() => planFor('linux', { PATH: emptyDirectory, DISPLAY: ':0' }))
       .toThrow(E2eToolUnavailableError)
     try {
-      planFor('linux', { PATH: '/nonexistent', DISPLAY: ':0' })
+      planFor('linux', { PATH: emptyDirectory, DISPLAY: ':0' })
     } catch (error) {
-      expect((error as E2eToolUnavailableError).message).toContain('dbus-run-session')
-      expect((error as E2eToolUnavailableError).message).toContain('dbus-daemon')
+      const toolError = error as E2eToolError
+      expect(toolError.message).toContain('dbus-run-session')
+      expect(toolError.message).toContain('dbus-daemon')
     }
   })
 
   it('fails closed when xvfb-run is missing without a display', () => {
-    const directory = mkdtempSync(path.join(tmpdir(), 'cliloom-e2e-tools-'))
+    const directory = createPathDirectory()
+    createExecutableFixture(directory, 'dbus-run-session')
+    expect(() => planFor('linux', { PATH: directory, DISPLAY: '' }))
+      .toThrow(E2eToolUnavailableError)
     try {
-      // Provide dbus-run-session but not xvfb-run.
-      symlinkSync('/usr/bin/dbus-run-session', path.join(directory, 'dbus-run-session'))
-      expect(() => planFor('linux', { PATH: directory, DISPLAY: '' }))
-        .toThrow(E2eToolUnavailableError)
-      try {
-        planFor('linux', { PATH: directory, DISPLAY: '' })
-      } catch (error) {
-        expect((error as E2eToolUnavailableError).message).toContain('xvfb-run')
-      }
-    } finally {
-      rmSync(directory, { recursive: true, force: true })
+      planFor('linux', { PATH: directory, DISPLAY: '' })
+    } catch (error) {
+      expect((error as E2eToolError).message).toContain('xvfb-run')
     }
-  })
-
-  it('locates executables across every PATH entry', () => {
-    expect(findExecutableOnPath('definitely-missing-tool', { PATH: '/usr/bin:/bin' })).toBeNull()
-    const found = findExecutableOnPath('sh', { PATH: '/nonexistent:/usr/bin:/bin' })
-    expect(found === null || found.endsWith('sh')).toBe(true)
   })
 })
 
 describe('runE2eLaunch subprocess behavior', () => {
-  const dbusAvailable = process.platform === 'linux' &&
+  const onLinux = process.platform === 'linux'
+  const dbusRunSessionAvailable = onLinux &&
     findExecutableOnPath('dbus-run-session', process.env) !== null
+  const xvfbRunAvailable = onLinux &&
+    findExecutableOnPath('xvfb-run', process.env) !== null
+  const hasDisplay = onLinux && typeof process.env.DISPLAY === 'string' && process.env.DISPLAY !== ''
+  const virtualDisplayCapable = hasDisplay || xvfbRunAvailable
+  const realDbusLaunchCapable = dbusRunSessionAvailable && virtualDisplayCapable
 
-  it.skipIf(!dbusAvailable || process.platform !== 'linux')(
+  it.skipIf(!realDbusLaunchCapable)(
     'gives the wrapped command a valid isolated D-Bus session address',
     async () => {
       const plan = buildE2eLaunchPlan({
@@ -131,7 +198,7 @@ describe('runE2eLaunch subprocess behavior', () => {
     30_000
   )
 
-  it.skipIf(!dbusAvailable || process.platform !== 'linux')(
+  it.skipIf(!realDbusLaunchCapable)(
     'propagates a non-zero exit code from the wrapped command',
     async () => {
       const plan = buildE2eLaunchPlan({
@@ -166,7 +233,7 @@ describe('runE2eLaunch subprocess behavior', () => {
     expect(result.error).toBeInstanceOf(Error)
   })
 
-  it.skipIf(!dbusAvailable || process.platform !== 'linux')(
+  it.skipIf(!realDbusLaunchCapable)(
     'terminates the wrapped chain on SIGTERM without orphans',
     async () => {
       const plan = buildE2eLaunchPlan({

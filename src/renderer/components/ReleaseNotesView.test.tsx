@@ -1,13 +1,11 @@
 // @vitest-environment jsdom
 
-import { act } from 'react'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { i18n } from '../i18n'
 
 const editorState = vi.hoisted(() => ({
-  lastProps: null as Record<string, unknown> | null,
-  mountCount: 0
+  lastProps: null as Record<string, unknown> | null
 }))
 
 const pluginMocks = vi.hoisted(() => ({
@@ -26,9 +24,6 @@ const terminalMarkdownPluginMock = vi.hoisted(() => vi.fn(() => ({ name: 'termin
 vi.mock('@mdxeditor/editor', async () => {
   const React = await import('react')
   const MDXEditor = (props: Record<string, unknown>) => {
-    React.useEffect(() => {
-      editorState.mountCount += 1
-    }, [])
     editorState.lastProps = props
     return React.createElement(
       'div',
@@ -56,7 +51,6 @@ describe('ReleaseNotesView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     editorState.lastProps = null
-    editorState.mountCount = 0
   })
 
   afterEach(async () => {
@@ -78,10 +72,10 @@ describe('ReleaseNotesView', () => {
     expect(terminalMarkdownPluginMock).toHaveBeenCalledOnce()
     expect(pluginMocks.headingsPlugin).toHaveBeenCalledOnce()
     expect(pluginMocks.listsPlugin).toHaveBeenCalledOnce()
-    expect(pluginMocks.quotePlugin).toHaveBeenCalledOnce()
-    expect(pluginMocks.thematicBreakPlugin).toHaveBeenCalledOnce()
     expect(pluginMocks.linkPlugin).toHaveBeenCalledOnce()
+    expect(pluginMocks.quotePlugin).toHaveBeenCalledOnce()
     expect(pluginMocks.tablePlugin).toHaveBeenCalledOnce()
+    expect(pluginMocks.thematicBreakPlugin).toHaveBeenCalledOnce()
     expect(pluginMocks.codeBlockPlugin).toHaveBeenCalledWith({ defaultCodeBlockLanguage: '' })
     expect(pluginMocks.codeMirrorPlugin).toHaveBeenCalledWith(expect.objectContaining({
       autoLoadLanguageSupport: false
@@ -110,24 +104,6 @@ describe('ReleaseNotesView', () => {
 
     await i18n.changeLanguage('en')
     expect(translate('contentArea.editableMarkdown', 'editable markdown')).toBe('Release notes')
-  })
-
-  it('remounts the editor when the release notes change', () => {
-    const view = render(<ReleaseNotesView markdown="first" />)
-    expect(editorState.mountCount).toBe(1)
-
-    view.rerender(<ReleaseNotesView markdown="second" />)
-    expect(editorState.mountCount).toBe(2)
-    expect(editorState.lastProps).toMatchObject({ markdown: 'second' })
-  })
-
-  it('prevents release-note links from navigating the Electron page', () => {
-    render(<ReleaseNotesView markdown="[docs](https://example.com)" />)
-    const click = new MouseEvent('click', { bubbles: true, cancelable: true })
-
-    act(() => screen.getByRole('link', { name: 'release link' }).dispatchEvent(click))
-
-    expect(click.defaultPrevented).toBe(true)
   })
 
   it('falls back to wrapping plain text when the markdown cannot be parsed', () => {

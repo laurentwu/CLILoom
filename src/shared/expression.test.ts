@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest'
+import { AppError } from './appError'
 import { evaluateExpression } from './expression'
+
+function expectExpressionRejected(source: string): void {
+  let thrown: unknown
+  try {
+    evaluateExpression(source, {})
+  } catch (error) {
+    thrown = error
+  }
+  expect(thrown, `expression was accepted: ${source}`).toBeInstanceOf(AppError)
+  expect((thrown as AppError).code, `expression ${source} failed for an unexpected reason`).toBe('EXPRESSION_INVALID')
+}
 
 describe('expression engine', () => {
   it('evaluates comparisons, logical operators, and string helpers', () => {
@@ -15,7 +27,7 @@ describe('expression engine', () => {
   })
 
   it('does not execute arbitrary JavaScript', () => {
-    expect(() => evaluateExpression('process.exit()', {})).toThrow()
+    expectExpressionRejected('process.exit()')
   })
 
   it('returns false for NaN comparisons', () => {
@@ -58,12 +70,12 @@ describe('expression engine', () => {
   })
 
   it('rejects unknown functions', () => {
-    expect(() => evaluateExpression('foo("bar", "baz")', {})).toThrow()
+    expectExpressionRejected('foo("bar", "baz")')
   })
 
   it('rejects malformed expressions', () => {
-    expect(() => evaluateExpression('(1 + 2', {})).toThrow()
-    expect(() => evaluateExpression('== 3', {})).toThrow()
+    expectExpressionRejected('(1 + 2')
+    expectExpressionRejected('== 3')
   })
 
   it('reports a clear error for unsupported subtraction', () => {

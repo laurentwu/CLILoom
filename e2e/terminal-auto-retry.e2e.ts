@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import {
@@ -10,17 +10,16 @@ import {
   type Page,
   type TestInfo
 } from 'playwright/test'
+import { createTestResources, type TestResources } from '../test-support/resources'
+import {
+  assertNoCspViolations,
+  ensureCspProbeCoverage,
+  installCspProbe,
+  monitorPage,
+  resetCspProbeFailures
+} from './support/cspProbe'
 import type { ProjectRecord, TaskRecord } from '../src/renderer/appTypes'
 import type { WorkflowDefinition } from '../src/shared/workflow'
-
-type CspViolation = {
-  blockedUri: string
-  directive: string
-}
-
-type WindowWithCspProbe = Window & typeof globalThis & {
-  __cliloomCspViolations?: CspViolation[]
-}
 
 const projectRoot = path.join(__dirname, '..')
 const databasePath = (dataDirectory: string) => path.join(dataDirectory, 'CLILoom', 'cliloom.db')
@@ -40,7 +39,7 @@ const workflow: WorkflowDefinition = {
       type: 'non-interactive-terminal',
       name: 'Flaky command',
       config: {
-        command: 'sh -c \'test -f marker && echo recovered || { touch marker; exit 7; }\'',
+        command: 'sh -c \'echo run >> exec-log; if [ ! -f marker ]; then touch marker; exit 7; fi; echo recovered\'',
         cwd: '${sys_project_dir}',
         successExitCodes: [0],
         autoRetry: { enabled: true, mode: 'recommended', maxRetries: 3 }
@@ -87,29 +86,19 @@ const startedTimeWorkflow: WorkflowDefinition = {
   ]
 }
 
-const failures: string[] = []
+let resources: TestResources
 let appDataDirectory = ''
 let projectDirectory = ''
 let projectId = ''
-let electronApp: ElectronApplication
+let electronApp: ElectronApplication | null = null
 let mainPage: Page
+let launchCounter = 0
 
 test.skip(process.platform !== 'linux', 'The automatic retry e2e runs on the Linux validation job')
 
-function monitorPage(page: Page) {
-  page.on('pageerror', (error) => failures.push(`page error: ${error.message}`))
-  page.on('console', (message) => {
-    if (
-      message.type() === 'error' &&
-      /Content Security Policy|Refused to (?:load|execute|apply|connect)/i.test(message.text())
-    ) {
-      failures.push(`console: ${message.text()}`)
-    }
-  })
-}
-
-async function launchApplication() {
-  electronApp = await electron.launch({
+async function launchApplication(): Promise<void> {
+  launchCounter += 1
+  const app = await electron.launch({
     args: [projectRoot],
     cwd: projectRoot,
     env: {
@@ -118,19 +107,14 @@ async function launchApplication() {
       XDG_CONFIG_HOME: appDataDirectory
     }
   })
-  const context = electronApp.context()
-  await context.addInitScript(() => {
-    const target = window as WindowWithCspProbe
-    target.__cliloomCspViolations = []
-    document.addEventListener('securitypolicyviolation', (event) => {
-      target.__cliloomCspViolations?.push({
-        blockedUri: event.blockedURI,
-        directive: event.effectiveDirective
-      })
-    })
-  })
-  mainPage = await electronApp.firstWindow()
-  monitorPage(mainPage)
+  electronApp = app
+  resources.defer(`electron-app-${launchCounter}`, () => app.close())
+  const context = app.context()
+  await installCspProbe(context)
+  mainPage = await app.firstWindow()
+  const stopMonitoring = monitorPage(mainPage)
+  resources.defer(`csp-monitor-${launchCounter}`, stopMonitoring)
+  await ensureCspProbeCoverage(mainPage)
   await mainPage.locator('#root > *').first().waitFor()
 }
 
@@ -172,16 +156,25 @@ function forceWaitingPlanDue(taskId: string, offsetMs: number): void {
   }
 }
 
-test.beforeAll(async () => {
+test.beforeEach(async () => {
+  resetCspProbeFailures()
+  resources = createTestResources()
   appDataDirectory = mkdtempSync(path.join(tmpdir(), 'cliloom-auto-retry-data-'))
+  resources.defer('app-data-directory', () => {
+    rmSync(appDataDirectory, { recursive: true, force: true })
+  })
   const fixtureDirectory = mkdtempSync(path.join(tmpdir(), 'cliloom-auto-retry-projects-'))
+  resources.defer('project-fixture-directory', () => {
+    rmSync(fixtureDirectory, { recursive: true, force: true })
+  })
   projectDirectory = path.join(fixtureDirectory, 'retry-project')
   mkdirSync(projectDirectory)
+  projectId = ''
+  launchCounter = 0
 })
 
-test.afterAll(async () => {
-  await electronApp?.close()
-  if (appDataDirectory) rmSync(appDataDirectory, { recursive: true, force: true })
+test.afterEach(async () => {
+  await resources.dispose()
 })
 
 async function startTask(
@@ -189,9 +182,10 @@ async function startTask(
   title: string,
   definition: WorkflowDefinition = workflow
 ): Promise<void> {
-  // Every task starts from a failed first execution, so the marker that the
-  // flaky command creates must not exist yet.
+  // Every task starts from a failed first execution, so the marker and the
+  // execution record that the flaky command creates must not exist yet.
   rmSync(path.join(projectDirectory, 'marker'), { force: true })
+  rmSync(path.join(projectDirectory, 'exec-log'), { force: true })
   await mainPage.evaluate(async ({ definition, projectId, taskId, title }) => {
     if (!window.cliLoom) throw new Error('Missing main preload API')
     await window.cliLoom.startWorkflow({
@@ -233,29 +227,43 @@ async function attachScreenshot(testInfo: TestInfo, name: string): Promise<void>
 }
 
 /**
- * Register the fixture project for the current test. Standalone runs do the
- * full add-project flow; when an earlier test already registered the same
- * directory the existing record is reused.
+ * Register this test's fixture project through the real add-project flow,
+ * restoring the patched dialog even when registration fails.
  */
-async function ensureProjectRegistered(): Promise<string> {
-  const existing = await mainPage.evaluate(() => window.cliLoom?.listProjects()) as ProjectRecord[]
-  const registered = existing.find((item) => item.path === projectDirectory)
-  if (registered) return registered.id
-
-  await electronApp.evaluate(({ dialog }, directory) => {
+async function registerFixtureProject(): Promise<ProjectRecord> {
+  const app = electronApp!
+  await app.evaluate(({ dialog }, directory) => {
+    const state = globalThis as typeof globalThis & {
+      __cliloomOriginalShowOpenDialog?: typeof dialog.showOpenDialog
+    }
+    if (!state.__cliloomOriginalShowOpenDialog) {
+      state.__cliloomOriginalShowOpenDialog = dialog.showOpenDialog
+    }
     dialog.showOpenDialog = async () => ({
       canceled: false,
       filePaths: [directory]
     })
   }, projectDirectory)
-  await mainPage.getByRole('button', { name: 'Add project folder' }).click()
-  await expect(
-    mainPage.getByRole('button', { name: `Open project ${path.basename(projectDirectory)}` })
-  ).toBeVisible()
+  try {
+    await mainPage.getByRole('button', { name: 'Add project folder' }).click()
+    await expect(
+      mainPage.getByRole('button', { name: `Open project ${path.basename(projectDirectory)}` })
+    ).toBeVisible()
+  } finally {
+    await app.evaluate(({ dialog }) => {
+      const state = globalThis as typeof globalThis & {
+        __cliloomOriginalShowOpenDialog?: typeof dialog.showOpenDialog
+      }
+      if (state.__cliloomOriginalShowOpenDialog) {
+        dialog.showOpenDialog = state.__cliloomOriginalShowOpenDialog
+      }
+      delete state.__cliloomOriginalShowOpenDialog
+    })
+  }
   const projects = await mainPage.evaluate(() => window.cliLoom?.listProjects()) as ProjectRecord[]
   const project = projects.find((item) => item.path === projectDirectory)
   if (!project) throw new Error('E2E project was not registered')
-  return project.id
+  return project
 }
 
 /** Frozen per-run timezone recorded when the task was launched. */
@@ -286,22 +294,9 @@ function expectedStartTimeText(epochMs: number, timeZone: string, locale: string
 }
 
 test('automatic retries cover scheduling, cancellation and restart recovery', async ({ }, testInfo) => {
-  failures.splice(0)
   await launchApplication()
 
-  await electronApp.evaluate(({ dialog }, directory) => {
-    dialog.showOpenDialog = async () => ({
-      canceled: false,
-      filePaths: [directory]
-    })
-  }, projectDirectory)
-  await mainPage.getByRole('button', { name: 'Add project folder' }).click()
-  await expect(
-    mainPage.getByRole('button', { name: `Open project ${path.basename(projectDirectory)}` })
-  ).toBeVisible()
-  const projects = await mainPage.evaluate(() => window.cliLoom?.listProjects()) as ProjectRecord[]
-  const project = projects.find((item) => item.path === projectDirectory)
-  if (!project) throw new Error('E2E project was not registered')
+  const project = await registerFixtureProject()
   projectId = project.id
 
   await mainPage.evaluate(async (definition) => {
@@ -342,7 +337,8 @@ test('automatic retries cover scheduling, cancellation and restart recovery', as
   rmSync(path.join(projectDirectory, 'marker'), { force: true })
   await startTask('e2e-auto-retry-recovered', 'retry-recover')
   await expect.poll(async () => readAutoRetry('e2e-auto-retry-recovered')?.phase).toBe('waiting')
-  await electronApp.close()
+  await electronApp!.close()
+  electronApp = null
 
   forceWaitingPlanDue('e2e-auto-retry-recovered', 5_000)
   await launchApplication()
@@ -359,21 +355,28 @@ test('automatic retries cover scheduling, cancellation and restart recovery', as
   } finally {
     db.close()
   }
+  const recoveredTranscript = await mainPage.evaluate(async (taskId) => {
+    if (!window.cliLoom) throw new Error('Missing main preload API')
+    const sessions = await window.cliLoom.listTaskSessions(taskId) as Array<{ id: string }>
+    const session = sessions.at(-1)
+    if (!session) throw new Error('No terminal session for the recovered task')
+    return (await window.cliLoom.getTaskSessionTranscript(taskId, session.id)).transcript
+  }, 'e2e-auto-retry-recovered')
+  expect(recoveredTranscript).toContain('recovered')
+  // Every execution appends one "run" line to exec-log, independent of the
+  // in-place retry reusing and rewriting the session transcript: exactly one
+  // initial failed execution plus one recovered retry must have run.
+  const executionLog = readFileSync(path.join(projectDirectory, 'exec-log'), 'utf8')
+  expect(executionLog.trim().split('\n')).toEqual(['run', 'run'])
 
-  expect(await mainPage.evaluate(() => (
-    (window as WindowWithCspProbe).__cliloomCspViolations ?? []
-  ))).toEqual([])
-  expect(failures).toEqual([])
+  await assertNoCspViolations(mainPage)
 })
 
 test('automatic retry start time is recorded, displayed and preserved', async ({ }, testInfo) => {
-  failures.splice(0)
-  await electronApp?.close()
   await launchApplication()
 
-  // Self-contained fixture: this test registers its own project and creates
-  // its own tasks, so it also passes when run standalone.
-  projectId = await ensureProjectRegistered()
+  const project = await registerFixtureProject()
+  projectId = project.id
 
   await mainPage.evaluate(async (definition) => {
     if (!window.cliLoom) throw new Error('Missing main preload API')
@@ -389,7 +392,8 @@ test('automatic retry start time is recorded, displayed and preserved', async ({
 
   // Stop the app, move the persisted waiting plan into the past and relaunch:
   // the scheduler performs a real automatic retry (no manual retry button).
-  await electronApp.close()
+  await electronApp!.close()
+  electronApp = null
   forceWaitingPlanDue(taskId, 5_000)
   await launchApplication()
   await mainPage.getByRole('button', { name: /retry-start/ }).first().click()
@@ -453,8 +457,5 @@ test('automatic retry start time is recorded, displayed and preserved', async ({
   await expect(mainPage.getByText(expectedStart).first()).toBeVisible()
   await attachScreenshot(testInfo, 'auto-retry-started-cancelled')
 
-  expect(await mainPage.evaluate(() => (
-    (window as WindowWithCspProbe).__cliloomCspViolations ?? []
-  ))).toEqual([])
-  expect(failures).toEqual([])
+  await assertNoCspViolations(mainPage)
 })

@@ -57,6 +57,20 @@ function flattenKeys(value: unknown, prefix = ''): string[] {
   return Object.entries(value).flatMap(([key, child]) => flattenKeys(child, prefix ? `${prefix}.${key}` : key))
 }
 
+function namedJsonBlock(document: string, name: string, searchFromLine = 0): string {
+  const lines = document.split('\n')
+  const headerIndex = lines.findIndex((line, index) => (
+    index >= searchFromLine && line.trim() === `${name}:`
+  ))
+  if (headerIndex < 0) throw new Error(`The document is missing the "${name}" example block`)
+  const block: string[] = []
+  for (const line of lines.slice(headerIndex + 1)) {
+    if (line !== '' && !line.startsWith('    ')) break
+    block.push(line.slice(4))
+  }
+  return block.join('\n').trim()
+}
+
 function terminalNode(workflow: ReturnType<typeof parseWorkflowDefinition>, nodeId: string) {
   const node = workflow.nodes.find((candidate) => candidate.id === nodeId)
   if (!node) throw new Error(`missing node ${nodeId}`)
@@ -342,13 +356,24 @@ describe('workflow schema capability document', () => {
     for (const variable of SYSTEM_VARIABLES) {
       expect(text).toContain(`${variable}: `)
     }
-    for (const [name, example] of Object.entries(schema.examples)) {
-      expect(text).toContain(`${name}:`)
-      for (const line of JSON.stringify(example, null, 2).split('\n')) {
-        expect(text).toContain(line.trim())
-      }
+    const documentLines = text.split('\n')
+    const autoRetrySectionStart = documentLines.findIndex((line) => (
+      line.trim() === 'Terminal automatic retry (config.autoRetry)'
+    ))
+    expect(autoRetrySectionStart).toBeGreaterThanOrEqual(0)
+    const completeExamplesStart = documentLines.findIndex((line) => (
+      line.trim() === 'Complete workflow examples'
+    ))
+    expect(completeExamplesStart).toBeGreaterThanOrEqual(0)
+    expect(Object.keys(schema.examples)).toEqual(Object.keys(WORKFLOW_SCHEMA_EXAMPLES))
+    for (const [name, example] of Object.entries(WORKFLOW_SCHEMA_EXAMPLES)) {
+      expect(namedJsonBlock(text, name, completeExamplesStart)).toBe(JSON.stringify(example, null, 2))
     }
-    expect(text).toContain(JSON.stringify(TERMINAL_AUTO_RETRY_CONFIG_EXAMPLES.recommendedFinite, null, 2).split('\n')[0].trim())
+    expect(Object.keys(schema.terminalAutoRetry.examples))
+      .toEqual(Object.keys(TERMINAL_AUTO_RETRY_CONFIG_EXAMPLES))
+    for (const [name, example] of Object.entries(TERMINAL_AUTO_RETRY_CONFIG_EXAMPLES)) {
+      expect(namedJsonBlock(text, name, autoRetrySectionStart)).toBe(JSON.stringify(example, null, 2))
+    }
     expect(text).toContain('--file workflow.json')
     expect(text.length).toBeGreaterThan(4000)
   })

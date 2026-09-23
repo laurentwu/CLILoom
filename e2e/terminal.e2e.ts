@@ -2,7 +2,9 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from 'playwright/test'
+import { createTestResources, type TestResources } from '../test-support/resources'
 
+let resources: TestResources
 let appDataDirectory = ''
 let electronApp: ElectronApplication
 let originalClipboard = ''
@@ -29,7 +31,11 @@ async function copyTerminalContent() {
 }
 
 test.beforeAll(async () => {
+  resources = createTestResources()
   appDataDirectory = mkdtempSync(path.join(tmpdir(), 'cliloom-terminal-e2e-'))
+  resources.defer('app-data-directory', () => {
+    rmSync(appDataDirectory, { recursive: true, force: true })
+  })
   electronApp = await electron.launch({
     args: [
       path.join(__dirname, 'electron-main.cjs'),
@@ -41,14 +47,14 @@ test.beforeAll(async () => {
       CLILOOM_E2E_URL: 'http://127.0.0.1:41731/e2e/terminal.html'
     }
   })
+  resources.defer('electron-app', () => electronApp.close())
   page = await electronApp.firstWindow()
   originalClipboard = await readSystemClipboard()
+  resources.defer('system-clipboard', () => writeSystemClipboard(originalClipboard))
 })
 
 test.afterAll(async () => {
-  await writeSystemClipboard(originalClipboard)
-  await electronApp.close()
-  if (appDataDirectory) rmSync(appDataDirectory, { recursive: true, force: true })
+  await resources.dispose()
 })
 
 test.beforeEach(async () => {

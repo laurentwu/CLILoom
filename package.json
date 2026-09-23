@@ -48,7 +48,7 @@
     "test:coverage:terminal": "node scripts/vitest-electron.cjs --config vitest.terminal-coverage.config.mts --coverage",
     "test:e2e": "node scripts/playwright-electron.cjs",
     "test:linux-package": "node scripts/linux-package-smoke.cjs",
-    "typecheck": "tsc -b --pretty false && tsc -p tsconfig.e2e.json --pretty false"
+    "typecheck": "tsc -b --pretty false && tsc -p tsconfig.e2e.json --pretty false && tsc -p tsconfig.scripts.json --pretty false"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",

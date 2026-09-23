@@ -6,16 +6,29 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { i18n } from '../i18n'
 import { TerminalAutoRetrySettings } from './TerminalAutoRetrySettings'
 
-afterEach(cleanup)
+afterEach(async () => {
+  cleanup()
+  await i18n.changeLanguage('en')
+})
 
-function renderSettings(config: Parameters<typeof TerminalAutoRetrySettings>[0]['config']) {
+function renderSettings(
+  config: Parameters<typeof TerminalAutoRetrySettings>[0]['config'],
+  rerenderConfig?: Parameters<typeof TerminalAutoRetrySettings>[0]['config']
+) {
   const onChange = vi.fn()
-  render(
+  const view = render(
     <I18nextProvider i18n={i18n}>
       <TerminalAutoRetrySettings nodeId="node-1" config={config} onChange={onChange} />
     </I18nextProvider>
   )
-  return { onChange }
+  if (rerenderConfig !== undefined) {
+    view.rerender(
+      <I18nextProvider i18n={i18n}>
+        <TerminalAutoRetrySettings nodeId="node-1" config={rerenderConfig} onChange={onChange} />
+      </I18nextProvider>
+    )
+  }
+  return { onChange, view }
 }
 
 describe('TerminalAutoRetrySettings', () => {
@@ -43,9 +56,18 @@ describe('TerminalAutoRetrySettings', () => {
     expect((screen.getByLabelText('Maximum automatic retries') as HTMLInputElement).value).toBe('10')
   })
 
-  it('keeps a disabled configuration with its cron draft', () => {
-    renderSettings({ enabled: false, mode: 'cron', cron: 'unfinished', maxRetries: 3 })
+  it('keeps a disabled configuration with its cron draft and restores it on re-enable', () => {
+    const disabledConfig = { enabled: false, mode: 'cron' as const, cron: 'unfinished', maxRetries: 3 }
+    const { onChange } = renderSettings(disabledConfig)
     expect(screen.queryByLabelText('Cron expression')).toBeNull()
+
+    fireEvent.click(screen.getByLabelText('Enable automatic retry'))
+    expect(onChange).toHaveBeenCalledWith({
+      enabled: true,
+      mode: 'cron',
+      cron: 'unfinished',
+      maxRetries: 3
+    })
   })
 
   it('edits the retry limit and supports unlimited', () => {

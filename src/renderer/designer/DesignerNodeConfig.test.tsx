@@ -2,55 +2,72 @@
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { I18nextProvider } from 'react-i18next'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { i18n } from '../i18n'
 import { DesignerNodeConfig } from './DesignerNodeConfig'
 
-afterEach(cleanup)
+beforeEach(async () => {
+  await i18n.changeLanguage('en')
+})
 
-describe('DesignerNodeConfig', () => {
-  it('does not expose a failure policy for parallel split gateways', () => {
-    render(
-      <I18nextProvider i18n={i18n}>
-        <DesignerNodeConfig
-          node={{
-            id: 'split',
-            type: 'parallel-gateway',
-            name: 'Split',
-            config: { mode: 'split' },
-            x: 0,
-            y: 0
-          }}
-          nodes={[]}
-          edges={[]}
-          onUpdateNode={vi.fn()}
-        />
-      </I18nextProvider>
-    )
+afterEach(async () => {
+  await i18n.changeLanguage('en')
+  cleanup()
+})
 
-    expect(screen.getByText('Mode')).toBeTruthy()
+function renderConfig(node: Parameters<typeof DesignerNodeConfig>[0]['node']) {
+  return render(
+    <I18nextProvider i18n={i18n}>
+      <DesignerNodeConfig
+        node={node}
+        nodes={[]}
+        edges={[]}
+        onUpdateNode={vi.fn()}
+      />
+    </I18nextProvider>
+  )
+}
+
+describe('DesignerNodeConfig parallel gateway fields', () => {
+  it.each([
+    { language: 'en' as const, mode: 'Mode', failurePolicy: 'Failure policy' },
+    { language: 'zh' as const, mode: '模式', failurePolicy: '失败策略' }
+  ])('exposes exactly one $language mode control and no failure policy for split gateways', async ({ language, mode, failurePolicy }) => {
+    await i18n.changeLanguage(language)
+    renderConfig({
+      id: 'split',
+      type: 'parallel-gateway',
+      name: 'Split',
+      config: { mode: 'split' },
+      x: 0,
+      y: 0
+    })
+
+    expect(screen.getByText(mode)).toBeTruthy()
     expect(screen.getAllByRole('combobox')).toHaveLength(1)
-    expect(screen.queryByText('失败策略')).toBeNull()
+    expect(screen.queryByText(failurePolicy)).toBeNull()
   })
+})
 
-  it('renders a single command field for interactive terminal nodes', () => {
-    render(
-      <I18nextProvider i18n={i18n}>
-        <DesignerNodeConfig
-          node={{
-            id: 'it',
-            type: 'interactive-terminal',
-            name: 'Interactive',
-            config: { command: 'echo hi', cwd: '', autoStart: false },
-            x: 0,
-            y: 0
-          }}
-          nodes={[]}
-          edges={[]}
-          onUpdateNode={vi.fn()}
-        />
-      </I18nextProvider>
-    )
+describe('DesignerNodeConfig terminal command fields', () => {
+  it.each([
+    {
+      type: 'interactive-terminal' as const,
+      config: { command: 'echo hi', cwd: '', autoStart: false }
+    },
+    {
+      type: 'non-interactive-terminal' as const,
+      config: { command: 'echo hi', cwd: '', successExitCodes: [0] }
+    }
+  ])('renders a single command field for $type nodes', ({ type, config }) => {
+    renderConfig({
+      id: type,
+      type,
+      name: 'Terminal',
+      config,
+      x: 0,
+      y: 0
+    })
 
     expect(screen.getByLabelText('Command')).toBeTruthy()
     expect(screen.getByLabelText('Retry command (optional)')).toBeTruthy()
@@ -60,29 +77,29 @@ describe('DesignerNodeConfig', () => {
     expect(screen.getByLabelText('Working directory')).toBeTruthy()
   })
 
-  it('renders a single command field for non-interactive terminal nodes', () => {
-    render(
-      <I18nextProvider i18n={i18n}>
-        <DesignerNodeConfig
-          node={{
-            id: 'nit',
-            type: 'non-interactive-terminal',
-            name: 'NonInteractive',
-            config: { command: 'echo hi', cwd: '', successExitCodes: [0] },
-            x: 0,
-            y: 0
-          }}
-          nodes={[]}
-          edges={[]}
-          onUpdateNode={vi.fn()}
-        />
-      </I18nextProvider>
-    )
+  it('keeps the interactive-only mode section out of non-interactive terminals', () => {
+    const interactive = renderConfig({
+      id: 'it',
+      type: 'interactive-terminal',
+      name: 'Interactive',
+      config: { command: 'echo hi', cwd: '', autoStart: false },
+      x: 0,
+      y: 0
+    })
+    expect(screen.getByText('Interactive mode')).toBeTruthy()
+    expect(screen.queryByText('Success exit codes')).toBeNull()
+    interactive.unmount()
 
-    expect(screen.getByLabelText('Command')).toBeTruthy()
-    expect(screen.getByLabelText('Retry command (optional)')).toBeTruthy()
-    expect(screen.queryByText('Command', { selector: 'legend' })).toBeNull()
-    expect(screen.getByLabelText('Working directory')).toBeTruthy()
+    renderConfig({
+      id: 'nit',
+      type: 'non-interactive-terminal',
+      name: 'NonInteractive',
+      config: { command: 'echo hi', cwd: '', successExitCodes: [0] },
+      x: 0,
+      y: 0
+    })
+    expect(screen.queryByText('Interactive mode')).toBeNull()
+    expect(screen.getByText('Success exit codes')).toBeTruthy()
   })
 
   it.each(['interactive-terminal', 'non-interactive-terminal'] as const)(

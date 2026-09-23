@@ -1,6 +1,6 @@
-import Database from 'better-sqlite3'
 import type { BrowserWindow } from 'electron'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createProcessRunnerTestDatabase } from '../../test-support/processRunnerDatabase'
 
 const mocks = vi.hoisted(() => ({
   ptyDataHandlers: [] as Array<(data: string) => void>,
@@ -45,6 +45,44 @@ import {
 
 const TERMINAL_DATA_FLUSH_INTERVAL_FOR_TEST_MS = 16
 
+const openDatabases: Array<ReturnType<typeof createProcessRunnerTestDatabase>> = []
+const activeRunners: ProcessRunner[] = []
+
+async function disposeProcessRunnerFixtures(
+  runners: ProcessRunner[],
+  databases: Array<ReturnType<typeof createProcessRunnerTestDatabase>>
+): Promise<void> {
+  const errors: Array<{ label: string; error: unknown }> = []
+  for (const runner of runners.reverse()) {
+    try {
+      await runner.killAll('interrupted')
+    } catch (error) {
+      errors.push({ label: 'runner killAll', error })
+    }
+  }
+  for (const db of databases) {
+    if (db.open) {
+      try {
+        db.close()
+      } catch (error) {
+        errors.push({ label: 'database close', error })
+      }
+    }
+  }
+  if (errors.length > 0) {
+    throw new AggregateError(
+      errors.map(({ label, error }) => (
+        error instanceof Error ? new Error(`${label}: ${error.message}`, { cause: error }) : new Error(`${label}: ${String(error)}`)
+      )),
+      `Failed to dispose ProcessRunner fixtures: ${errors.map(({ label }) => label).join(', ')}`
+    )
+  }
+}
+
+afterEach(async () => {
+  await disposeProcessRunnerFixtures(activeRunners.splice(0), openDatabases.splice(0))
+})
+
 function createRunner(
   getWindow: () => { webContents: { send: (channel: string, payload: unknown) => void } } | null = () => null,
   shellResolver: EffectiveShellResolver = {
@@ -69,53 +107,19 @@ function createRunner(
   },
   platform: NodeJS.Platform = 'linux'
 ) {
-  const db = new Database(':memory:')
-  db.exec(`
-    create table terminal_sessions (
-      id text primary key,
-      task_id text not null,
-      node_id text not null,
-      kind text not null,
-      command text not null,
-      cwd text not null,
-      status text not null,
-      transcript text not null,
-      created_at text not null,
-      updated_at text not null,
-      request_json text
-    );
-    create table process_logs (
-      id text primary key,
-      task_id text not null,
-      node_id text,
-      stream text not null,
-      content text not null,
-      created_at text not null
-    );
-    create table hook_runs (
-      id text primary key,
-      task_id text not null,
-      node_id text not null,
-      hook_type text not null,
-      status text not null,
-      stdout text not null,
-      stderr text not null,
-      exit_code integer,
-      created_at text not null
-    );
-  `)
-  return {
+  const db = createProcessRunnerTestDatabase()
+  openDatabases.push(db)
+  const runner = new ProcessRunner(
     db,
-    runner: new ProcessRunner(
-      db,
-      getWindow as unknown as () => BrowserWindow | null,
-      { PATH: '/usr/bin', HOME: '/home/test', LANG: 'C.UTF-8' },
-      shellResolver,
-      terminateTree,
-      process.cwd(),
-      platform
-    )
-  }
+    getWindow as unknown as () => BrowserWindow | null,
+    { PATH: '/usr/bin', HOME: '/home/test', LANG: 'C.UTF-8' },
+    shellResolver,
+    terminateTree,
+    process.cwd(),
+    platform
+  )
+  activeRunners.push(runner)
+  return { db, runner }
 }
 
 beforeEach(() => {
@@ -333,7 +337,54 @@ describe('ProcessRunner non-interactive PTY output', () => {
       'select count(*) as count from process_logs where task_id = ? and node_id = ?'
     ).get('task-1', 'node-1') as { count: number }
     expect(count.count).toBe(0)
-    db.close()
+  })
+
+  it('disposes mid-flight fixtures without late flush errors after a failure', async () => {
+    mocks.ptySpawn.mockReturnValue({
+      pid: 4242,
+      onData: vi.fn((callback: (data: string) => void) => {
+        mocks.ptyDataHandlers.push(callback)
+      }),
+      onExit: vi.fn((callback: (event: { exitCode: number }) => void) => {
+        mocks.ptyExitHandlers.push(callback)
+      }),
+      write: vi.fn(),
+      kill: vi.fn()
+    })
+    const { db, runner } = createRunner()
+
+    // Reproduce the state a failing test leaves behind: output already
+    // queued (persist/flush timers armed) but the fake PTY exit never fired.
+    void runner.run({
+      taskId: 'task-mid-flight',
+      nodeId: 'node-mid-flight',
+      kind: 'non-interactive',
+      command: 'never-settles',
+      cwd: '/repo'
+    })
+    mocks.ptyDataHandlers[0]('queued before the failure')
+    expect(runner.hasActiveProcesses()).toBe(true)
+
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      await disposeProcessRunnerFixtures(
+        activeRunners.splice(0),
+        openDatabases.splice(0)
+      )
+      await new Promise((resolve) => setTimeout(resolve, 50))
+
+      // Ending every session first (killAll) drains the pending flush work
+      // and clears the 5-second persist timer, so closing the database can
+      // no longer race a late "database connection is not open" write.
+      expect(runner.hasActiveProcesses()).toBe(false)
+      expect(db.open).toBe(false)
+      expect(consoleError).not.toHaveBeenCalledWith(
+        expect.stringMatching(/flush failed|not open/),
+        expect.anything()
+      )
+    } finally {
+      consoleError.mockRestore()
+    }
   })
 })
 
@@ -454,13 +505,24 @@ describe('ProcessRunner PTY termination and timeouts', () => {
         throw new Error('kill failed')
       })
     })
+    // The first termination attempt reports the unconfirmed tree (the
+    // behavior under test); teardown-time terminations must succeed so the
+    // fixture can be disposed cleanly.
+    let failNextTermination = true
+    const terminateTree = vi.fn(async () => {
+      if (failNextTermination) {
+        failNextTermination = false
+        return { terminated: false, error: 'kill failed' }
+      }
+      return { terminated: true }
+    })
     const { db, runner } = createRunner(() => ({
       webContents: {
         send: (channel: string, payload: unknown) => {
           sends.push({ channel, payload: payload as { status?: string } })
         }
       }
-    }))
+    }), undefined, terminateTree as unknown as Parameters<typeof createRunner>[2])
 
     try {
       const result = runner.run({
