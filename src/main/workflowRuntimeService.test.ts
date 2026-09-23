@@ -14,7 +14,6 @@ import {
   type WorkflowRuntimeState
 } from '../shared/workflowRuntime'
 
-const dbs: Array<{ db: AppDatabase; dir: string }> = []
 
 const storedWorkflow: WorkflowDefinition = {
   id: 'stored-workflow',
@@ -44,18 +43,72 @@ const storedWorkflow: WorkflowDefinition = {
   ]
 }
 
+const serviceDirectories: string[] = []
+const serviceDatabases: AppDatabase[] = []
+const activeServices: WorkflowRuntimeService[] = []
+
 function createDb(): AppDatabase {
   const dir = mkdtempSync(path.join(tmpdir(), 'cliloom-service-'))
+  serviceDirectories.push(dir)
   const db = openDatabase(dir)
-  dbs.push({ db, dir })
+  serviceDatabases.push(db)
   return db
 }
 
-afterEach(() => {
-  while (dbs.length > 0) {
-    const item = dbs.pop()!
-    item.db.close()
-    rmSync(item.dir, { recursive: true, force: true })
+function createService(
+  db: AppDatabase,
+  runner: unknown,
+  getWindow: unknown = () => null,
+  onTaskTerminal?: unknown,
+  targets?: unknown
+): WorkflowRuntimeService {
+  const base = runner as Record<string, unknown>
+  const runnerWithCleanup = base.killAll === undefined
+    ? { ...base, killAll: async () => 0 }
+    : runner
+  const service = new WorkflowRuntimeService(
+    db,
+    runnerWithCleanup as never,
+    getWindow as never,
+    onTaskTerminal as never,
+    targets as never
+  )
+  activeServices.push(service)
+  return service
+}
+
+afterEach(async () => {
+  const errors: Array<{ label: string; error: unknown }> = []
+  for (const service of activeServices.splice(0).reverse()) {
+    try {
+      await service.shutdown()
+    } catch (error) {
+      errors.push({ label: 'service shutdown', error })
+    }
+  }
+  for (const db of serviceDatabases.splice(0).reverse()) {
+    if (db.open) {
+      try {
+        db.close()
+      } catch (error) {
+        errors.push({ label: 'database close', error })
+      }
+    }
+  }
+  for (const dir of serviceDirectories.splice(0)) {
+    try {
+      rmSync(dir, { recursive: true, force: true })
+    } catch (error) {
+      errors.push({ label: 'directory remove', error })
+    }
+  }
+  if (errors.length > 0) {
+    throw new AggregateError(
+      errors.map(({ label, error }) => (
+        error instanceof Error ? new Error(`${label}: ${error.message}`, { cause: error }) : new Error(`${label}: ${String(error)}`)
+      )),
+      `Failed to dispose WorkflowRuntimeService fixtures: ${errors.map(({ label }) => label).join(', ')}`
+    )
   }
 })
 
@@ -94,7 +147,7 @@ describe('WorkflowRuntimeService restore', () => {
       killByTask: () => 0,
       hasLiveSession: () => false
     }
-    const service = new WorkflowRuntimeService(db, runner as never, () => null)
+    const service = createService(db, runner as never, () => null)
 
     const restored = await service.restore('task-1')
 
@@ -165,7 +218,7 @@ describe('WorkflowRuntimeService restore', () => {
       killByTask,
       hasLiveSession: () => true
     }
-    const service = new WorkflowRuntimeService(db, runner as never, () => null)
+    const service = createService(db, runner as never, () => null)
 
     const restored = await service.restore('running-task')
 
@@ -211,7 +264,7 @@ describe('WorkflowRuntimeService restore', () => {
       hasLiveSession: () => true,
       getLiveTranscriptSnapshot: () => ({ transcript: 'partial output', cursor: 3 })
     }
-    const service = new WorkflowRuntimeService(db, runner as never, () => null)
+    const service = createService(db, runner as never, () => null)
 
     await service.start({
       taskId: 'live-running-task',
@@ -257,7 +310,7 @@ describe('WorkflowRuntimeService restore', () => {
       killByTask: () => 0,
       hasLiveSession: () => false
     }
-    const service = new WorkflowRuntimeService(db, runner as never, () => null)
+    const service = createService(db, runner as never, () => null)
     const invalidWorkflow = {
       ...storedWorkflow,
       nodes: storedWorkflow.nodes.map((node) => (
@@ -296,7 +349,7 @@ describe('WorkflowRuntimeService restore', () => {
       killByTask: () => 0,
       hasLiveSession: () => false
     }
-    const service = new WorkflowRuntimeService(db, runner as never, () => null)
+    const service = createService(db, runner as never, () => null)
 
     const started = await service.start({
       taskId: 'new-task',
@@ -326,7 +379,7 @@ describe('WorkflowRuntimeService restore', () => {
       killByTask: () => 0,
       hasLiveSession: () => false
     }
-    const service = new WorkflowRuntimeService(db, runner as never, () => null)
+    const service = createService(db, runner as never, () => null)
 
     await expect(service.start({
       taskId: 'task-1',
@@ -382,7 +435,7 @@ describe('WorkflowRuntimeService restore', () => {
       killByTask: () => 0,
       hasLiveSession: () => false
     }
-    const service = new WorkflowRuntimeService(db, runner as never, () => null)
+    const service = createService(db, runner as never, () => null)
 
     await expect(service.updateVariables('recover-input-task', { answer: '继续' })).resolves.not.toBeNull()
 
@@ -417,9 +470,9 @@ describe('WorkflowRuntimeService restore', () => {
       ]
     }
     const onTaskTerminal = vi.fn()
-    const service = new WorkflowRuntimeService(
+    const service = createService(
       db,
-      runner as never,
+      runner,
       () => null,
       onTaskTerminal
     )
@@ -511,7 +564,7 @@ describe('WorkflowRuntimeService restore', () => {
       killByTask: () => 0,
       hasLiveSession: () => false
     }
-    const service = new WorkflowRuntimeService(db, runner as never, () => null)
+    const service = createService(db, runner as never, () => null)
 
     await expect(service.retryTerminal('session-retry')).resolves.toBe('session-retry')
     expect(retry).toHaveBeenCalledWith('session-retry')
@@ -617,7 +670,7 @@ describe('WorkflowRuntimeService restore', () => {
       killByTask: () => 0,
       hasLiveSession: () => false
     }
-    const service = new WorkflowRuntimeService(db, runner as never, () => null)
+    const service = createService(db, runner as never, () => null)
 
     await expect(service.retryTerminal('versioned-retry-session', 'workflow'))
       .resolves.toBe('versioned-retry-session')
@@ -735,7 +788,7 @@ describe('WorkflowRuntimeService restore', () => {
       killByTask: () => 0,
       hasLiveSession: () => false
     }
-    const service = new WorkflowRuntimeService(db, runner as never, () => null)
+    const service = createService(db, runner as never, () => null)
     const before = {
       task: db.prepare('select status, updated_at from tasks where id = ?').get('edited-retry-task'),
       run: db.prepare('select status, updated_at from workflow_runs where id = ?').get('edited-retry-task'),
@@ -858,7 +911,7 @@ describe('WorkflowRuntimeService restore', () => {
       killByTask: () => 0,
       hasLiveSession: () => false
     }
-    const service = new WorkflowRuntimeService(db, runner as never, () => null)
+    const service = createService(db, runner as never, () => null)
     const before = {
       task: db.prepare('select * from tasks where id = ?').get('stale-running-draft-task'),
       run: db.prepare('select * from workflow_runs where id = ?').get('stale-running-draft-task'),
@@ -964,7 +1017,7 @@ describe('WorkflowRuntimeService restore', () => {
       hasLiveSession: () => false
     }
     const onTaskTerminal = vi.fn()
-    const service = new WorkflowRuntimeService(db, runner as never, () => null, onTaskTerminal)
+    const service = createService(db, runner as never, () => null, onTaskTerminal)
 
     await expect(service.retryTerminal('rejected-retry-session', 'workflow'))
       .rejects.toThrow('invalid shell-neutral retry override')
@@ -1046,7 +1099,7 @@ describe('WorkflowRuntimeService restore', () => {
       killByTask: () => 0,
       hasLiveSession: () => false
     }
-    const service = new WorkflowRuntimeService(db, runner as never, () => null)
+    const service = createService(db, runner as never, () => null)
 
     await expect(service.retryTerminal('session-old', 'standalone')).resolves.toBe('session-old')
     await vi.waitFor(() => expect(retry).toHaveBeenCalledWith('session-old'))
@@ -1070,7 +1123,7 @@ describe('WorkflowRuntimeService restore', () => {
       retry,
       hasLiveSession: () => false
     }
-    const service = new WorkflowRuntimeService(db, runner as never, () => null)
+    const service = createService(db, runner as never, () => null)
 
     await expect(service.retryTerminal('orphan-session', 'workflow')).rejects.toThrow()
 
@@ -1101,7 +1154,7 @@ describe('WorkflowRuntimeService restore', () => {
       retry,
       hasLiveSession: () => false
     }
-    const service = new WorkflowRuntimeService(db, runner as never, () => null)
+    const service = createService(db, runner as never, () => null)
 
     await expect(service.retryTerminal('orphan-auto-session')).resolves.toBe('orphan-auto-session')
     expect(retry).toHaveBeenCalledWith('orphan-auto-session')
@@ -1142,7 +1195,7 @@ describe('WorkflowRuntimeService restore', () => {
       killByTask: () => 0,
       hasLiveSession: () => false
     }
-    const service = new WorkflowRuntimeService(db, runner as never, () => null)
+    const service = createService(db, runner as never, () => null)
 
     await expect(service.retryNode('retry-gateway-task', 'gateway')).resolves.toMatchObject({
       status: 'running',
@@ -1239,7 +1292,7 @@ describe('WorkflowRuntimeService restore', () => {
       killByTask: () => 0,
       hasLiveSession: () => false
     }
-    const service = new WorkflowRuntimeService(db, runner as never, () => null)
+    const service = createService(db, runner as never, () => null)
 
     await expect(service.retryNode(
       'retry-branch-gateway-task',
@@ -1316,9 +1369,9 @@ describe('WorkflowRuntimeService restore', () => {
       hasLiveSession: () => false
     }
     const onTaskTerminal = vi.fn()
-    const service = new WorkflowRuntimeService(
+    const service = createService(
       db,
-      runner as never,
+      runner,
       () => null,
       onTaskTerminal
     )
@@ -1375,9 +1428,9 @@ describe('WorkflowRuntimeService restore', () => {
       hasLiveSession: () => false
     }
     const onTaskTerminal = vi.fn()
-    const service = new WorkflowRuntimeService(
+    const service = createService(
       db,
-      runner as never,
+      runner,
       () => null,
       onTaskTerminal
     )
@@ -1515,7 +1568,7 @@ describe('WorkflowRuntimeService restore', () => {
         killByTask: () => 0,
         hasLiveSession: () => false
       }
-      const service = new WorkflowRuntimeService(db, runner as never, () => null)
+      const service = createService(db, runner as never, () => null)
 
       const retrySessionIds = ['session-a', 'session-b', 'session-c']
       if (retryMode === 'concurrently') {
@@ -1628,7 +1681,7 @@ describe('WorkflowRuntimeService restore', () => {
       getLiveSessionIdsByTask: () => [],
       listSessions: () => []
     }
-    const service = new WorkflowRuntimeService(db, runner as never, () => null)
+    const service = createService(db, runner as never, () => null)
 
     await service.start({
       taskId: 'active-parallel-retry-task',
@@ -1714,7 +1767,7 @@ describe('WorkflowRuntimeService restore', () => {
       killAll: vi.fn().mockResolvedValue(0),
       hasLiveSession: () => false
     }
-    const service = new WorkflowRuntimeService(db, runner as never, () => null)
+    const service = createService(db, runner as never, () => null)
     const options = {
       taskId: 'concurrent-start-task',
       projectId: 'project-1',
@@ -1754,7 +1807,7 @@ describe('WorkflowRuntimeService restore', () => {
       killAll,
       hasLiveSession: () => false
     }
-    const service = new WorkflowRuntimeService(db, runner as never, () => null)
+    const service = createService(db, runner as never, () => null)
     const starting = service.start({
       taskId: 'shutdown-race-task',
       projectId: 'project-1',
@@ -1813,7 +1866,7 @@ describe('WorkflowRuntimeService restore', () => {
       killAll,
       hasLiveSession: () => false
     }
-    const service = new WorkflowRuntimeService(db, runner as never, () => null)
+    const service = createService(db, runner as never, () => null)
 
     await service.start({
       taskId: 'shutdown-active-task',
@@ -1892,7 +1945,7 @@ describe('WorkflowRuntimeService execution targets', () => {
       ],
       edges: [{ id: 'start-end', from: 'start', to: 'end' }]
     }
-    const service = new WorkflowRuntimeService(db, runner as never, () => null, undefined, targets)
+    const service = createService(db, runner as never, () => null, undefined, targets)
 
     await expect(service.start({
       taskId: 'legacy-project-task',
@@ -1973,9 +2026,9 @@ describe('WorkflowRuntimeService execution targets', () => {
         { id: 'terminal-end', from: 'terminal', to: 'end' }
       ]
     }
-    const service = new WorkflowRuntimeService(
+    const service = createService(
       db,
-      runner as never,
+      runner,
       () => null,
       undefined,
       targets
@@ -2070,9 +2123,9 @@ describe('WorkflowRuntimeService execution targets', () => {
         { id: 'terminal-end', from: 'terminal', to: 'end' }
       ]
     }
-    const service = new WorkflowRuntimeService(
+    const service = createService(
       db,
-      runner as never,
+      runner,
       () => null,
       undefined,
       targets
@@ -2144,7 +2197,7 @@ describe('WorkflowRuntimeService execution targets', () => {
         { id: 'terminal-end', from: 'terminal', to: 'end' }
       ]
     }
-    const service = new WorkflowRuntimeService(db, runner as never, () => null, undefined, targets)
+    const service = createService(db, runner as never, () => null, undefined, targets)
 
     await service.start({
       taskId: 'native-path-failure-task',
@@ -2165,6 +2218,53 @@ describe('WorkflowRuntimeService execution targets', () => {
     })
   })
 })
+
+async function settleAsync(rounds = 12): Promise<void> {
+  for (let round = 0; round < rounds; round += 1) {
+    await Promise.resolve()
+  }
+}
+
+function persistedAutoRetry(
+  db: ReturnType<typeof createDb>,
+  taskId: string
+): { phase?: string; attemptsStarted?: number; reason?: string; cycleId?: string; scheduleId?: string } | undefined {
+  return readWorkflowRuntimeState(db, taskId).state?.nodeRuns?.cmd?.autoRetry
+}
+
+async function flushUntil<T>(
+  observe: () => T,
+  isDone: (value: T) => boolean,
+  label: string,
+  maxRounds = 500
+): Promise<T> {
+  let last = observe()
+  for (let round = 0; round < maxRounds && !isDone(last); round += 1) {
+    await Promise.resolve()
+    last = observe()
+  }
+  if (!isDone(last)) {
+    throw new Error(`Timed out waiting for ${label}; last observed: ${JSON.stringify(last)}`)
+  }
+  return last
+}
+
+async function waitForAutoRetryPhase(
+  db: ReturnType<typeof createDb>,
+  taskId: string,
+  expected: Record<string, unknown>,
+  label: string
+): Promise<NonNullable<ReturnType<typeof persistedAutoRetry>>> {
+  const settled = await flushUntil(
+    () => persistedAutoRetry(db, taskId),
+    (autoRetry) => (
+      autoRetry !== undefined &&
+      Object.entries(expected).every(([key, value]) => autoRetry[key as keyof typeof autoRetry] === value)
+    ),
+    label
+  )
+  return settled!
+}
 
 describe('WorkflowRuntimeService automatic terminal retries', () => {
   const autoRetryWorkflow: WorkflowDefinition = {
@@ -2228,12 +2328,6 @@ describe('WorkflowRuntimeService automatic terminal retries', () => {
     return { runner, retryCalls }
   }
 
-  async function flushAsync(rounds = 12): Promise<void> {
-    for (let round = 0; round < rounds; round += 1) {
-      await Promise.resolve()
-    }
-  }
-
   it('schedules, accepts and completes a due automatic retry', async () => {
     vi.useFakeTimers()
     try {
@@ -2243,7 +2337,7 @@ describe('WorkflowRuntimeService automatic terminal retries', () => {
           { sessionId: 'session-cmd', stdout: '', stderr: 'boom', exitCode: 1, status: 'closed' }
         ]
       })
-      const service = new WorkflowRuntimeService(db, runner as never, () => null)
+      const service = createService(db, runner as never, () => null)
 
       const started = await service.start({
         taskId: 'task-auto',
@@ -2253,32 +2347,30 @@ describe('WorkflowRuntimeService automatic terminal retries', () => {
         variables: {},
         startNodeId: 'start'
       })
-      await flushAsync()
+      await waitForAutoRetryPhase(db, 'task-auto', { phase: 'waiting' }, 'initial waiting plan')
       expect(started.autoRetryContext?.runId).toBeTruthy()
       expect(started.autoRetryContext?.timeZone).toBeTruthy()
 
-      let state = service.getState('task-auto') ?? await flushAsync().then(() => service.getState('task-auto'))
-      state = state ?? started
+      const state = readWorkflowRuntimeState(db, 'task-auto').state ?? started
       expect(state.nodeRuns.cmd.autoRetry?.phase).toBe('waiting')
 
       // Advance past the 60-second first delay: the scheduler dispatches the
       // ticket, the service validates it and starts the retry process.
       await vi.advanceTimersByTimeAsync(60_500)
-      await flushAsync()
+      await flushUntil(() => retryCalls.length, (count) => count >= 1, 'first automatic retry dispatch')
       expect(retryCalls).toHaveLength(1)
       expect(retryCalls[0].sessionId).toBe('session-cmd')
 
       // The retry fails again, so a new schedule with a two-minute wait is
       // planned and the counter advanced. The failed engine may already be
       // released, so the persisted snapshot is authoritative.
-      await flushAsync()
-      const persisted = readWorkflowRuntimeState(db, 'task-auto')
-      const after = persisted.state ?? service.getState('task-auto')
-      expect(after?.nodeRuns.cmd.autoRetry).toMatchObject({
-        phase: 'waiting',
-        attemptsStarted: 1
-      })
-      expect(after?.nodeRuns.cmd.autoRetry?.scheduleId).not.toBe(state.nodeRuns.cmd.autoRetry?.scheduleId)
+      const after = await waitForAutoRetryPhase(
+        db,
+        'task-auto',
+        { phase: 'waiting', attemptsStarted: 1 },
+        'rescheduled plan after failed retry'
+      )
+      expect(after.scheduleId).not.toBe(state.nodeRuns.cmd.autoRetry?.scheduleId)
       expect(service.hasActiveTasks()).toBe(true)
     } finally {
       vi.useRealTimers()
@@ -2295,7 +2387,7 @@ describe('WorkflowRuntimeService automatic terminal retries', () => {
           { sessionId: 'session-cmd', stdout: 'recovered', stderr: '', exitCode: 0, status: 'closed' }
         ]
       })
-      const service = new WorkflowRuntimeService(db, runner as never, () => null)
+      const service = createService(db, runner as never, () => null)
       await service.start({
         taskId: 'task-auto',
         projectId: 'project-1',
@@ -2304,11 +2396,15 @@ describe('WorkflowRuntimeService automatic terminal retries', () => {
         variables: {},
         startNodeId: 'start'
       })
-      await flushAsync()
+      await waitForAutoRetryPhase(db, 'task-auto', { phase: 'waiting' }, 'waiting plan before recovery')
       await vi.advanceTimersByTimeAsync(60_500)
-      await flushAsync()
+      await flushUntil(
+        () => readWorkflowRuntimeState(db, 'task-auto').state?.status ?? null,
+        (status) => status === 'completed',
+        'workflow completion after successful retry'
+      )
 
-      const state = readWorkflowRuntimeState(db, 'task-auto').state ?? service.getState('task-auto')
+      const state = readWorkflowRuntimeState(db, 'task-auto').state
       expect(state?.status).toBe('completed')
       expect(state?.nodeRuns.cmd.status).toBe('completed')
       expect(state?.nodeRuns.end.status).toBe('completed')
@@ -2324,7 +2420,7 @@ describe('WorkflowRuntimeService automatic terminal retries', () => {
       const { runner, retryCalls } = createAutoRetryRunner({
         results: [{ sessionId: 'session-cmd', stdout: '', stderr: 'boom', exitCode: 1, status: 'closed' }]
       })
-      const service = new WorkflowRuntimeService(db, runner as never, () => null)
+      const service = createService(db, runner as never, () => null)
       expect(saveWorkflowWithRevision(db, autoRetryWorkflow, undefined).revision).toBe(1)
       await service.start({
         taskId: 'task-auto',
@@ -2334,7 +2430,7 @@ describe('WorkflowRuntimeService automatic terminal retries', () => {
         variables: {},
         startNodeId: 'start'
       })
-      await flushAsync()
+      await waitForAutoRetryPhase(db, 'task-auto', { phase: 'waiting' }, 'bound waiting plan')
       const persisted = readWorkflowRuntimeState(db, 'task-auto')
       const plan = persisted.state?.nodeRuns.cmd.autoRetry
       expect(plan?.phase).toBe('waiting')
@@ -2368,7 +2464,7 @@ describe('WorkflowRuntimeService automatic terminal retries', () => {
 
       // The waiting plan still fires on its original schedule.
       await vi.advanceTimersByTimeAsync(60_500)
-      await flushAsync()
+      await flushUntil(() => retryCalls.length, (count) => count >= 1, 'bound-version retry dispatch')
       expect(retryCalls).toHaveLength(1)
 
       // A task started with the updated definition does not schedule retries.
@@ -2394,10 +2490,10 @@ describe('WorkflowRuntimeService automatic terminal retries', () => {
     vi.useFakeTimers()
     try {
       const db = createDb()
-      const { runner } = createAutoRetryRunner({
+      const { runner, retryCalls } = createAutoRetryRunner({
         results: [{ sessionId: 'session-cmd', stdout: '', stderr: 'boom', exitCode: 1, status: 'closed' }]
       })
-      const service = new WorkflowRuntimeService(db, runner as never, () => null)
+      const service = createService(db, runner as never, () => null)
       await service.start({
         taskId: 'task-auto',
         projectId: 'project-1',
@@ -2406,7 +2502,7 @@ describe('WorkflowRuntimeService automatic terminal retries', () => {
         variables: {},
         startNodeId: 'start'
       })
-      await flushAsync()
+      await waitForAutoRetryPhase(db, 'task-auto', { phase: 'waiting' }, 'waiting plan before cancellation')
       const persisted = service.getState('task-auto')
       const autoRetry = persisted?.nodeRuns.cmd.autoRetry
       expect(autoRetry?.phase).toBe('waiting')
@@ -2432,11 +2528,10 @@ describe('WorkflowRuntimeService automatic terminal retries', () => {
         scheduleId: autoRetry!.scheduleId!
       })).resolves.toBeTruthy()
 
-      // Advancing time must not start a retry after cancellation.
+      // Advancing the full schedule window must not dispatch any retry.
       await vi.advanceTimersByTimeAsync(120_000)
-      await flushAsync()
-      const runnerRetry = runner.retry as unknown as { mock?: unknown }
-      expect(runnerRetry.mock).toBeUndefined()
+      await settleAsync()
+      expect(retryCalls).toHaveLength(0)
     } finally {
       vi.useRealTimers()
     }
@@ -2446,10 +2541,10 @@ describe('WorkflowRuntimeService automatic terminal retries', () => {
     vi.useFakeTimers()
     try {
       const db = createDb()
-      const { runner } = createAutoRetryRunner({
+      const { runner, retryCalls } = createAutoRetryRunner({
         results: [{ sessionId: 'session-cmd', stdout: '', stderr: 'boom', exitCode: 1, status: 'closed' }]
       })
-      const service = new WorkflowRuntimeService(db, runner as never, () => null)
+      const service = createService(db, runner as never, () => null)
       await service.start({
         taskId: 'task-auto',
         projectId: 'project-1',
@@ -2458,11 +2553,16 @@ describe('WorkflowRuntimeService automatic terminal retries', () => {
         variables: {},
         startNodeId: 'start'
       })
-      await flushAsync()
+      await waitForAutoRetryPhase(db, 'task-auto', { phase: 'waiting' }, 'waiting plan before stop')
       expect(service.getState('task-auto')?.nodeRuns.cmd.autoRetry?.phase).toBe('waiting')
 
       await service.stop('task-auto')
-      await flushAsync()
+      await waitForAutoRetryPhase(
+        db,
+        'task-auto',
+        { phase: 'blocked', reason: 'task-stopped' },
+        'blocked plan after stop'
+      )
 
       const row = db.prepare(
         'select output_json from node_runs where node_id = ?'
@@ -2473,7 +2573,8 @@ describe('WorkflowRuntimeService automatic terminal retries', () => {
       })
 
       await vi.advanceTimersByTimeAsync(120_000)
-      await flushAsync()
+      await settleAsync()
+      expect(retryCalls).toHaveLength(0)
       const state = service.getState('task-auto')
       expect(state).toBeNull()
     } finally {
@@ -2526,24 +2627,24 @@ describe('WorkflowRuntimeService automatic terminal retries', () => {
       const { runner, retryCalls } = createAutoRetryRunner({
         results: [{ sessionId: 'session-cmd', stdout: '', stderr: 'boom', exitCode: 1, status: 'closed' }]
       })
-      const service = new WorkflowRuntimeService(db, runner as never, () => null)
+      const service = createService(db, runner as never, () => null)
 
       await service.recoverAutoRetries()
-      await flushAsync(40)
-
+      await flushUntil(() => retryCalls.length, (count) => count >= 1, 'recovered retry dispatch')
       expect(retryCalls).toHaveLength(1)
-      const after = readWorkflowRuntimeState(db, 'task-auto').state ?? service.getState('task-auto')
-      expect(after?.nodeRuns.cmd.autoRetry).toMatchObject({
-        phase: 'waiting',
-        attemptsStarted: 1,
-        cycleId: 'cycle-recovered'
-      })
+      const after = await waitForAutoRetryPhase(
+        db,
+        'task-auto',
+        { phase: 'waiting', attemptsStarted: 1, cycleId: 'cycle-recovered' },
+        'rescheduled recovered plan'
+      )
+      expect(after.cycleId).toBe('cycle-recovered')
 
       // The consumed schedule is not replayed. The next plan legitimately
       // waits two minutes, so advancing beyond the missed moment but before
       // the next plan must not start anything.
       await vi.advanceTimersByTimeAsync(90_000)
-      await flushAsync(40)
+      await settleAsync()
       expect(retryCalls).toHaveLength(1)
     } finally {
       vi.useRealTimers()
@@ -2594,9 +2695,14 @@ describe('WorkflowRuntimeService automatic terminal retries', () => {
       db.prepare('update workflow_runs set workflow_version = ? where task_id = ?').run(null, 'task-auto')
 
       const { runner, retryCalls } = createAutoRetryRunner()
-      const service = new WorkflowRuntimeService(db, runner as never, () => null)
+      const service = createService(db, runner as never, () => null)
       await service.recoverAutoRetries()
-      await flushAsync(40)
+      await waitForAutoRetryPhase(
+        db,
+        'task-auto',
+        { phase: 'blocked', reason: 'missing-workflow' },
+        'blocked plan for missing workflow version'
+      )
 
       expect(retryCalls).toHaveLength(0)
       const row = db.prepare('select output_json from node_runs where node_id = ?').get('cmd') as { output_json: string }
@@ -2703,9 +2809,14 @@ describe('WorkflowRuntimeService automatic retry review regressions', () => {
           throw new Error('retry must not be called')
         }
       }
-      const service = new WorkflowRuntimeService(db, runner as never, () => null)
+      const service = createService(db, runner as never, () => null)
       await service.recoverAutoRetries()
-      for (let round = 0; round < 40; round += 1) await Promise.resolve()
+      await waitForAutoRetryPhase(
+        db,
+        'task-auto',
+        { phase: 'blocked', reason: 'missing-session' },
+        'blocked missing-session plan'
+      )
 
       const row = db.prepare('select output_json from node_runs where node_id = ?').get('cmd') as { output_json: string }
       const stored = JSON.parse(row.output_json).autoRetry
@@ -2749,9 +2860,14 @@ describe('WorkflowRuntimeService automatic retry review regressions', () => {
         }
         return { runner, retryCalls }
       })()
-      const service = new WorkflowRuntimeService(db, runner as never, () => null)
+      const service = createService(db, runner as never, () => null)
       await service.recoverAutoRetries()
-      for (let round = 0; round < 40; round += 1) await Promise.resolve()
+      await waitForAutoRetryPhase(
+        db,
+        'task-auto',
+        { phase: 'blocked', reason: 'missing-workflow' },
+        'blocked missing-workflow-version plan'
+      )
 
       expect(retryCalls).toHaveLength(0)
       const row = db.prepare('select output_json from node_runs where node_id = ?').get('cmd') as { output_json: string }
@@ -2786,7 +2902,7 @@ describe('WorkflowRuntimeService automatic retry review regressions', () => {
         }
         return { runner }
       })()
-      const service = new WorkflowRuntimeService(db, runner as never, getWindow as never)
+      const service = createService(db, runner as never, getWindow as never)
 
       await service.start({
         taskId: 'task-auto',
@@ -2796,7 +2912,16 @@ describe('WorkflowRuntimeService automatic retry review regressions', () => {
         variables: {},
         startNodeId: 'start'
       })
-      for (let round = 0; round < 40; round += 1) await Promise.resolve()
+      await flushUntil(
+        () => ({
+          engineReleased: service.getState('task-auto') === null,
+          persistedPlan: persistedAutoRetry(db, 'task-auto')
+        }),
+        ({ engineReleased, persistedPlan }) => (
+          engineReleased && persistedPlan?.phase === 'waiting'
+        ),
+        'engine release with a persisted waiting plan'
+      )
       // The failed engine is released; the waiting plan lives in storage.
       expect(service.getState('task-auto')).toBeNull()
 

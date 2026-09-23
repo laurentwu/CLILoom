@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { AppError } from './appError'
 import { createI18n } from './i18n'
 import {
   bindShellVariables,
@@ -16,6 +17,17 @@ import {
   validateWorkflow
 } from './workflow'
 import type { WorkflowDefinition, WorkflowEdge, WorkflowNode } from './workflow'
+
+function captureWorkflowRejection(action: () => unknown): AppError {
+  let thrown: unknown
+  try {
+    action()
+  } catch (error) {
+    thrown = error
+  }
+  expect(thrown, 'expected the workflow input to be rejected').toBeInstanceOf(AppError)
+  return thrown as AppError
+}
 
 describe('variable rules', () => {
   it('rejects user variables with sys_ prefix', () => {
@@ -286,7 +298,10 @@ describe('terminal retry command parsing', () => {
   it.each([null, {}, [], 'x'.repeat(100_001)])(
     'rejects an invalid retry command value',
     (retryCommand) => {
-      expect(() => parseWorkflowDefinitionStructure(definition('interactive-terminal', retryCommand))).toThrow()
+      const rejection = captureWorkflowRejection(
+        () => parseWorkflowDefinitionStructure(definition('interactive-terminal', retryCommand))
+      )
+      expect(rejection.code).toBe('WORKFLOW_INVALID')
     }
   )
 
@@ -492,22 +507,23 @@ describe('workflow structural validation', () => {
       { key: 'description', value: null }
     ]) {
       const withNull = { ...baseInput(), [override.key]: override.value }
-      expect(() => parseWorkflowDefinition(withNull), override.key).toThrow()
+      expect(captureWorkflowRejection(() => parseWorkflowDefinition(withNull)).code, override.key)
+        .toBe('WORKFLOW_INVALID')
     }
-    expect(() => parseWorkflowDefinition({
+    expect(captureWorkflowRejection(() => parseWorkflowDefinition({
       ...baseInput(),
       nodes: baseInput().nodes.map((node) => (
         node.id === 'terminal'
           ? { ...node, config: { ...node.config, env: null, timeoutMs: null, retryCommand: null } }
           : node
       ))
-    })).toThrow()
-    expect(() => parseWorkflowDefinition({
+    })).code).toBe('WORKFLOW_INVALID')
+    expect(captureWorkflowRejection(() => parseWorkflowDefinition({
       ...baseInput(),
       nodes: baseInput().nodes.map((node) => (
         node.id === 'terminal' ? { ...node, startHook: null } : node
       ))
-    })).toThrow()
+    })).code).toBe('WORKFLOW_INVALID')
 
     const omitted = parseWorkflowDefinition(baseInput())
     expect(omitted.layout).toBeUndefined()
@@ -908,12 +924,21 @@ describe('terminal auto-retry configuration', () => {
   })
 
   it('rejects invalid auto-retry configurations', () => {
-    expect(() => parseWorkflowDefinition(workflowWithAutoRetry({ enabled: true }))).toThrow()
-    expect(() => parseWorkflowDefinition(workflowWithAutoRetry({ enabled: 1, mode: 'recommended' }))).toThrow()
-    expect(() => parseWorkflowDefinition(workflowWithAutoRetry({ enabled: true, mode: 'daily' }))).toThrow()
-    expect(() => parseWorkflowDefinition(workflowWithAutoRetry({ enabled: true, mode: 'recommended', maxRetries: 0 }))).toThrow()
-    expect(() => parseWorkflowDefinition(workflowWithAutoRetry({ enabled: true, mode: 'recommended', maxRetries: 10000 }))).toThrow()
-    expect(() => parseWorkflowDefinition(workflowWithAutoRetry({ enabled: true, mode: 'cron' }))).toThrow()
+    const invalidAutoRetryConfigs: unknown[] = [
+      { enabled: true },
+      { enabled: 1, mode: 'recommended' },
+      { enabled: true, mode: 'daily' },
+      { enabled: true, mode: 'recommended', maxRetries: 0 },
+      { enabled: true, mode: 'recommended', maxRetries: 10000 },
+      { enabled: true, mode: 'cron' }
+    ]
+    for (const autoRetry of invalidAutoRetryConfigs) {
+      const rejection = captureWorkflowRejection(
+        () => parseWorkflowDefinition(workflowWithAutoRetry(autoRetry))
+      )
+      expect(rejection.code, `auto-retry ${JSON.stringify(autoRetry)} failed for an unexpected reason`)
+        .toBe('WORKFLOW_INVALID')
+    }
   })
 
   it('validates enabled cron expressions but allows disabled drafts', () => {

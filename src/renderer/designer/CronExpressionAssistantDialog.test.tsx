@@ -2,12 +2,23 @@
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { I18nextProvider } from 'react-i18next'
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { i18n } from '../i18n'
 import { CronExpressionAssistantDialog } from './CronExpressionAssistantDialog'
 
+const scrollIntoViewExisted = typeof Element.prototype.scrollIntoView === 'function'
+const originalScrollIntoViewDescriptor = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollIntoView')
+
 beforeAll(() => {
   Element.prototype.scrollIntoView = () => {}
+})
+
+afterAll(() => {
+  if (scrollIntoViewExisted && originalScrollIntoViewDescriptor) {
+    Object.defineProperty(Element.prototype, 'scrollIntoView', originalScrollIntoViewDescriptor)
+  } else if (!scrollIntoViewExisted) {
+    delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView
+  }
 })
 
 afterEach(cleanup)

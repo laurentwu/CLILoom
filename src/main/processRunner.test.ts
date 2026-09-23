@@ -1,7 +1,7 @@
-import Database from 'better-sqlite3'
 import { stripVTControlCharacters } from 'node:util'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { bindShellCommand, interpolate } from '../shared/workflow'
+import { createProcessRunnerTestDatabase } from '../../test-support/processRunnerDatabase'
 import { ProcessRunner } from './processRunner'
 import { renderShellCommand } from './shellExecution'
 import { discoverShells } from './shellService'
@@ -9,42 +9,33 @@ import { discoverShells } from './shellService'
 const posixTestShell = discoverShells({ environment: process.env })
   .find((shell) => shell.family === 'posix')
 
+const openDatabases: Array<ReturnType<typeof createProcessRunnerTestDatabase>> = []
+const activeRunners: ProcessRunner[] = []
+
+afterEach(async () => {
+  const teardownErrors: unknown[] = []
+  for (const runner of activeRunners.splice(0)) {
+    try {
+      await runner.killAll('interrupted')
+    } catch (error) {
+      teardownErrors.push(error)
+    }
+  }
+  for (const db of openDatabases.splice(0)) {
+    if (db.open) {
+      try {
+        db.close()
+      } catch (error) {
+        teardownErrors.push(error)
+      }
+    }
+  }
+  if (teardownErrors.length > 0) throw teardownErrors[0]
+})
+
 function createRunner(withWindow = false) {
-  const db = new Database(':memory:')
-  db.exec(`
-    create table terminal_sessions (
-      id text primary key,
-      task_id text not null,
-      node_id text not null,
-      kind text not null,
-      command text not null,
-      cwd text not null,
-      status text not null,
-      transcript text not null,
-      created_at text not null,
-      updated_at text not null,
-      request_json text
-    );
-    create table process_logs (
-      id text primary key,
-      task_id text not null,
-      node_id text,
-      stream text not null,
-      content text not null,
-      created_at text not null
-    );
-    create table hook_runs (
-      id text primary key,
-      task_id text not null,
-      node_id text not null,
-      hook_type text not null,
-      status text not null,
-      stdout text not null,
-      stderr text not null,
-      exit_code integer,
-      created_at text not null
-    );
-  `)
+  const db = createProcessRunnerTestDatabase()
+  openDatabases.push(db)
   const send = vi.fn()
   const environment = Object.fromEntries(
     Object.entries(process.env).filter(([name]) => !/^CLILOOM_INTERNAL_VALUE_\d+$/.test(name))
@@ -57,6 +48,7 @@ function createRunner(withWindow = false) {
       ? { resolveEffectiveShell: () => posixTestShell }
       : undefined
   )
+  activeRunners.push(runner)
   return { db, runner, send }
 }
 
@@ -64,7 +56,7 @@ describe('ProcessRunner session liveness', () => {
   it('reports missing sessions as not live', () => {
     const { db, runner } = createRunner()
     expect(runner.hasLiveSession('missing')).toBe(false)
-    db.close()
+    expect(db.open).toBe(true)
   })
 })
 
@@ -410,6 +402,7 @@ describe.runIf(Boolean(posixTestShell))('ProcessRunner PTY execution', () => {
       process.env,
       { resolveEffectiveShell: () => posixTestShell! }
     )
+    activeRunners.push(recreated)
     expect(recreated.getRetrySource(first.sessionId)).toMatchObject({
       retry: { displayCommand: 'printf C' },
       defaultCommand: { displayCommand: 'printf A' }

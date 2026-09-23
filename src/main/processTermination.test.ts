@@ -1,12 +1,24 @@
 import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
 import type { spawn } from 'node:child_process'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   resolveTaskkillPath,
   runTaskkill,
   terminateProcessTree
 } from './processTermination'
+
+const processKillSpies: Array<ReturnType<typeof vi.spyOn>> = []
+
+afterEach(() => {
+  for (const spy of processKillSpies.splice(0)) spy.mockRestore()
+})
+
+function spyOnProcessKillWithoutSystemCalls(): ReturnType<typeof vi.spyOn> {
+  const spy = vi.spyOn(process, 'kill').mockImplementation(() => true)
+  processKillSpies.push(spy)
+  return spy
+}
 
 function createTaskkillProcess(): {
   child: ReturnType<typeof spawn>
@@ -25,7 +37,7 @@ function createTaskkillProcess(): {
 
 describe('terminateProcessTree safety', () => {
   it('never sends a process-group signal for an unowned PID', async () => {
-    const processKill = vi.spyOn(process, 'kill')
+    const processKill = spyOnProcessKillWithoutSystemCalls()
     const directKill = vi.fn()
 
     await expect(terminateProcessTree(
@@ -36,11 +48,10 @@ describe('terminateProcessTree safety', () => {
     expect(processKill).not.toHaveBeenCalled()
     expect(directKill).toHaveBeenNthCalledWith(1, 'SIGTERM')
     expect(directKill).toHaveBeenNthCalledWith(2, 'SIGKILL')
-    processKill.mockRestore()
   })
 
   it('uses the owned process group when direct-child ownership is verified', async () => {
-    const processKill = vi.spyOn(process, 'kill').mockReturnValue(true)
+    const processKill = spyOnProcessKillWithoutSystemCalls()
     const directKill = vi.fn()
 
     await terminateProcessTree(
@@ -51,7 +62,6 @@ describe('terminateProcessTree safety', () => {
     expect(processKill).toHaveBeenNthCalledWith(1, -5151, 'SIGTERM')
     expect(processKill).toHaveBeenNthCalledWith(2, -5151, 'SIGKILL')
     expect(directKill).not.toHaveBeenCalled()
-    processKill.mockRestore()
   })
 
   it('captures the process tree before waiting for node-pty exit', async () => {

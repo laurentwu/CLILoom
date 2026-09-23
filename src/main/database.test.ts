@@ -6,11 +6,13 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
-  statSync
+  statSync,
+  writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+const nodeFs = require('node:fs') as typeof import('node:fs')
 import {
   MAX_PERSISTED_TERMINAL_TRANSCRIPT_CHARS,
   MAX_TERMINAL_TRANSCRIPT_CHARS
@@ -40,7 +42,9 @@ import {
 } from './database'
 import { TASK_DRAFT_VERSION, type TaskDraftPayload } from '../shared/taskDraft'
 
-const databases: Array<{ db: AppDatabase; dir: string }> = []
+type TrackedDatabase = { db: AppDatabase; dir: string }
+const trackedDatabases: Array<Partial<TrackedDatabase> & { dir: string }> = []
+const trackedDirectories: string[] = []
 const assumeProjectDirectory = () => true
 
 const databaseWorkflow: WorkflowDefinition = {
@@ -55,21 +59,56 @@ const databaseWorkflow: WorkflowDefinition = {
   ]
 }
 
-afterEach(() => {
-  while (databases.length > 0) {
-    const item = databases.pop()!
-    item.db.close()
-    rmSync(item.dir, { recursive: true, force: true })
+function disposeDatabaseFixtures(
+  databases: Array<Partial<TrackedDatabase> & { dir: string }>,
+  directories: string[]
+): void {
+  const errors: Array<{ label: string; error: unknown }> = []
+  for (const entry of databases.reverse()) {
+    if (entry.db?.open) {
+      try {
+        entry.db.close()
+      } catch (error) {
+        errors.push({ label: `database close ${entry.dir}`, error })
+      }
+    }
   }
+  for (const dir of directories) {
+    try {
+      nodeFs.rmSync(dir, { recursive: true, force: true })
+    } catch (error) {
+      errors.push({ label: `directory remove ${dir}`, error })
+    }
+  }
+  if (errors.length > 0) {
+    throw new AggregateError(
+      errors.map(({ label, error }) => (
+        error instanceof Error ? new Error(`${label}: ${error.message}`, { cause: error }) : new Error(`${label}: ${String(error)}`)
+      )),
+      `Failed to dispose database fixtures: ${errors.map(({ label }) => label).join(', ')}`
+    )
+  }
+}
+
+afterEach(() => {
+  disposeDatabaseFixtures(trackedDatabases.splice(0), trackedDirectories.splice(0))
 })
 
-function createTrackedDatabase(prefix = 'cliloom-database-'): {
-  db: AppDatabase
-  dir: string
-} {
+function createTrackedDirectory(prefix = 'cliloom-database-'): string {
   const dir = mkdtempSync(path.join(tmpdir(), prefix))
-  const tracked = { db: openDatabase(dir), dir }
-  databases.push(tracked)
+  trackedDirectories.push(dir)
+  return dir
+}
+
+function trackDatabase(dir: string): TrackedDatabase {
+  const entry: Partial<TrackedDatabase> & { dir: string } = { dir }
+  trackedDatabases.push(entry)
+  return entry as TrackedDatabase
+}
+
+function createTrackedDatabase(prefix = 'cliloom-database-'): TrackedDatabase {
+  const tracked = trackDatabase(createTrackedDirectory(prefix))
+  tracked.db = openDatabase(tracked.dir)
   return tracked
 }
 
@@ -90,14 +129,42 @@ function listStoredWorkflows(db: AppDatabase): WorkflowDefinition[] {
   return listWorkflowRecords(db).map((record) => record.workflow)
 }
 
-describe('database schema v2', () => {
-  it('creates and repairs private local data permissions on POSIX systems', () => {
-    if (process.platform === 'win32') return
+describe('fixture disposal', () => {
+  it('continues removing remaining directories when the first removal fails and reports every failure', () => {
+    const firstDirectory = createTrackedDirectory('cliloom-dispose-first-')
+    const secondDirectory = createTrackedDirectory('cliloom-dispose-second-')
+    writeFileSync(path.join(secondDirectory, 'sentinel.txt'), 'present')
+    const rmSyncSpy = vi
+      .spyOn(nodeFs, 'rmSync')
+      .mockImplementationOnce(() => {
+        throw new Error('directory busy')
+      })
 
-    const dir = mkdtempSync(path.join(tmpdir(), 'cliloom-private-data-'))
+    try {
+      const failure = disposeDatabaseFixtures([], [firstDirectory, secondDirectory]) as never
+      throw new Error(`expected disposal to fail, got ${String(failure)}`)
+    } catch (error) {
+      expect(error).toBeInstanceOf(AggregateError)
+      const aggregate = error as AggregateError
+      expect(aggregate.message).toContain('directory remove')
+      expect((aggregate.errors[0] as Error).message).toContain('directory busy')
+      expect((aggregate.errors[0] as Error).message).toContain(firstDirectory)
+    } finally {
+      rmSyncSpy.mockRestore()
+    }
+
+    expect(existsSync(secondDirectory)).toBe(false)
+    rmSync(firstDirectory, { recursive: true, force: true })
+    expect(existsSync(firstDirectory)).toBe(false)
+  })
+})
+
+describe('database schema v2', () => {
+  it.skipIf(process.platform === 'win32')('creates and repairs private local data permissions on POSIX systems', () => {
+    const dir = createTrackedDirectory('cliloom-private-data-')
+    const tracked = trackDatabase(dir)
     chmodSync(dir, 0o777)
-    const tracked = { db: openDatabase(dir), dir }
-    databases.push(tracked)
+    tracked.db = openDatabase(dir)
     const databasePath = path.join(dir, DATABASE_FILENAME)
 
     expect(statSync(dir).mode & 0o777).toBe(0o700)
@@ -112,19 +179,18 @@ describe('database schema v2', () => {
     expect(statSync(databasePath).mode & 0o777).toBe(0o600)
   })
 
-  it('keeps WAL and shared-memory sidecars private after writes on POSIX systems', () => {
-    if (process.platform === 'win32') return
-
-    const dir = mkdtempSync(path.join(tmpdir(), 'cliloom-private-sidecars-'))
+  it.skipIf(process.platform === 'win32')('keeps WAL and shared-memory sidecars private after writes on POSIX systems', () => {
+    const dir = createTrackedDirectory('cliloom-private-sidecars-')
     const tracked = (() => {
       const previousUmask = process.umask(0)
       try {
-        return { db: openDatabase(dir), dir }
+        const entry = trackDatabase(dir)
+        entry.db = openDatabase(dir)
+        return entry
       } finally {
         process.umask(previousUmask)
       }
     })()
-    databases.push(tracked)
     addProject(tracked.db, '/repo/private-sidecars', assumeProjectDirectory)
 
     for (const suffix of ['-wal', '-shm']) {
@@ -134,9 +200,7 @@ describe('database schema v2', () => {
     }
   })
 
-  it('repairs an existing permissive WAL sidecar when reopening on POSIX systems', () => {
-    if (process.platform === 'win32') return
-
+  it.skipIf(process.platform === 'win32')('repairs an existing permissive WAL sidecar when reopening on POSIX systems', () => {
     const tracked = createTrackedDatabase('cliloom-repair-sidecar-')
     addProject(tracked.db, '/repo/repair-sidecar', assumeProjectDirectory)
     const walPath = path.join(tracked.dir, `${DATABASE_FILENAME}-wal`)
@@ -278,7 +342,8 @@ describe('database schema v2', () => {
   })
 
   it('can retry after schema initialization fails without publishing a partial database', () => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'cliloom-failed-initialization-'))
+    const dir = createTrackedDirectory('cliloom-failed-initialization-')
+    const tracked = trackDatabase(dir)
     const databasePath = path.join(dir, DATABASE_FILENAME)
     const originalExec = Database.prototype.exec
     const execSpy = vi.spyOn(Database.prototype, 'exec').mockImplementationOnce(function (
@@ -298,10 +363,9 @@ describe('database schema v2', () => {
     expect(existsSync(databasePath)).toBe(false)
     expect(readdirSync(dir)).toEqual([])
 
-    const db = openDatabase(dir)
-    databases.push({ db, dir })
-    expect(db.pragma('application_id', { simple: true })).toBe(0x434c4c4d)
-    expect(db.pragma('user_version', { simple: true })).toBe(2)
+    tracked.db = openDatabase(dir)
+    expect(tracked.db.pragma('application_id', { simple: true })).toBe(0x434c4c4d)
+    expect(tracked.db.pragma('user_version', { simple: true })).toBe(2)
   })
 
   it.each([1, 16])(
@@ -466,9 +530,7 @@ describe('project renaming', () => {
 
 describe('last opened workspace', () => {
   it('stores a project and one of its tasks as a single selection', () => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'cliloom-database-'))
-    const trackedDatabase = { db: openDatabase(dir), dir }
-    databases.push(trackedDatabase)
+    const trackedDatabase = createTrackedDatabase()
     const db = trackedDatabase.db
     const project = addProject(db, '/repo/remembered-project', assumeProjectDirectory)
     const otherProject = addProject(db, '/repo/other-project', assumeProjectDirectory)
@@ -484,7 +546,7 @@ describe('last opened workspace', () => {
     })).toThrow('Task not found or does not belong to this project')
 
     trackedDatabase.db.close()
-    trackedDatabase.db = openDatabase(dir)
+    trackedDatabase.db = openDatabase(trackedDatabase.dir)
     expect(getLastOpenedWorkspace(trackedDatabase.db)).toEqual({
       projectId: project.id,
       taskId
@@ -492,9 +554,7 @@ describe('last opened workspace', () => {
   })
 
   it('falls back safely when a remembered task or project was deleted', () => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'cliloom-database-'))
-    const db = openDatabase(dir)
-    databases.push({ db, dir })
+    const { db } = createTrackedDatabase()
     const project = addProject(db, '/repo/deleted-selection', assumeProjectDirectory)
     const taskId = insertTask(db, project.id, 'deleted-task')
 
@@ -597,9 +657,7 @@ describe('task draft persistence', () => {
 
 describe('workflow persistence', () => {
   it('rejects incoming edges on start nodes before persistence', () => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'cliloom-database-'))
-    const db = openDatabase(dir)
-    databases.push({ db, dir })
+    const { db } = createTrackedDatabase()
     const workflow: WorkflowDefinition = {
       id: 'workflow-start-incoming',
       name: 'Start incoming',
@@ -623,9 +681,7 @@ describe('workflow persistence', () => {
   })
 
   it('uses a monotonic revision and rejects stale or missing update tokens', () => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'cliloom-database-'))
-    const db = openDatabase(dir)
-    databases.push({ db, dir })
+    const { db } = createTrackedDatabase()
 
     const created = saveWorkflowWithRevision(db, databaseWorkflow)
     const updated = saveWorkflowWithRevision(
@@ -643,9 +699,7 @@ describe('workflow persistence', () => {
   })
 
   it('allows different workflows to use the same edge ID without replacing each other', () => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'cliloom-database-'))
-    const db = openDatabase(dir)
-    databases.push({ db, dir })
+    const { db } = createTrackedDatabase()
     const secondWorkflow = {
       ...databaseWorkflow,
       id: 'database-workflow-2',
@@ -663,22 +717,20 @@ describe('workflow persistence', () => {
   })
 
   it('starts a new database without software-defined workflows', () => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'cliloom-database-'))
-    const db = openDatabase(dir)
-    databases.push({ db, dir })
+    const { db } = createTrackedDatabase()
 
     expect(listStoredWorkflows(db)).toEqual([])
   })
 
   it('keeps database workflows across application restarts', () => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'cliloom-database-'))
-    let db = openDatabase(dir)
+    const tracked = createTrackedDatabase()
+    let db = tracked.db
 
     saveWorkflowWithRevision(db, databaseWorkflow)
     db.close()
 
-    db = openDatabase(dir)
-    databases.push({ db, dir })
+    db = openDatabase(tracked.dir)
+    tracked.db = db
     expect(listStoredWorkflows(db)).toEqual([databaseWorkflow])
     expect(
       db.prepare('select count(*) as count from edges where workflow_id = ?')
@@ -687,9 +739,7 @@ describe('workflow persistence', () => {
   })
 
   it('canonicalizes workflow versions before deduplication', () => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'cliloom-database-'))
-    const db = openDatabase(dir)
-    databases.push({ db, dir })
+    const { db } = createTrackedDatabase()
     const legacyWorkflow = {
       id: 'legacy-parallel-policy',
       name: 'Legacy parallel policy',
@@ -736,9 +786,7 @@ describe('workflow deletion', () => {
   }
 
   it('deletes a custom workflow, its edges, and project default references', () => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'cliloom-database-'))
-    const db = openDatabase(dir)
-    databases.push({ db, dir })
+    const { db } = createTrackedDatabase()
     const project = addProject(db, '/repo/custom-workflow', assumeProjectDirectory)
     const workflow = createCustomWorkflow()
     const saved = saveWorkflowWithRevision(db, workflow)
@@ -753,9 +801,7 @@ describe('workflow deletion', () => {
   })
 
   it('deletes workflows used only by historical tasks while retaining their versions', () => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'cliloom-database-'))
-    const db = openDatabase(dir)
-    databases.push({ db, dir })
+    const { db } = createTrackedDatabase()
     const workflow = createCustomWorkflow()
     const saved = saveWorkflowWithRevision(db, workflow)
     const workflowVersion = ensureWorkflowVersion(db, workflow)
@@ -771,9 +817,7 @@ describe('workflow deletion', () => {
   })
 
   it('does not delete workflows used by active tasks', () => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'cliloom-database-'))
-    const db = openDatabase(dir)
-    databases.push({ db, dir })
+    const { db } = createTrackedDatabase()
     const workflow = createCustomWorkflow()
     const saved = saveWorkflowWithRevision(db, workflow)
     const workflowVersion = ensureWorkflowVersion(db, workflow)
@@ -790,9 +834,7 @@ describe('workflow deletion', () => {
 
 describe('terminal session queries', () => {
   it('returns the interpolated display command without exposing the executable binding', () => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'cliloom-database-'))
-    const db = openDatabase(dir)
-    databases.push({ db, dir })
+    const { db } = createTrackedDatabase()
 
     db.prepare(
       'insert into terminal_sessions (id, task_id, node_id, kind, command, cwd, status, transcript, created_at, updated_at, request_json) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
@@ -910,9 +952,7 @@ describe('terminal session queries', () => {
   })
 
   it('returns a bounded transcript tail', () => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'cliloom-database-'))
-    const db = openDatabase(dir)
-    databases.push({ db, dir })
+    const { db } = createTrackedDatabase()
     const transcript = `old-${'x'.repeat(MAX_TERMINAL_TRANSCRIPT_CHARS)}-new`
 
     db.prepare(

@@ -1664,14 +1664,31 @@ describe('App task workflow selection', () => {
     await waitFor(() => expect(api.saveTaskDraft).toHaveBeenCalled())
     const callsBeforeEdit = api.saveTaskDraft.mock.calls.length
 
-    fireEvent.click(screen.getByRole('button', { name: '修改变量' }))
-    fireEvent.click(screen.getByRole('button', { name: '修改变量' }))
-    fireEvent.click(screen.getByRole('button', { name: '修改变量' }))
+    vi.useFakeTimers()
+    try {
+      fireEvent.click(screen.getByRole('button', { name: '修改变量' }))
+      fireEvent.click(screen.getByRole('button', { name: '修改变量' }))
+      fireEvent.click(screen.getByRole('button', { name: '修改变量' }))
+      expect(api.saveTaskDraft).toHaveBeenCalledTimes(callsBeforeEdit)
 
-    expect(api.saveTaskDraft).toHaveBeenCalledTimes(callsBeforeEdit)
-    await new Promise((resolve) => setTimeout(resolve, 350))
-    await waitFor(() => expect(api.saveTaskDraft).toHaveBeenCalledTimes(callsBeforeEdit + 1))
-    expect(api.saveTaskDraft.mock.calls.at(-1)?.[1].variables).toEqual({ prompt: 'edited prompt' })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(299)
+      })
+      expect(api.saveTaskDraft).toHaveBeenCalledTimes(callsBeforeEdit)
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1)
+      })
+      expect(api.saveTaskDraft).toHaveBeenCalledTimes(callsBeforeEdit + 1)
+      expect(api.saveTaskDraft.mock.calls.at(-1)?.[1].variables).toEqual({ prompt: 'edited prompt' })
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5_000)
+      })
+      expect(api.saveTaskDraft).toHaveBeenCalledTimes(callsBeforeEdit + 1)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('keeps an unstarted draft out of the task list and adds it after a successful launch', async () => {

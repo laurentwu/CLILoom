@@ -4,11 +4,14 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { MAX_IMPORT_BYTES } from '../shared/skin'
 import { ensureAssistantWorkspace } from './assistantWorkspace'
+import { initMainI18n } from './i18n'
 import {
   AssistantCommandError,
   parseAssistantCommandJson,
   readAssistantCommandInput
 } from './assistantCommandInput'
+
+initMainI18n('en')
 
 const temporaryDirectories: string[] = []
 const buildIdentity = {
@@ -122,39 +125,48 @@ describe('assistant command input arguments', () => {
 
   it('keeps file access inside the workspace', () => {
     const workspace = createWorkspace()
-    expect(() => readAssistantCommandInput({
-      args: ['--file', '../outside.json'],
+    writeFileSync(path.join(workspace.rootPath, 'legitimate.json'), '{"inside":true}')
+    expect(readAssistantCommandInput({
+      args: ['--file', 'legitimate.json'],
       stdin: undefined,
       workspaceRoot: workspace.rootPath
-    })).toThrow()
+    }).content).toBe('{"inside":true}')
+
+    const existingOutsideParent = path.join(workspace.rootPath, '..', 'outside-input.json')
+    writeFileSync(existingOutsideParent, '{"outside":true}')
     expect(() => readAssistantCommandInput({
-      args: ['--file', path.resolve(workspace.rootPath, 'absolute.json')],
+      args: ['--file', '../outside-input.json'],
       stdin: undefined,
       workspaceRoot: workspace.rootPath
-    })).toThrow()
+    })).toThrow(/must not contain \.\./)
+    expect(() => readAssistantCommandInput({
+      args: ['--file', path.resolve(workspace.rootPath, 'absolute-input.json')],
+      stdin: undefined,
+      workspaceRoot: workspace.rootPath
+    })).toThrow(/only accepts relative paths/)
     mkdirSync(path.join(workspace.rootPath, 'directory-input'))
     expect(() => readAssistantCommandInput({
       args: ['--file', 'directory-input'],
       stdin: undefined,
       workspaceRoot: workspace.rootPath
-    })).toThrow()
+    })).toThrow(/must be a regular file/)
     expect(() => readAssistantCommandInput({
-      args: ['--file', 'missing.json'],
+      args: ['--file', 'missing-input.json'],
       stdin: undefined,
       workspaceRoot: workspace.rootPath
-    })).toThrow()
+    })).toThrow(/File not found: missing-input\.json/)
   })
 
   it.runIf(supportsFileSymbolicLinks)('rejects symlinks that escape the workspace', () => {
     const workspace = createWorkspace()
     const outside = path.join(workspace.rootPath, '..', 'outside.json')
-    writeFileSync(outside, '{}')
+    writeFileSync(outside, '{"outside":true}')
     symlinkSync(outside, path.join(workspace.rootPath, 'escape.json'))
     expect(() => readAssistantCommandInput({
       args: ['--file', 'escape.json'],
       stdin: undefined,
       workspaceRoot: workspace.rootPath
-    })).toThrow()
+    })).toThrow(/cannot read files outside the assistant workspace/)
   })
 
   it('enforces the configured UTF-8 byte limits for stdin and files', () => {
@@ -174,7 +186,7 @@ describe('assistant command input arguments', () => {
       stdin: undefined,
       workspaceRoot: workspace.rootPath,
       maxBytes: MAX_IMPORT_BYTES
-    })).toThrow()
+    })).toThrow(`File exceeds the ${MAX_IMPORT_BYTES} byte limit`)
 
     const tricky = JSON.stringify({ text: 'quote " backslash \\ newline \n 中文 é' })
     expect(parseAssistantCommandJson(tricky)).toEqual({

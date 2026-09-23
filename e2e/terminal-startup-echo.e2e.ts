@@ -9,6 +9,7 @@ import {
   type ElectronApplication,
   type Page
 } from 'playwright/test'
+import { createTestResources, type TestResources } from '../test-support/resources'
 import type { ProjectRecord, TaskRecord } from '../src/renderer/appTypes'
 import type { WorkflowDefinition } from '../src/shared/workflow'
 
@@ -59,6 +60,7 @@ function startupEchoWorkflow(isolatedHome: string): WorkflowDefinition {
   }
 }
 
+let resources: TestResources
 let appDataDirectory = ''
 let fixtureDirectory = ''
 let projectDirectory = ''
@@ -69,7 +71,7 @@ let mainPage: Page
 test.skip(process.platform !== 'linux', 'The startup echo e2e runs on the Linux validation job')
 
 async function launchApplication(): Promise<void> {
-  electronApp = await electron.launch({
+  const app = await electron.launch({
     args: [projectRoot],
     cwd: projectRoot,
     env: {
@@ -78,13 +80,22 @@ async function launchApplication(): Promise<void> {
       XDG_CONFIG_HOME: appDataDirectory
     }
   })
-  mainPage = await electronApp.firstWindow()
+  electronApp = app
+  resources.defer('electron-app', () => app.close())
+  mainPage = await app.firstWindow()
   await mainPage.locator('#root > *').first().waitFor()
 }
 
 test.beforeAll(async () => {
+  resources = createTestResources()
   appDataDirectory = mkdtempSync(path.join(tmpdir(), 'cliloom-startup-echo-data-'))
+  resources.defer('app-data-directory', () => {
+    rmSync(appDataDirectory, { recursive: true, force: true })
+  })
   fixtureDirectory = mkdtempSync(path.join(tmpdir(), 'cliloom-startup-echo-projects-'))
+  resources.defer('project-fixture-directory', () => {
+    rmSync(fixtureDirectory, { recursive: true, force: true })
+  })
   projectDirectory = path.join(fixtureDirectory, 'echo-project')
   isolatedHome = path.join(fixtureDirectory, 'isolated-home')
   mkdirSync(projectDirectory)
@@ -107,9 +118,7 @@ test.beforeAll(async () => {
 })
 
 test.afterAll(async () => {
-  await electronApp?.close()
-  if (appDataDirectory) rmSync(appDataDirectory, { recursive: true, force: true })
-  if (fixtureDirectory) rmSync(fixtureDirectory, { recursive: true, force: true })
+  await resources.dispose()
 })
 
 function readSessionTranscript(): string {
