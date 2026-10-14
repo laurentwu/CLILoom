@@ -14,6 +14,7 @@ import {
 import { WorkflowRevisionConflictError } from './database'
 import { NotFoundError } from './errors'
 import { t } from './i18n'
+import { removeAssistantBridgeSession, writeAssistantBridgeSession } from './assistantBridgeSessionFile'
 
 export type AssistantBridgeSession = {
   port: number
@@ -22,7 +23,8 @@ export type AssistantBridgeSession = {
 }
 
 export async function startAssistantCommandBridge(
-  handler: AssistantCommandHandler
+  handler: AssistantCommandHandler,
+  options: { sessionFilePath?: string } = {}
 ): Promise<AssistantBridgeSession> {
   const token = randomBytes(32).toString('base64url')
   let active = true
@@ -75,13 +77,25 @@ export async function startAssistantCommandBridge(
     throw new Error(t('errors:bridge.noPort'))
   }
 
+  if (options.sessionFilePath) {
+    try {
+      removeAssistantBridgeSession(options.sessionFilePath)
+      writeAssistantBridgeSession(options.sessionFilePath, { port: address.port, token })
+    } catch (error) {
+      await closeServer(server)
+      throw error
+    }
+  }
+
   return {
     port: address.port,
     token,
     close: async () => {
-      if (!active && !server.listening) return
-      active = false
-      await closeServer(server)
+      if (active || server.listening) {
+        active = false
+        await closeServer(server)
+      }
+      if (options.sessionFilePath) removeAssistantBridgeSession(options.sessionFilePath, token)
     }
   }
 }

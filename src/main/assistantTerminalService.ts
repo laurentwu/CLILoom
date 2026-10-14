@@ -22,6 +22,7 @@ import {
 import type { AssistantCommandHandler } from './assistantCommandHandler'
 import type { AssistantWorkspace } from './assistantWorkspace'
 import { t } from './i18n'
+import { ASSISTANT_BRIDGE_SESSION_FILE } from './assistantBridgeSessionFile'
 import type { ShellService } from './shellService'
 import { buildNonInteractiveInvocation, buildShellEnvironment } from './shellExecution'
 import { terminateProcessTree, type ProcessTerminationResult } from './processTermination'
@@ -80,7 +81,9 @@ export class AssistantTerminalService {
       shell = await this.resolveEffectiveTarget()
       const resolved = resolveAssistantCommand(command, this.options.environment)
       stage = t('errors:assistantTerminal.stageStart')
-      bridge = await startAssistantCommandBridge(this.options.commandHandler)
+      bridge = await startAssistantCommandBridge(this.options.commandHandler, {
+        sessionFilePath: path.join(this.options.workspace.rootPath, ASSISTANT_BRIDGE_SESSION_FILE)
+      })
       if (generation !== this.generation) {
         await bridge.close()
         throw new Error(t('errors:assistantTerminal.startCancelled'))

@@ -386,21 +386,24 @@ describe('native shell smoke', () => {
     }
   }, 30_000)
 
-  it('reaches the bridge through the selected Shell, assistant service, and private launcher', async () => {
+  it.each([false, true])('reaches the bridge through the private launcher with bridge environment stripped: %s', async (stripEnvironment) => {
     const { directory, shells, workingDirectory } = createNativeContext()
     const appEntryPath = path.join(workingDirectory, 'assistant-smoke-entry.cjs')
     writeFileSync(appEntryPath, [
       "const http = require('node:http')",
       "const marker = process.argv.indexOf('--cliloom-cli')",
-      "const args = marker >= 0 ? process.argv.slice(marker + 1) : []",
+      "let args = marker >= 0 ? process.argv.slice(marker + 1) : []",
+      "const session = JSON.parse(require('node:fs').readFileSync(args[1], 'utf8'))",
+      "if (args[0] !== '--cliloom-session-file') throw new Error('Missing session path')",
+      'args = args.slice(2)',
       'const payload = JSON.stringify({ version: 1, command: args[0] || \'help\', args: args.slice(1) })',
       'const request = http.request({',
       "  hostname: '127.0.0.1',",
-      '  port: Number(process.env.CLILOOM_ASSISTANT_BRIDGE_PORT),',
+      '  port: session.port,',
       "  path: '/v1/command',",
       "  method: 'POST',",
       '  headers: {',
-      "    authorization: 'Bearer ' + process.env.CLILOOM_ASSISTANT_BRIDGE_TOKEN,",
+      "    authorization: 'Bearer ' + session.token,",
       "    'content-type': 'application/json',",
       "    'content-length': Buffer.byteLength(payload)",
       '  }',
@@ -432,12 +435,14 @@ describe('native shell smoke', () => {
       writeFileSync(fakeAssistant, [
         '@echo off',
         'if "%~1"=="--version" (echo smoke-assistant 1.0& exit /b 0)',
+        ...(stripEnvironment ? ['set CLILOOM_ASSISTANT_BRIDGE_PORT=', 'set CLILOOM_ASSISTANT_BRIDGE_TOKEN='] : []),
         'cliloom doctor'
       ].join('\r\n'))
     } else {
       writeFileSync(fakeAssistant, [
         '#!/bin/sh',
         '[ "$1" = "--version" ] && { echo "smoke-assistant 1.0"; exit 0; }',
+        ...(stripEnvironment ? ['unset CLILOOM_ASSISTANT_BRIDGE_PORT CLILOOM_ASSISTANT_BRIDGE_TOKEN'] : []),
         'exec cliloom doctor'
       ].join('\n'))
       chmodSync(fakeAssistant, 0o700)

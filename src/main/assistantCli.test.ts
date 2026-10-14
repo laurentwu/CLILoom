@@ -1,4 +1,7 @@
 import { randomBytes } from 'node:crypto'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import { createServer, type Server } from 'node:net'
 import { Readable, Writable } from 'node:stream'
 import { describe, expect, it } from 'vitest'
@@ -11,6 +14,7 @@ import {
 } from '../shared/assistant'
 import { startAssistantCommandBridge } from './assistantCommandBridge'
 import { runAssistantCliMode } from './assistantCli'
+import { ASSISTANT_BRIDGE_SESSION_ARGUMENT, ASSISTANT_BRIDGE_SESSION_FILE } from './assistantBridgeSessionFile'
 
 function collectOutput(): { stream: Writable; read: () => string } {
   let content = ''
@@ -43,6 +47,40 @@ function close(server: Server): Promise<void> {
 }
 
 describe('assistant CLI stdin', () => {
+  it('authenticates without inherited environment and revokes file access when the session closes', async () => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'cliloom-session-'))
+    const sessionFilePath = path.join(directory, ASSISTANT_BRIDGE_SESSION_FILE)
+    let received: AssistantBridgeRequest | undefined
+    const bridge = await startAssistantCommandBridge({
+      handle: async (request: AssistantBridgeRequest) => {
+        received = request
+        return { data: { connected: true }, text: 'connected' }
+      }
+    } as never, { sessionFilePath })
+    const stdout = collectOutput()
+    const stderr = collectOutput()
+    const args = [ASSISTANT_BRIDGE_SESSION_ARGUMENT, sessionFilePath, 'context', '--json']
+    const io = { stdin: Readable.from([]), stdout: stdout.stream, stderr: stderr.stream }
+    try {
+      // A shared agent executor may supply no bridge variables, or stale ones.
+      expect(await runAssistantCliMode(args, {}, io)).toBe(0)
+      expect(await runAssistantCliMode(args, {
+        [ASSISTANT_BRIDGE_PORT_ENV]: '1',
+        [ASSISTANT_BRIDGE_TOKEN_ENV]: 'stale-token'
+      }, io)).toBe(0)
+      expect(received).toEqual({ version: 1, command: 'context', args: ['--json'] })
+      expect(stderr.read()).toBe('')
+      expect(stdout.read()).not.toContain(bridge.token)
+      await bridge.close()
+      expect(existsSync(sessionFilePath)).toBe(false)
+      expect(await runAssistantCliMode(args, {}, io)).toBe(10)
+      expect(stderr.read()).toContain('Restart the assistant inside CLILoom')
+    } finally {
+      await bridge.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
   it('forwards piped multiline Unicode input to the bridge without alteration', async () => {
     const input = '{\n  "id": "管道-😀",\n  "name": "PowerShell 与 Bash"\n}\n'
     let received: AssistantBridgeRequest | undefined
