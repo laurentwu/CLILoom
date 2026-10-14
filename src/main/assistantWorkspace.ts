@@ -15,6 +15,7 @@ import path from 'node:path'
 import { createHash, randomBytes } from 'node:crypto'
 import { NotFoundError } from './errors'
 import { t } from './i18n'
+import { ASSISTANT_BRIDGE_SESSION_ARGUMENT, ASSISTANT_BRIDGE_SESSION_FILE } from './assistantBridgeSessionFile'
 
 export const ASSISTANT_WORKSPACE_DIRECTORY = 'assistant-workspace'
 export const ASSISTANT_WORKSPACE_MANIFEST = '.cliloom-workspace.json'
@@ -69,9 +70,27 @@ export function ensureAssistantWorkspace(options: {
   cleanupLegacyAssistantShim(rootPath)
   ensurePrivateDirectory(binPath)
 
+  const launcherPath = path.join(binPath, 'cliloom')
+  const windowsLauncherPath = path.join(binPath, 'cliloom.cmd')
+  const posixCommand = quotePosix(launcherPath)
+  const powershellCommand = `& '${windowsLauncherPath.replaceAll("'", "''")}'`
+  const cmdCommand = quoteCmd(windowsLauncherPath)
+
   const instructions = `# CLILoom Assistant
 
 You are running inside CLILoom's private assistant workspace.
+
+## Calling the current application
+
+- Always invoke the private launcher by its absolute path. A bare \`cliloom\` command can resolve to a separately installed desktop build when an agent tool changes PATH or starts a new shell.
+- POSIX shells (Linux/macOS): \`${posixCommand} context --json\`.
+- Windows PowerShell: \`${powershellCommand} context --json\`.
+- Windows cmd.exe: \`${cmdCommand} context --json\`.
+- Every \`cliloom ...\` example below and in command output is shorthand: replace only the leading \`cliloom\` with the quoted absolute launcher invocation for your shell, preserving all arguments. Use that invocation on every tool call, including after changing directories or restarting a shell; do not rely on a PATH export from an earlier call.
+- Do not invoke a system-installed CLILoom executable, an AppImage, or the desktop executable directly. If the private launcher fails, report the command error; do not fall back to another installation or try to switch desktop builds.
+- The launcher manages authentication automatically. Do not read, edit, print, or copy \`${ASSISTANT_BRIDGE_SESSION_FILE}\` or bridge tokens. If it reports that the session is unavailable, ask the user to restart the assistant inside CLILoom.
+
+## Configuration workflow
 
 - Run \`cliloom context --json\` first to learn the application, capabilities, projects, workflows, and public settings.
 - Before configuring workflows, run \`cliloom workflow schema\` (or \`cliloom workflow schema --json\`) for the complete field-level save documentation and valid examples.
@@ -90,10 +109,9 @@ You are running inside CLILoom's private assistant workspace.
   if (options.noSandbox) launcherArguments.push('--no-sandbox')
   if (options.appEntryPath) launcherArguments.push(options.appEntryPath)
   launcherArguments.push('--cliloom-cli')
+  launcherArguments.push(ASSISTANT_BRIDGE_SESSION_ARGUMENT, path.join(rootPath, ASSISTANT_BRIDGE_SESSION_FILE))
   const posixLauncher = `#!/bin/sh\nexec ${launcherArguments.map(quotePosix).join(' ')} "$@"\n`
   const windowsLauncher = `@echo off\r\n${launcherArguments.map(quoteCmd).join(' ')} %*\r\n`
-  const launcherPath = path.join(binPath, 'cliloom')
-  const windowsLauncherPath = path.join(binPath, 'cliloom.cmd')
   const managedFiles: ManagedFile[] = [
     { relativePath: 'AGENTS.md', content: instructions, mode: 0o600 },
     { relativePath: 'CLAUDE.md', content: instructions, mode: 0o600 },

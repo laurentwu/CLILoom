@@ -147,6 +147,10 @@ describe('AssistantTerminalService global shell integration', () => {
 
     await service.start('codex --model "gpt 5"')
 
+    expect(mocks.startBridge).toHaveBeenCalledWith({}, {
+      sessionFilePath: '/private/assistant/.cliloom-assistant-session.json'
+    })
+
     expect(mocks.ptySpawn).toHaveBeenNthCalledWith(
       1,
       '/bin/zsh',

@@ -286,6 +286,36 @@ describe('assistant workspace file boundary', () => {
     expect(readFileSync(userFile, 'utf8')).toBe('{"preserved":true}')
   })
 
+  it.each(['user data', "user's data"])(
+    'documents quoted private launcher invocations for %s',
+    (directoryName) => {
+      const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'cliloom-assistant-workspace-'))
+      temporaryDirectories.push(temporaryRoot)
+      const userDataPath = path.join(temporaryRoot, directoryName)
+      mkdirSync(userDataPath)
+      const workspace = ensureAssistantWorkspace({
+        userDataPath,
+        executablePath: process.execPath,
+        ...buildIdentity
+      })
+      const instructions = readAssistantWorkspaceFile(workspace.rootPath, 'AGENTS.md')
+
+      expect(instructions).toContain(
+        `POSIX shells (Linux/macOS): \`'${workspace.launcherPath.replaceAll("'", `'"'"'`)}' context --json\``
+      )
+      expect(instructions).toContain(
+        `Windows PowerShell: \`& '${workspace.windowsLauncherPath.replaceAll("'", "''")}' context --json\``
+      )
+      expect(instructions).toContain(
+        `Windows cmd.exe: \`"${workspace.windowsLauncherPath}" context --json\``
+      )
+      expect(instructions).toContain('replace only the leading `cliloom`')
+      expect(instructions).toContain('do not rely on a PATH export from an earlier call')
+      expect(instructions).toContain('do not fall back to another installation')
+      expect(readAssistantWorkspaceFile(workspace.rootPath, 'CLAUDE.md')).toBe(instructions)
+    }
+  )
+
   it('teaches the new configuration capabilities and resynchronizes guidance for changed builds', () => {
     const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'cliloom-assistant-workspace-'))
     temporaryDirectories.push(temporaryRoot)

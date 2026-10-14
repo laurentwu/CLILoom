@@ -5,6 +5,7 @@ import {
   readdirSync,
   rmSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -32,9 +33,21 @@ afterEach(() => {
   vi.restoreAllMocks()
   while (tempRoots.length > 0) {
     const root = tempRoots.pop()!
-    rmSync(root, { recursive: true, force: true })
+    removeTempRoot(root)
   }
 })
+
+function removeTempRoot(root: string): void {
+  if (!existsSync(root)) return
+  // Electron's Windows recursive rm can fail on junctions, especially a
+  // probe pointing back to its own parent. Unlink fixtures before recursion.
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    const entryPath = path.join(root, entry.name)
+    if (entry.isSymbolicLink()) unlinkSync(entryPath)
+    else if (entry.isDirectory()) removeTempRoot(entryPath)
+  }
+  rmSync(root, { recursive: true, force: true })
+}
 
 function createTempRoot(prefix = 'cliloom-clean-test-'): string {
   const root = mkdtempSync(path.join(tmpdir(), prefix))
@@ -77,7 +90,7 @@ function probeDirectoryLinkSupport(): boolean {
   try {
     return tryCreateDirectoryLink(directory, path.join(directory, 'probe-link'))
   } finally {
-    rmSync(directory, { recursive: true, force: true })
+    removeTempRoot(directory)
   }
 }
 
@@ -97,7 +110,7 @@ function probeFileLinkSupport(): boolean {
       return false
     }
   } finally {
-    rmSync(directory, { recursive: true, force: true })
+    removeTempRoot(directory)
   }
 }
 

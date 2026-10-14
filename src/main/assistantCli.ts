@@ -1,5 +1,6 @@
 import { request as httpRequest } from 'node:http'
 import { createConnection } from 'node:net'
+import { ASSISTANT_BRIDGE_SESSION_ARGUMENT, readAssistantBridgeSession } from './assistantBridgeSessionFile'
 import {
   ASSISTANT_BRIDGE_API_VERSION,
   ASSISTANT_BRIDGE_PORT_ENV,
@@ -26,8 +27,19 @@ export async function runAssistantCliMode(
   environment: NodeJS.ProcessEnv = process.env,
   io: AssistantCliIo = process
 ): Promise<number> {
-  const port = Number(environment[ASSISTANT_BRIDGE_PORT_ENV])
-  const token = environment[ASSISTANT_BRIDGE_TOKEN_ENV]
+  let port = Number(environment[ASSISTANT_BRIDGE_PORT_ENV])
+  let token = environment[ASSISTANT_BRIDGE_TOKEN_ENV]
+  if (args[0] === ASSISTANT_BRIDGE_SESSION_ARGUMENT) {
+    try {
+      const credentials = readAssistantBridgeSession(args[1])
+      port = credentials.port
+      token = credentials.token
+      args = args.slice(2)
+    } catch {
+      io.stderr.write('Unable to load the CLILoom assistant session. Restart the assistant inside CLILoom.\n')
+      return 10
+    }
+  }
   if (!Number.isInteger(port) || port < 1 || port > 65_535 || !token) {
     io.stderr.write('cliloom is only available inside an active CLILoom assistant session.\n')
     return 10
