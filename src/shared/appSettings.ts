@@ -119,11 +119,6 @@ export function layoutWidthBounds(key: PublicLayoutWidthKey): {
       }
 }
 
-/**
- * Parse an assistant-provided layout width. Accepts only finite decimal
- * integers within the persisted layout bounds: no signs, units, decimals,
- * exponents, hexadecimal, or clamping. Returns null for invalid input.
- */
 export function parsePublicLayoutWidth(key: PublicLayoutWidthKey, value: string): number | null {
   const { minimum, maximum } = layoutWidthBounds(key)
   if (!/^[0-9]+$/.test(value.trim())) return null

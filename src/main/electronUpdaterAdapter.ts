@@ -35,8 +35,6 @@ class ElectronUpdaterAdapter implements UpdateAdapter {
       return isReleaseVersion(info.version) &&
         getPrereleaseChannel(info.version) === configuration.channel
     }
-    // electron-updater's channel setter enables downgrades, so this assignment
-    // must remain after the channel is configured.
     this.updater.allowDowngrade = false
   }
 

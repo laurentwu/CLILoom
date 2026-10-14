@@ -27,7 +27,6 @@ export function resolveAssistantCommand(
     const output = `${result.stdout ?? ''}${result.stderr ?? ''}`.trim()
     if (output) versionOutput = output.slice(0, 1_000)
   } catch {
-    // Version probing is informational. Resolution is the availability check.
   }
 
   return { ...parsed, executablePath, ...(versionOutput ? { versionOutput } : {}) }

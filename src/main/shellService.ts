@@ -121,9 +121,6 @@ export class ShellService {
   }
 
   resolveEffectiveShell(): DetectedShell {
-    // The catalog cache is for presentation only. Re-discover before every
-    // process launch so an explicitly selected executable cannot disappear
-    // between opening settings and starting a terminal.
     this.replaceCandidates(this.discoverNative(), true)
     const preferences = this.options.settingsService.getSnapshot().shell
     if (preferences.selection.mode === 'automatic') {
@@ -276,8 +273,6 @@ export function discoverShells(options: ShellDiscoveryOptions = {}): DetectedShe
     }
   }
 
-  // Validate a persisted explicit launch path first so realpath de-duplication
-  // does not replace its stable ID with a different symlink spelling.
   for (const candidate of options.additionalPaths ?? []) {
     add(candidate, { source: 'system' })
   }

@@ -41,7 +41,6 @@ export function AvailableVariables({ nodes, edges, nodeId, format }: AvailableVa
         setCopiedKey((current) => (current === key ? null : current))
       }, 1200)
     } catch {
-      // clipboard unavailable in this context; ignore silently
     }
   }
 

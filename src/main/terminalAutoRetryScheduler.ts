@@ -1,11 +1,6 @@
 import type { WorkflowRuntimeState } from '../shared/workflowRuntime'
 import { parseTerminalAutoRetryState } from '../shared/terminalAutoRetry'
 
-/**
- * Identity of one scheduled automatic retry. Dispatched to the runtime
- * service, which re-validates everything against persisted state before an
- * execution is accepted.
- */
 export type AutoRetryTicket = {
   taskId: string
   runId: string
@@ -20,7 +15,6 @@ export type AutoRetryTicket = {
 export type AutoRetrySchedulerOptions = {
   dispatch: (ticket: AutoRetryTicket) => void
   now?: () => number
-  /** Maximum timer sleep; short sleeps tolerate clock adjustments. */
   maxSleepMs?: number
 }
 
@@ -30,11 +24,6 @@ function ticketKey(ticket: Pick<AutoRetryTicket, 'taskId' | 'nodeId' | 'cycleId'
   return `${ticket.taskId}\0${ticket.nodeId}\0${ticket.cycleId}\0${ticket.scheduleId}`
 }
 
-/**
- * Wall-clock scheduler for terminal automatic retries. It owns nothing but
- * timers: tickets are derived from persisted runtime state and every dispatch
- * is re-validated by the runtime service before a process starts.
- */
 export class TerminalAutoRetryScheduler {
   private readonly tasks = new Map<string, Map<string, AutoRetryTicket>>()
   private readonly dispatched = new Set<string>()
@@ -50,7 +39,6 @@ export class TerminalAutoRetryScheduler {
     this.maxSleepMs = options.maxSleepMs ?? DEFAULT_MAX_SLEEP_MS
   }
 
-  /** Rebuild the waiting ticket set of one task from a persisted state. */
   reconcileTask(state: WorkflowRuntimeState): void {
     if (this.disposed) return
     const tickets = new Map<string, AutoRetryTicket>()
@@ -78,8 +66,6 @@ export class TerminalAutoRetryScheduler {
       }
     }
     this.tasks.set(state.taskId, tickets)
-    // Drop dispatch markers for tickets that no longer exist in persisted
-    // state so the set cannot grow without bound.
     const taskPrefix = `${state.taskId}\0`
     for (const key of this.dispatched) {
       if (key.startsWith(taskPrefix) && !tickets.has(key)) this.dispatched.delete(key)
@@ -100,7 +86,6 @@ export class TerminalAutoRetryScheduler {
     return false
   }
 
-  /** Immediately re-evaluate due tickets (power-monitor resume, tests). */
   resume(): void {
     if (this.disposed) return
     this.tick()

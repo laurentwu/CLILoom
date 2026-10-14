@@ -39,9 +39,6 @@ const distributedRoots = [
   'tw-animate-css'
 ]
 
-// Electron's runtime is distributed as a whole, while shadcn supplies CSS and
-// copied component source. Their package-manager-only dependency trees are not
-// part of the application, so only their own notices belong in this document.
 const directNoticeRoots = ['electron', 'shadcn']
 
 const noticeOverrides = {
@@ -57,9 +54,6 @@ const supplementalLegalFiles = {
   'node-pty@1.1.0': ['deps/winpty/LICENSE']
 }
 
-// electron-updater -> fs-extra -> jsonfile uses graceful-fs when it is present.
-// npm installs that optional dependency in the packaged production tree, so it
-// is intentionally traversed and included in the generated notice inventory.
 const reviewedOptionalRuntimeDependencies = {
   'node_modules/jsonfile': ['graceful-fs']
 }

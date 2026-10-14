@@ -1,13 +1,6 @@
 import type { ShellSnapshot } from '../shared/shell'
 import { t } from './i18n'
 
-/**
- * Coordinates shell refresh and selection between the settings UI IPC and the
- * assistant command bridge. Mutating operations run through the same promise
- * queue so UI- and assistant-initiated changes cannot interleave; read-only
- * listings are never queued. A failure never blocks later operations.
- */
-/** Shell service surface required by the coordination service itself. */
 type CoordinatedShellService = {
   getSnapshot: () => ShellSnapshot
   refresh: () => Promise<ShellSnapshot>
@@ -15,7 +8,6 @@ type CoordinatedShellService = {
   resolveEffectiveTarget: () => Promise<unknown>
 }
 
-/** Handler-facing surface implemented by {@link ShellConfigurationService}. */
 export type ShellConfigurationShellService = {
   list: () => ShellSnapshot
   refresh: () => Promise<ShellSnapshot>
@@ -37,7 +29,6 @@ export class ShellConfigurationService {
 
   constructor(private readonly options: {
     shellService: CoordinatedShellService
-    /** Runs the full runtime environment refresh chain used by the UI. */
     refreshRuntimeEnvironment: () => Promise<unknown>
   }) {}
 
@@ -54,17 +45,12 @@ export class ShellConfigurationService {
 
   select(value: unknown): Promise<ShellSnapshot> {
     return this.enqueue(async () => {
-      // Refresh candidates first so validation runs against the latest
-      // detection, then save. ShellService.select rejects invalid values
-      // before writing any preference.
       await this.options.shellService.refresh()
       this.options.shellService.select(value)
       try {
         await this.options.refreshRuntimeEnvironment()
         await this.options.shellService.resolveEffectiveTarget()
       } catch (error) {
-        // The selection is already persisted; report the post-save failure
-        // without pretending the previous selection was restored.
         throw new ShellSelectionAppliedButUnavailableError(error)
       }
       return this.options.shellService.getSnapshot()

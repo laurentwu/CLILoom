@@ -132,11 +132,6 @@ export const MAX_WORKFLOW_NODES = 1_000
 export const MAX_WORKFLOW_EDGES = 5_000
 export const MAX_WORKFLOW_STRING = 100_000
 
-/**
- * Structural runtime boundary for persisted workflow definitions. This accepts
- * snapshots that are structurally safe but may be temporarily incomplete (for
- * example a stopped historical designer snapshot).
- */
 export function parseWorkflowDefinitionStructure(value: unknown): WorkflowDefinition {
   const workflow = requireRecord(value, 'Workflow')
   const id = requireBoundedString(workflow.id, 'Workflow ID', 1, 512)
@@ -203,7 +198,6 @@ export function parseWorkflowDefinitionStructure(value: unknown): WorkflowDefini
   return parsed
 }
 
-/** Runtime boundary for workflow writes and explicit validation. */
 export function parseWorkflowDefinition(value: unknown): WorkflowDefinition {
   const normalized = parseWorkflowDefinitionStructure(value)
   const errors = validateWorkflow(normalized)
@@ -851,8 +845,6 @@ export function interpolate(template: string, variables: Record<string, Variable
   })
 }
 
-// Keep untrusted values out of shell source. Shell parameter expansion does not
-// recursively interpret command substitutions or quoting characters from values.
 export function bindShellVariables(
   template: string,
   variables: Record<string, VariableValue>
@@ -866,11 +858,6 @@ export function bindShellVariables(
   }
 }
 
-/**
- * Bind workflow values without choosing a shell syntax. The main process turns
- * binding segments into POSIX, PowerShell or cmd references immediately before
- * a process is spawned.
- */
 export function bindShellCommand(
   template: string,
   variables: Record<string, VariableValue>,

@@ -47,9 +47,6 @@ import {
 
 const SESSION_PERSIST_INTERVAL_MS = 5000
 const TERMINAL_DATA_FLUSH_INTERVAL_MS = 16
-// Upper bound for the interactive startup-echo recognition window. It starts
-// with the first PTY output chunk, is never extended, and only releases the
-// still-pending original bytes; it is not a fixed delay for all output.
 const STARTUP_ECHO_RECOGNITION_WINDOW_MS = 2000
 
 function createCommandDisplayMapper(
@@ -820,8 +817,6 @@ export class ProcessRunner {
         startupRecognitionTimer = null
       }
     }
-    // Releases undecided startup bytes through the regular display pipeline;
-    // the display mapper itself keeps waiting for a possible command prefix.
     const flushStartupRecognition = () => {
       if (!initialCommandEchoFilter) return
       const released = initialCommandEchoFilter.flush()
@@ -991,8 +986,6 @@ export class ProcessRunner {
     if (!session || session.settled || session.finalizing) return false
     const c = Math.max(1, Math.floor(cols))
     const r = Math.max(1, Math.floor(rows))
-    // Pending startup recognition is anchored to the PTY column count, so it
-    // is released and stopped before the geometry changes.
     session.releaseStartupRecognition?.()
     try {
       session.child.resize(c, r)
@@ -1089,7 +1082,6 @@ export class ProcessRunner {
         try {
           await this.terminateTree(child)
         } catch {
-          // The launch error remains the primary actionable failure.
         }
       }
       if (pending.cancelled) return this.cancelUnstartedHook(hookRunId)

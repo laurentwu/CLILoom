@@ -31,7 +31,6 @@ export function writeAssistantBridgeSession(
   filePath: string,
   credentials: AssistantBridgeCredentials
 ): void {
-  // Refuse existing files and symlinks rather than following an untrusted target.
   writeFileSync(filePath, JSON.stringify({ version: 1, ...credentials }), {
     encoding: 'utf8', mode: 0o600, flag: 'wx'
   })

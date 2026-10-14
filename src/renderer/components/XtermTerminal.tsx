@@ -50,8 +50,6 @@ type TerminalEntry = {
 }
 
 const TERMINAL_SCROLLBAR_GUTTER_WIDTH = 12
-// Running sessions outlive whichever task/node view currently owns their host.
-// Keep the emulator and IPC subscriptions keyed by session, then reparent its DOM on return.
 const terminalEntries = new Map<string, TerminalEntry>()
 
 function notifyInputReady(entry: TerminalEntry): void {
@@ -113,8 +111,6 @@ function reconcileTerminalTranscript(entry: TerminalEntry, session: Session): vo
     const missingContent = session.transcript.slice(entry.renderedTranscript.length)
     if (missingContent) entry.terminal.write(missingContent)
   } else {
-    // A bounded transcript may have dropped the prefix that xterm already rendered.
-    // Keep the same emulator instance, but use the authoritative snapshot in that rare case.
     entry.terminal.reset()
     if (session.transcript) entry.terminal.write(session.transcript)
   }
@@ -176,7 +172,6 @@ function queryInputReadiness(entry: TerminalEntry): void {
       setInputReady(entry, ready)
     }
   }).catch(() => {
-    /* the attached event can still make the terminal ready */
   })
 }
 
@@ -373,7 +368,6 @@ function attachTerminalEntry(
 ): TerminalAttachment {
   entry.attachment?.observer.disconnect()
   const element = entry.terminal.element
-  // Terminal.open() is intentionally called only once; moving its root preserves all buffer state.
   if (element && element.parentElement !== host) host.appendChild(element)
 
   const token = Symbol(entry.sessionId)
@@ -541,7 +535,6 @@ export const XtermTerminal = forwardRef<XtermTerminalHandle, {
       })
     }
 
-    // Electron 隐藏窗口显示时不会改变 DOM 尺寸，下一帧主动测量并刷新视口可修正 Windows 下的滚动条布局。
     window.addEventListener('focus', scheduleFit)
     scheduleFit()
     return () => {

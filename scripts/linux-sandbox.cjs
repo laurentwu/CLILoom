@@ -24,7 +24,6 @@ function inspectLinuxSandbox(executablePath, options = {}) {
       return { supported: true, method: 'setuid', helperPath }
     }
   } catch {
-    // A missing helper can still be supported by an available user namespace sandbox.
   }
 
   const run = options.spawnSync ?? spawnSync

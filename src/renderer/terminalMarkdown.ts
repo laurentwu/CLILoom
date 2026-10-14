@@ -27,11 +27,6 @@ export const rawHtmlTextVisitor: MdastImportVisitor<Html> = {
   }
 }
 
-/**
- * Keeps terminal output permissive without enabling MDXEditor's real HTML
- * elements. CommonMark HTML constructs that no other visitor supports are
- * imported as editable text and exported as escaped Markdown.
- */
 export const terminalMarkdownPlugin = realmPlugin({
   init(realm) {
     realm.pub(addImportVisitor$, rawHtmlTextVisitor)

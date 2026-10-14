@@ -22,7 +22,6 @@ export const DEFAULT_CRON_ASSISTANT_DRAFT: CronAssistantDraft = {
   weekdays: [1]
 }
 
-/** Build the five-field expression for an assistant draft. */
 export function buildCronExpression(draft: CronAssistantDraft): string {
   switch (draft.mode) {
     case 'every-n-minutes':
@@ -38,11 +37,6 @@ export function buildCronExpression(draft: CronAssistantDraft): string {
   }
 }
 
-/**
- * Reverse-fill an assistant draft from an existing expression. Returns null
- * for empty, invalid, or legitimately complex expressions; the caller then
- * starts from defaults without touching the original input.
- */
 export function matchAssistantExpression(expression: string): CronAssistantDraft | null {
   const normalized = normalizeCronExpression(expression)
   if (!normalized) return null
@@ -100,11 +94,6 @@ function parseSingleNumber(field: string, min: number, max: number): number | nu
   return value
 }
 
-/**
- * Render an epoch-millisecond time in the given zone. Includes the UTC offset
- * unless `showTimeZone` is explicitly false, in which case the formatting
- * options omit `timeZoneName` entirely instead of stripping rendered text.
- */
 export function formatScheduleTime(
   timeMs: number,
   timeZone: string,
@@ -134,7 +123,6 @@ export function formatScheduleTime(
   }
 }
 
-/** Countdown text like "00:42" or "1:02:03"; minimum value is zero. */
 export function formatCountdown(remainingMs: number): string {
   const totalSeconds = Math.max(0, Math.floor(remainingMs / 1000))
   const hours = Math.floor(totalSeconds / 3600)

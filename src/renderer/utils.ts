@@ -23,7 +23,6 @@ import { isAppError } from '../shared/appError'
 import { getAutomaticTaskTitle } from '../shared/taskTitle'
 import { i18n } from './i18n'
 
-/** Runtime view of one node run, shared with the main-process state. */
 export type NodeRun = WorkflowRuntimeNodeRun
 
 export function getNodeAutoRetryPhase(run: NodeRun | undefined): WorkflowRuntimeNodeRun['autoRetry'] {

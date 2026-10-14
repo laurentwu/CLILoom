@@ -154,8 +154,6 @@ export function isValidColor(value: unknown): value is string {
   const match = trimmed.match(/^(rgba?|hsla?|oklch|oklab|color)\((.*)\)$/i)
   if (!match) return false
   const body = match[2].trim()
-  // Reject empty bodies (e.g. `oklch()`) and bodies without any numeric/percent
-  // payload (e.g. `rgb(foo)`). `none` is a valid CSS color component.
   if (body.length === 0) return false
   if (!/[0-9%]/.test(body) && !/\bnone\b/i.test(body)) return false
   return true
@@ -216,9 +214,6 @@ export function parseSkinContent(value: unknown): SkinContent | null {
   const rawCodeFontFamily = value.typography.codeFontFamily
   if (rawCodeFontFamily !== undefined && !isValidCodeFontFamily(rawCodeFontFamily)) return null
   const typography: SkinTypography = {
-    // Themes saved before v2 used `fontFamily` to customize the entire UI.
-    // UI typography now follows the operating system, so that legacy value is
-    // deliberately ignored instead of becoming a terminal font by accident.
     codeFontFamily: typeof rawCodeFontFamily === 'string'
       ? rawCodeFontFamily.trim()
       : DEFAULT_CODE_FONT_FAMILY,

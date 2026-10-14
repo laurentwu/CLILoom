@@ -154,7 +154,6 @@ export type WorkflowTerminalRetryEditInput = {
   replaySnapshot?: TerminalCommandTemplateSnapshot
 }
 
-/** Identity of one scheduled automatic retry, validated on acceptance. */
 export type WorkflowTerminalAutoRetryTicket = {
   runId: string
   cycleId: string
@@ -284,7 +283,6 @@ export class WorkflowRuntimeEngine {
     }
   }
 
-  /** True when any terminal node in the bound workflow enables auto retry. */
   hasAutoRetryEnabledNodes(): boolean {
     return this.workflow.nodes.some((node) => (
       (node.type === 'interactive-terminal' || node.type === 'non-interactive-terminal') &&
@@ -292,11 +290,6 @@ export class WorkflowRuntimeEngine {
     ))
   }
 
-  /**
-   * Backfill the per-run automatic retry context for legacy tasks that were
-   * first launched before the feature existed. Called only on explicit user
-   * recovery paths; the context is then fixed for the remainder of the run.
-   */
   ensureAutoRetryContext(timeZone: string): boolean {
     if (this.state.autoRetryContext) return false
     this.state.autoRetryContext = {
@@ -414,8 +407,6 @@ export class WorkflowRuntimeEngine {
       return this.serialize(() => this.beginTerminalRetryInternal(nodeId, sessionId, undefined, edit, automatic))
     }
 
-    // The workflow queue remains occupied while sibling branches run. Waiting
-    // only for this branch lets its failed terminal restart immediately.
     return this.serializeBranch(branch.branchId, async () => {
       const started = await this.beginTerminalRetryInternal(nodeId, sessionId, branch.branchId, edit, automatic)
       if (started !== false) this.parallelTerminalRetryBranches.set(sessionId, branch.branchId)
@@ -505,7 +496,6 @@ export class WorkflowRuntimeEngine {
       phase: 'running',
       attemptsStarted: autoRetry.attemptsStarted + 1,
       lastFailureAt: autoRetry.lastFailureAt,
-      // The accepted-start clock value, not the (possibly overdue) plan time.
       lastRetryStartedAt: this.autoRetryClock.now()
     }
     run.autoRetry = next
@@ -518,9 +508,6 @@ export class WorkflowRuntimeEngine {
     cycleId: string
     scheduleId: string
   }): Promise<CancelTerminalAutoRetryOutcome & { state: WorkflowRuntimeState }> {
-    // Mirror beginTerminalRetry: while sibling branches run, the workflow
-    // queue stays occupied for a long time, so a cancellation for a node in
-    // a retryable branch must use that branch's queue to stay responsive.
     const branch = this.findBranchForNode(request.nodeId)
     if (!branch || !isRetryableRunStatus(branch.status)) {
       return this.serialize(() => this.cancelTerminalAutoRetryInternal(request))
@@ -720,11 +707,6 @@ export class WorkflowRuntimeEngine {
           run.stderr = run.stderr ?? this.tr('status:runtime.userStopped', {}, 'User stopped')
         }
       }
-      // A user stop cancels every waiting automatic-retry plan for this task
-      // and blocks an in-flight automatic execution: its process is being
-      // killed, so the cycle must not continue or present itself as running.
-      // An interrupt (shutdown or system sleep) keeps waiting plans so they
-      // can be recovered on the next launch.
       if (status === 'stopped' &&
         (run.autoRetry?.phase === 'waiting' || run.autoRetry?.phase === 'running')
       ) {
@@ -1071,8 +1053,6 @@ export class WorkflowRuntimeEngine {
       const arrivedEdgeIds = new Set(branches.map((branch) => branch.reachedJoinEdgeId).filter(Boolean))
       const allRequiredArrived = requiredIncomingEdgeIds.every((edgeId) => arrivedEdgeIds.has(edgeId))
       if (allRequiredArrived && failedBranches.length === 0 && interruptedBranches.length === 0) {
-        // A retried branch and an original sibling can finish together. Only
-        // the first completion that reaches the join may continue the workflow.
         if (this.state.lastJoinResultSplitNodeId === splitNodeId) return false
         this.state.lastJoinResultSplitNodeId = splitNodeId
         this.state.activeBranches = []
@@ -1287,10 +1267,6 @@ export class WorkflowRuntimeEngine {
     return true
   }
 
-  /**
-   * Plan the next automatic retry after a failed terminal execution. Returns
-   * undefined when automatic retries do not apply to this failure.
-   */
   private planTerminalAutoRetry(
     node: WorkflowNode,
     result: WorkflowRuntimeProcessResult,
@@ -1313,8 +1289,6 @@ export class WorkflowRuntimeEngine {
       phase: 'waiting',
       attemptsStarted,
       lastFailureAt,
-      // Keep the display-only start time of the latest accepted retry across
-      // waiting, exhausted, missing-session and schedule-error rebuilds.
       ...(continuingCycle?.lastRetryStartedAt !== undefined
         ? { lastRetryStartedAt: continuingCycle.lastRetryStartedAt }
         : {})
@@ -1343,10 +1317,6 @@ export class WorkflowRuntimeEngine {
     return state
   }
 
-  /**
-   * Record a hook failure after a terminal execution. Terminal successes are
-   * never retried automatically, and an in-flight automatic cycle is blocked.
-   */
   private async recordTerminalHookFailure(
     node: WorkflowNode,
     branch: WorkflowRuntimeBranchRun | undefined,

@@ -61,10 +61,6 @@ function getContentEndColumn(line: TerminalBufferLineLike, columns: number): num
   return 0
 }
 
-/**
- * Converts xterm's rendered active buffer to plain text. Physical rows created
- * by visual wrapping are joined back together while hard line breaks remain.
- */
 export function serializeTerminalBuffer(buffer: TerminalBufferLike, columns: number): string {
   if (buffer.length <= 0 || columns <= 0) return ''
 

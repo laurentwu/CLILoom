@@ -20,10 +20,6 @@ const CARRIAGE_RETURN_CODE = 13
 const LINE_FEED_CODE = 10
 const ESCAPE_CODE = 27
 
-// The complete macOS system Bash migration notice emitted before the first
-// prompt when /bin/bash is not the user's login shell. Only this exact block
-// plus adjacent blank lines is tolerated between the bare echo and the first
-// prompted command; unknown or truncated banners fall back to passthrough.
 const ZSH_MIGRATION_BANNER = [
   'The default interactive shell is now zsh.',
   'To update your account to use zsh, please run `chsh -s /bin/zsh`.',
@@ -65,8 +61,6 @@ type Tolerance = {
   positioning: false | { cols: number }
 }
 
-// Tolerant redraw matching is only enabled for single-line commands that cannot
-// contain the redraw fragments themselves.
 function supportsRedrawTolerance(command: string): boolean {
   for (let index = 0; index < command.length; index++) {
     const code = command.charCodeAt(index)
@@ -95,9 +89,6 @@ function resolveTolerance(context: StartupEchoContext | undefined): Tolerance {
   }
 }
 
-// Compact wcwidth covering the ranges observed in real terminal redraws: CJK
-// ideographs and extensions, fullwidth forms, Hangul, and emoji. It only feeds
-// the column-boundary cursor-positioning checks, never text recovery.
 function charWidthAt(text: string, index: number): number {
   const unit = text.charCodeAt(index)
   if (unit >= 0xdc00 && unit <= 0xdfff && index > 0) {
@@ -131,15 +122,11 @@ function isWideCharAt(text: string, index: number): boolean {
   return charWidthAt(text, index) === 2
 }
 
-// Consumes one complete escape sequence starting at text[sequenceStart]
-// (text[sequenceStart] === ESC). Returns the index just past the sequence, or
-// null when the buffer ends before the sequence is complete.
 function scanControlSequence(text: string, sequenceStart: number): number | null {
   const length = text.length
   if (sequenceStart + 1 >= length) return null
   const introducer = text.charCodeAt(sequenceStart + 1)
   if (introducer === 0x5b) {
-    // CSI: parameter and intermediate bytes until the final byte (0x40-0x7e).
     for (let index = sequenceStart + 2; index < length; index++) {
       const code = text.charCodeAt(index)
       if (code >= 0x40 && code <= 0x7e) return index + 1
@@ -148,7 +135,6 @@ function scanControlSequence(text: string, sequenceStart: number): number | null
     return null
   }
   if (introducer === 0x5d) {
-    // OSC: BEL or ST (ESC \) terminated.
     for (let index = sequenceStart + 2; index < length; index++) {
       const code = text.charCodeAt(index)
       if (code === 0x07) return index + 1
@@ -159,7 +145,6 @@ function scanControlSequence(text: string, sequenceStart: number): number | null
     }
     return null
   }
-  // Two-character escape (for example ESC 7 / ESC 8 / ESC M).
   return sequenceStart + 2
 }
 
@@ -215,9 +200,6 @@ function consumeLineEnding(text: string, start: number): number {
   return start + 1
 }
 
-// On macOS the migration notice may be surrounded by blank lines. Blank-line
-// and banner skipping only happen together: without a matching banner the
-// candidate never crosses a line boundary.
 function skipStartupPreamble(
   text: string,
   offset: number,
@@ -271,10 +253,6 @@ type StartupScan =
   | { kind: 'fail' }
   | { kind: 'incomplete' }
 
-// Consumes the known interactive-shell startup control prefix: window title
-// (OSC), SGR, erase/home cursor initialization, and private mode toggles such
-// as bracketed paste, focus reporting, win32 input mode, or Bash's meta-key
-// mode (ESC[?1034h).
 function scanStartupControlPrefix(text: string, offset: number): StartupScan {
   let cursor = offset
   for (;;) {
@@ -292,10 +270,6 @@ type PromptScan =
   | { kind: 'fail' }
   | { kind: 'incomplete' }
 
-// Recognizes the first POSIX-style prompt on a logical line: any run of text,
-// SGR, and OSC units that ends with the two characters `$ ` or `# `. Also
-// reports the terminal column the prompt occupies so draw cursor positioning
-// can be validated against real columns.
 function scanPrompt(text: string, offset: number, limit: number): PromptScan {
   let cursor = offset
   let column = 0
@@ -319,12 +293,6 @@ function scanPrompt(text: string, offset: number, limit: number): PromptScan {
   }
 }
 
-// Attempts to locate [optional migration banner][control prefix][prompt]
-// [command draw] at the start of the logical line beginning at `offset`. The
-// draw line must already be terminated by LF; otherwise the candidate stays
-// pending. When `requireControlPrefix` is set, the first prompted draw is only
-// accepted after a known control prefix, so plain interactive text such as
-// password prompts is released immediately.
 function attemptStartupLine(
   text: string,
   offset: number,
@@ -347,8 +315,6 @@ function attemptStartupLine(
 
   const prompt = scanPrompt(text, prefix.offset, drawLineEnd)
   if (prompt.kind !== 'ok') {
-    // Preserve the pre-existing exact path for custom prompts after a bare
-    // echo. Without that echo, only a recognizable POSIX prompt is accepted.
     const exactStart = drawLineEnd - command.length
     if (
       prompt.kind === 'fail' && !requireControlPrefix &&
@@ -374,14 +340,6 @@ type DrawMatcherState = {
   visualColumn: number
 }
 
-// Matches the draw region [drawStart, lineEnd) against the full command.
-// Text units must reproduce the command character by character; only proven
-// draw mechanics are tolerated between command characters: Bash padding
-// fragments, the macOS Readline CR redraw segments (padding space plus an
-// optional repeated wide glyph), and the Windows ConPTY bracketed-paste
-// toggles plus column-boundary cursor positioning observed in captured logs.
-// Every ambiguous boundary offers at most one alternative and the total
-// number of retries is bounded, keeping the scan linear.
 function matchCommandDraw(
   text: string,
   drawStart: number,
@@ -418,8 +376,6 @@ function matchCommandDraw(
 
     const unit = units[state.unitIndex]
 
-    // A completed invocation followed by anything other than its line ending
-    // is not a proven startup draw. Keep suffixes and controls byte-for-byte.
     if (state.matched === command.length) return { kind: 'fail' }
 
     if (unit.type === 'text') {
@@ -470,9 +426,6 @@ function matchCommandDraw(
       continue
     }
 
-    // CR segment separator: everything drawn so far on the row is overwritten,
-    // so the next segment either repeats the wide glyph that wrapped across
-    // the boundary or continues with the next command character.
     const next = units[state.unitIndex + 1]
     const continueState: DrawMatcherState = {
       unitIndex: state.unitIndex + 1,
@@ -502,11 +455,6 @@ function matchCommandDraw(
   return { kind: 'fail' }
 }
 
-// A space that does not match the next command character is a redraw padding
-// space only when it directly surrounds a tolerated draw mechanic: a CR
-// segment separator or an accepted control-sequence class. Column values are
-// not re-validated here; the main walk already accepted the control at its
-// real column.
 function isBoundaryPad(units: DrawUnit[], index: number, tolerance: Tolerance): boolean {
   const previous = index > 0 ? units[index - 1] : undefined
   if (previous && isToleratedDrawNeighbor(previous, tolerance)) return true
@@ -554,18 +502,12 @@ function acceptDrawControl(
     if (!tolerance.positioning) return null
     const { cols } = tolerance.positioning
     if (visualColumn === 0 || visualColumn % cols !== 0) return null
-    // Only a no-op reposition to the column the cursor already sits on (the
-    // pending-wrap cell at the terminal edge) is accepted. ConPTY uses screen
-    // coordinates after wrapping, while visualColumn counts the whole draw.
-    // Reject an incorrect row too: it would overwrite earlier command text.
     if (kind.row !== undefined && kind.row !== visualColumn / cols) return null
     return kind.column === cols ? visualColumn : null
   }
   return null
 }
 
-// Splits the draw region into text, CR, and classified control units. The
-// region never contains LF; CR only appears as a macOS segment separator.
 function tokenizeDraw(text: string, start: number, end: number): DrawUnit[] {
   const units: DrawUnit[] = []
   let cursor = start
@@ -601,8 +543,6 @@ export function createInitialCommandEchoFilter(
 ): InitialCommandEchoFilter | null {
   if (!command) return null
 
-  // Input written before an interactive shell initializes its prompt can be
-  // echoed once by the TTY and then drawn again by the shell with its prompt.
   const echoedLines = [`${command}\r\n`, `${command}\n`]
   const tolerance = resolveTolerance(context)
   const tolerantRedraw = supportsRedrawTolerance(command)
@@ -628,9 +568,6 @@ export function createInitialCommandEchoFilter(
     return mapped
   }
 
-  // Exact fallback for commands that embed control characters: no draw
-  // mechanics are interpreted, the redraw must contain the literal command
-  // within the current logical line.
   const resolveExactRedraw = (): string => {
     const redrawIndex = pending.indexOf(command)
     const nextLineEnd = pending.indexOf('\n')
@@ -681,8 +618,6 @@ export function createInitialCommandEchoFilter(
       }
 
       if (state === 'matching-echo') {
-        // Compare only the new bytes. Rechecking the entire accumulated bare
-        // echo on every one-character PTY chunk would be quadratic.
         echoCandidates = echoCandidates.filter((candidate) => (
           candidate.slice(previousLength, pendingLength) ===
             content.slice(0, Math.max(0, candidate.length - previousLength))
@@ -705,10 +640,6 @@ export function createInitialCommandEchoFilter(
         }
       }
 
-      // Redraws are only committed once their logical line is complete. Scan
-      // new chunks for LF, retaining chunks without repeatedly flattening or
-      // scanning an arbitrarily long unfinished line. A macOS banner has a
-      // fixed number of lines, so it adds only a constant number of scans.
       if (tolerantRedraw && tolerance.drawFragments && !content.includes('\n')) return ''
       collectPending()
       return resolveStartupLine()

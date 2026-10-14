@@ -53,11 +53,6 @@ function channelValue(token: string, fallback = 0): number {
   return Number.parseFloat(token)
 }
 
-/**
- * Convert a CSS color (hex, rgb/rgba, hsl/hsla, named) to a 6-digit hex string
- * the native color input can consume. oklch/oklab values are converted via the
- * standard OKLab → linear sRGB math so builtin oklch tokens render correctly.
- */
 export function colorToHex(color: string): string {
   const trimmed = color.trim()
   if (HEX_RE.test(trimmed)) return expandHex(trimmed)

@@ -180,11 +180,7 @@ export function AppearancePanel({
       setNameDraft('')
       setDirty(false)
     }
-    // Preview the selected skin. Runs only on open / selection change so that
-    // external settings broadcasts (which App reflects into props) are not
-    // overridden by a stale non-active preview.
     applySkin(selectedSkin)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, selectedId, creating])
 
   useEffect(() => {
@@ -193,7 +189,6 @@ export function AppearancePanel({
     }
   }, [optimisticSkin, userSkins])
 
-  // If the selected skin disappears (deleted elsewhere), fall back to the active skin.
   useEffect(() => {
     if (!open || creating) return
     const exists = Boolean(getBuiltinSkin(selectedId))

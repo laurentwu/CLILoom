@@ -132,7 +132,6 @@ export class SettingsService {
     return { config: value, resolved }
   }
 
-  // --- Skin library -------------------------------------------------------
 
   getSkinLibrary(): UserSkin[] {
     return parseSkinLibrarySetting(getSetting(this.db, SKIN_LIBRARY_SETTING_KEY, []))
@@ -268,7 +267,6 @@ export class SettingsService {
     return JSON.stringify(serializeSkinForExport(name, content))
   }
 
-  // --- Appearance ---------------------------------------------------------
 
   setLanguage(language: unknown): SupportedLanguage {
     if (!isSupportedLanguage(language)) throw new Error(t('errors:appearance.unsupportedLanguage'))

@@ -1,13 +1,5 @@
 'use strict'
 
-// Unified entry for Playwright Electron E2E tests.
-//
-// Linux runs always get their own isolated D-Bus session via
-// `dbus-run-session` so Electron's D-Bus diagnostics never pollute the CLI
-// stderr contract, regardless of an inherited stale DBUS_SESSION_BUS_ADDRESS.
-// When no X display is configured the session additionally wraps `xvfb-run`.
-// Missing wrappers are hard failures: the suite never silently falls back to
-// a D-Bus-less run.
 
 const { spawn } = require('node:child_process')
 const fs = require('node:fs')
@@ -33,7 +25,6 @@ function findExecutableOnPath(executable, env) {
       fs.accessSync(candidate, fs.constants.X_OK)
       return candidate
     } catch {
-      // Try the next PATH entry.
     }
   }
   return null
@@ -43,16 +34,6 @@ function resolvePlaywrightCliPath(resolve = require.resolve) {
   return path.join(path.dirname(resolve('playwright/package.json')), 'cli.js')
 }
 
-// Builds the exact spawn description for one E2E invocation:
-//
-//   Linux, DISPLAY missing/empty:
-//     dbus-run-session -- xvfb-run -a <node> <playwright-cli> test <args...>
-//   Linux, DISPLAY set:
-//     dbus-run-session -- <node> <playwright-cli> test <args...>
-//   macOS / Windows:
-//     <node> <playwright-cli> test <args...>
-//
-// Arguments are passed as an array; no shell string is ever assembled.
 function buildE2eLaunchPlan(options = {}) {
   const platform = options.platform ?? process.platform
   const env = options.env ?? process.env
@@ -95,9 +76,6 @@ function buildE2eLaunchPlan(options = {}) {
 
 const FORWARDED_SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP']
 
-// Runs one E2E invocation, forwarding termination signals and propagating the
-// child's exit code or signal. Resolves with { code, signal } once the whole
-// wrapped process chain (D-Bus daemon, Xvfb) has been reaped by its wrapper.
 function runE2eLaunch(plan, options = {}) {
   const env = options.env ?? process.env
   const grouped = process.platform !== 'win32'
@@ -123,7 +101,6 @@ function runE2eLaunch(plan, options = {}) {
         try {
           terminate(signal)
         } catch {
-          // The child may already be gone; its exit still decides our status.
         }
       }
       signalHandlers.set(signal, handler)
@@ -142,15 +119,11 @@ function runE2eLaunch(plan, options = {}) {
   const done = new Promise((resolve) => {
     child.on('error', (error) => {
       removeSignalHandlers()
-      // The D-Bus daemon and Xvfb inherit the child's stdio; destroy piped
-      // streams so lingering inherited descriptors cannot hold the event loop.
       for (const stream of [child.stdout, child.stderr]) stream?.destroy()
       resolve({ code: 1, signal: null, error })
     })
     child.on('exit', (code, signal) => {
       removeSignalHandlers()
-      // Reap descendants still in our private group even when the outer
-      // wrapper was terminated directly rather than through our handler.
       if (grouped) terminate('SIGTERM')
       for (const stream of [child.stdout, child.stderr]) stream?.destroy()
       resolve({ code, signal })

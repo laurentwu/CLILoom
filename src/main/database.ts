@@ -110,15 +110,12 @@ function createCurrentDatabase(databasePath: string): void {
     initializationDatabase.close()
     initializationDatabase = null
 
-    // A same-directory hard link publishes the complete, closed database in
-    // one step and fails rather than replacing a target created concurrently.
     linkSync(initializationPath, databasePath)
   } finally {
     if (initializationDatabase) {
       try {
         initializationDatabase.close()
       } catch {
-        // Cleanup below still removes only this attempt's private files.
       }
     }
     removeInitializationFiles(initializationPath)
@@ -146,7 +143,6 @@ function removeInitializationFiles(initializationPath: string): void {
     try {
       rmSync(`${initializationPath}${suffix}`, { force: true })
     } catch {
-      // A failed best-effort cleanup must not remove or invalidate a published database.
     }
   }
 }

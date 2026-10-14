@@ -235,7 +235,6 @@ export class AssistantCommandHandler {
         ? await service.resolveEffectiveTarget()
         : service.resolveEffectiveShell()
     } catch {
-      // The target snapshot below carries the selection failure.
     }
     let command: Record<string, unknown>
     try {
@@ -707,10 +706,6 @@ export class AssistantCommandHandler {
     }
   }
 
-  /**
-   * Extract leading positional arguments (before any --flag). Commands whose
-   * usage places flags after the positionals use this instead of requireArgs.
-   */
   private requirePositionals(args: string[], count: number): string[] {
     const positional: string[] = []
     for (let index = 1; index < args.length && positional.length < count; index += 1) {

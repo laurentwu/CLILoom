@@ -110,8 +110,6 @@ export function NodeDetailPanel({
   })
   const autoRetry = run?.autoRetry
   const autoRetryWaiting = autoRetry?.phase === 'waiting'
-  // The banner owns the single manual retry entry while a retry is waiting;
-  // the header and terminal pane must not duplicate it.
   const effectiveNodeAction = autoRetryWaiting ? null : nodeAction
   const statusLabel = (() => {
     if (!autoRetry) return resolvedStatusLabel
@@ -184,9 +182,6 @@ export function NodeDetailPanel({
                 maxRetries={autoRetryMaxRetries}
                 disabled={!onCancelAutoRetry && !canOperate}
                 onRetryNow={() => {
-                  // Reuse the workflow terminal-retry entry so the configured
-                  // retry command, variable binding and branch queue apply
-                  // (Plan 5.5), instead of re-running the node from scratch.
                   const sessionId = run?.sessionId
                   if (!sessionId) return
                   void onRetryTerminal(sessionId, 'workflow')

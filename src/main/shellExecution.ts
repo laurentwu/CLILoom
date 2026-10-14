@@ -73,10 +73,6 @@ export function renderShellCommand(command: ShellNeutralCommand, family: ShellFa
     if (segment.type === 'literal') return segment.value
     if (family === 'powershell') return `\${env:${segment.name}}`
     if (family === 'cmd') {
-      // cmd.exe treats an empty environment entry as undefined on some Windows
-      // versions, leaving its delayed-expansion token visible in the output.
-      // Rendering an empty binding directly is safe because it contributes no
-      // shell source or metacharacters.
       return validated.bindings[segment.name] === '' ? '' : `!${segment.name}!`
     }
     return `\${${segment.name}}`
