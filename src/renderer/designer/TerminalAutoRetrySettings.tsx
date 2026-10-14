@@ -34,8 +34,6 @@ export function TerminalAutoRetrySettings({
   const locale = useMemo(() => Intl.DateTimeFormat().resolvedOptions().locale, [])
   const enabled = config?.enabled === true
   const mode = config?.mode ?? 'recommended'
-  // undefined means the object predates the field (normalize to the default);
-  // null is the explicit "unlimited" choice and must survive edits.
   const maxRetries = config?.maxRetries === undefined
     ? AUTO_RETRY_DEFAULT_MAX_RETRIES
     : config.maxRetries
@@ -45,8 +43,6 @@ export function TerminalAutoRetrySettings({
   const [assistantOpen, setAssistantOpen] = useState(false)
   const [debounceTimer, setDebounceTimer] = useState<ReturnType<typeof setTimeout> | null>(null)
 
-  // Clear any pending debounce when the component unmounts (including the
-  // remount caused by switching the selected node in the designer).
   useEffect(() => () => {
     if (debounceTimer) clearTimeout(debounceTimer)
   }, [debounceTimer])
@@ -76,8 +72,6 @@ export function TerminalAutoRetrySettings({
 
   const enable = (nextEnabled: boolean) => {
     if (!nextEnabled) {
-      // Disabling the feature closes the assistant and discards its local
-      // draft so a later re-enable cannot apply a stale expression.
       setAssistantOpen(false)
     }
     update({ enabled: nextEnabled })

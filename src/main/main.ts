@@ -382,8 +382,6 @@ function showReplacementLaunchFailed(error: unknown): void {
 }
 
 function quitAfterInstanceHandoff(): void {
-  // The replacement may take a moment to launch. Flush once more here so any
-  // edits made while that handoff was in progress are included as well.
   void completeNormalApplicationQuit()
 }
 

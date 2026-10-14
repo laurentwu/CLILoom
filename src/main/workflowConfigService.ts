@@ -103,8 +103,6 @@ export class WorkflowConfigService {
   ): Promise<WorkflowChangeEvent> {
     const impact = this.getDeleteImpact(workflowId, 'assistant')
     if (!await confirm(impact)) throw new UserCancelledError()
-    // Re-run all checks after the confirmation dialog. The revision is the CAS
-    // token and deleteWorkflowWithRevision rechecks runtime constraints.
     this.assertNoDirtyConflict(workflowId)
     this.delete(workflowId, impact.revision, 'assistant')
     return { operation: 'deleted', id: workflowId, revision: impact.revision, source: 'assistant' }

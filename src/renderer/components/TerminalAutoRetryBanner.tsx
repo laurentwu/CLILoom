@@ -33,8 +33,6 @@ export function TerminalAutoRetryBanner({
   const [cancelling, setCancelling] = useState(false)
   const waiting = autoRetry.phase === 'waiting' && autoRetry.nextRetryAt !== undefined
 
-  // The countdown refresh is display-only: the main process owns timing and
-  // counting, and the renderer never starts a retry by itself.
   useEffect(() => {
     if (!waiting) return
     const timer = setInterval(() => setNow(Date.now()), COUNTDOWN_TICK_MS)
@@ -54,8 +52,6 @@ export function TerminalAutoRetryBanner({
     }
   }
 
-  // A missing or unusable task time zone falls back to UTC without surfacing
-  // any zone name in the banner text.
   const zone = timeZone !== undefined && isValidTimeZone(timeZone) ? timeZone : 'UTC'
   const withoutZone = { showTimeZone: false } as const
 
@@ -72,8 +68,6 @@ export function TerminalAutoRetryBanner({
 
   const statsLine = () => {
     if (waiting) {
-      // Past the due time but not yet confirmed by the main process: the
-      // renderer only reports that a retry is being prepared.
       if (remainingMs <= 0) return t('node:autoRetry.preparing')
       if (maxRetries === undefined) {
         return `${t('node:autoRetry.attemptsOnly', { started: autoRetry.attemptsStarted })} · ${formatCountdown(remainingMs)}`
@@ -94,8 +88,6 @@ export function TerminalAutoRetryBanner({
     return undefined
   }
 
-  // The latest accepted retry start time is shown in every phase of a cycle
-  // that has already started at least one automatic retry.
   const lastRetryStartedAt = parseLastRetryStartedAt(
     autoRetry.lastRetryStartedAt,
     autoRetry.attemptsStarted
@@ -116,9 +108,6 @@ export function TerminalAutoRetryBanner({
     >
       <AlarmClock />
       <AlertTitle>{title}</AlertTitle>
-      {/* The description row wraps below the sm breakpoint and whenever a
-          narrow panel (for example a 380px parallel-branch column inside a
-          wide window) cannot fit the text beside the actions. */}
       <AlertDescription className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
         <span className="flex min-w-0 flex-col gap-1">
           <span className="min-w-0 break-words">{detail ?? statsLine()}</span>

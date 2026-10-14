@@ -25,8 +25,6 @@ export function getWorkflowAction(
   hasWaitingAutoRetry = false
 ): WorkflowAction | null {
   if (status === 'running' || status === 'waiting-input') return 'stop-workflow'
-  // A task with a waiting automatic-retry plan is still live: stopping it
-  // must remain available even though the overall status is failed.
   if (hasWaitingAutoRetry) return 'stop-workflow'
   return null
 }

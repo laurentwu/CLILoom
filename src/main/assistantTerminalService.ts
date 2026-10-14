@@ -309,7 +309,6 @@ export class AssistantTerminalService {
         configuredShell = snapshot.preferences.selection.shell
       }
     } catch {
-      // Keep the original launch error actionable even if snapshot generation fails.
     }
     const shellDescription = configuredShell
       ? `${configuredShell.displayName} (${configuredShell.executablePath}, ${configuredShell.family})`

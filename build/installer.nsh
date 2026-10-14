@@ -6,14 +6,12 @@ Var DesktopShortcutCheckbox
 Var CreateDesktopShortcut
 Var SkipDesktopShortcutPage
 
-; 自定义脚本早于 NSIS 语言宏加载，使用明确 LCID 避免未定义的语言常量。
 LangString desktopShortcutPageDescription 1033 "Choose whether Setup should create a desktop shortcut."
 LangString desktopShortcutPageDescription 2052 "选择安装程序是否创建桌面快捷方式。"
 LangString desktopShortcutCheckboxLabel 1033 "Create a desktop shortcut"
 LangString desktopShortcutCheckboxLabel 2052 "创建桌面快捷方式"
 
 !macro customInit
-  ; 新安装和静默安装默认创建快捷方式；交互式安装可在选项页取消。
   StrCpy $CreateDesktopShortcut ${BST_CHECKED}
   StrCpy $SkipDesktopShortcutPage "false"
   ${If} ${isUpdated}
@@ -24,7 +22,6 @@ LangString desktopShortcutCheckboxLabel 2052 "创建桌面快捷方式"
 
 !macro customPageAfterChangeDir
   Function createDesktopShortcutPage
-    ; 更新沿用既有快捷方式状态，不重复询问或改写用户之前的选择。
     StrCmp $SkipDesktopShortcutPage "true" 0 +2
     Abort
 
@@ -50,7 +47,6 @@ LangString desktopShortcutCheckboxLabel 2052 "创建桌面快捷方式"
 !macroend
 
 !macro customInstall
-  ; electron-builder 的内置快捷方式开关无法展示复选框，因此在用户确认后创建。
   ${IfNot} ${isUpdated}
   ${AndIfNot} ${isNoDesktopShortcut}
   ${AndIf} $CreateDesktopShortcut == ${BST_CHECKED}
@@ -63,7 +59,6 @@ LangString desktopShortcutCheckboxLabel 2052 "创建桌面快捷方式"
 !endif
 
 !macro customUnInstall
-  ; 应用更新通过 --keep-shortcuts 保留现状，普通卸载才移除桌面快捷方式。
   ${IfNot} ${isKeepShortcuts}
     WinShell::UninstShortcut "$oldDesktopLink"
     Delete "$oldDesktopLink"

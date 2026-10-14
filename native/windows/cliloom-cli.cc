@@ -271,7 +271,7 @@ DWORD WINAPI writeStdinPipe(void* parameter) {
   return 0;
 }
 
-}  // namespace
+}
 
 int wmain(int argumentCount, wchar_t* arguments[]) {
   if (argumentCount < 2 || arguments[1][0] == L'\0') {
@@ -374,8 +374,6 @@ int wmain(int argumentCount, wchar_t* arguments[]) {
 
   CloseHandle(processInformation.hThread);
   if (stdinRequested) {
-    // Electron 的 GUI 子系统会把继承的 stdin 视为 EOF，使用随机命名管道
-    // 将已限制大小的输入交给 CLI，避免临时文件和命令行泄漏。
     StdinPipeContext* pipeContext = new (std::nothrow) StdinPipeContext;
     if (pipeContext != nullptr) {
       pipeContext->pipe = stdinPipe;

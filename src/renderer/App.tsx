@@ -1198,9 +1198,6 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
       const initialVariables = getDefaultVariables(initialWorkflow)
       variablesRef.current = initialVariables
       setVariables(initialVariables)
-      // Task restore wins when the last workspace pointed at a persisted
-      // task; otherwise resume the startup project's draft so a restart
-      // lands back in the editor exactly where the user left off.
       if (initialProject && !pendingStartupTaskRef.current) {
         restoreStartupDraft(initialProject)
       }
@@ -1363,8 +1360,6 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
       const task = mergedTasks.find((record) => record.id === pendingTask.taskId)
       if (!task) {
         rememberWorkspace(activeProjectId, null)
-        // The remembered task is gone, so fall back to the project's draft
-        // like an explicit switch to this project would.
         const fallbackProject = projects.find((item) => item.id === activeProjectId)
         if (fallbackProject) restoreStartupDraft(fallbackProject)
         return
@@ -1388,9 +1383,6 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
         requestId
       })
       handleError(error, 'listTasks')
-      // A failed startup task lookup must not strand the workspace without
-      // the draft fallback, and the stale marker must not survive to a
-      // later navigation of the same project.
       const pendingTask = pendingStartupTaskRef.current
       if (!pendingTask || pendingTask.projectId !== activeProjectId) return
       pendingStartupTaskRef.current = null
@@ -1543,16 +1535,11 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
         try {
           window.cliLoom?.rendererReadyToClose?.()
         } catch {
-          // The main process will use its bounded timeout if the renderer is
-          // already shutting down and cannot send the acknowledgement.
         }
       }, () => {
-        // A failed persistence operation must not block a normal application
-        // close; the main process also has a bounded acknowledgement timeout.
         try {
           window.cliLoom?.rendererReadyToClose?.()
         } catch {
-          // See the timeout comment above.
         }
       })
     })
@@ -1579,16 +1566,10 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
       const nextProjects = (await window.cliLoom?.listProjects()) as ProjectRecord[]
       if (draftLoadRequestRef.current !== requestId) return
       syncProjectRecords(nextProjects)
-      // The folder picker also returns an existing project when the selected
-      // path is already registered. Keep the current editor in place in that
-      // case; switching away and back is the explicit navigation action that
-      // should reset the transient workspace.
       if (project.id === activeProjectIdRef.current) return
       commitActiveProject(project.id)
       resetTaskWorkspaceForProject(project, { draftStarted: false })
       rememberWorkspace(project.id, null)
-      // Landing on the project through the folder picker is a project switch
-      // as well, so restore its draft like the rail navigation does.
       await loadPersistedDraft(project, requestId)
     } catch (error) {
       handleError(error, 'chooseFolder')
@@ -1612,8 +1593,6 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
       commitActiveProject(nextActiveProjectId)
       resetTaskWorkspaceForProject(nextProject, { draftStarted: false })
       rememberWorkspace(nextProject?.id ?? null, null)
-      // Falling back to a neighboring project is a project switch too, so
-      // restore its draft like an explicit navigation would.
       if (switchRequestId !== null && nextProject) {
         await loadPersistedDraft(nextProject, switchRequestId)
       }
@@ -1786,12 +1765,6 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
     void persistDraftSnapshot(project.id, workflowRef.current, variablesRef.current, { overwrite: true })
   }
 
-  // Loads the persisted draft for a project and applies it to the workspace.
-  // Shared by the explicit New task action, the automatic restore that follows
-  // switching projects, and the startup restore of the last workspace. Aborts
-  // without touching the workspace when a newer navigation request has taken
-  // over. Startup callers pass silentError so an unavailable draft store never
-  // surfaces an error dialog during launch.
   async function loadPersistedDraft(
     project: ProjectRecord,
     requestId: number,
@@ -1803,8 +1776,6 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
     const isCurrentRequest = () => (
       draftLoadRequestRef.current === requestId && activeProjectIdRef.current === project.id
     )
-    // Only the request that owns the pending marker may clear it, so a stale
-    // lookup for the same project cannot unset a newer pending lookup.
     const clearPendingLoad = () => {
       if (pendingDraftLoadRef.current?.requestId === requestId) {
         pendingDraftLoadRef.current = null
@@ -1839,9 +1810,6 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
     }
     clearPendingLoad()
 
-    // Treat a mismatched response as an empty draft. The project ID is part of
-    // the persisted record so a stale or misrouted IPC response can never be
-    // applied to the currently selected project.
     if (draft && draft.projectId !== project.id) draft = null
 
     if (!draft) return 'missing'
@@ -1867,9 +1835,6 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
     return 'restored'
   }
 
-  // Resumes the persisted draft of the startup project. Restoring the last
-  // opened task takes precedence, so this only runs when no task restore is
-  // pending. Lookup failures stay silent to avoid blocking application launch.
   function restoreStartupDraft(project: ProjectRecord): void {
     const requestId = draftLoadRequestRef.current + 1
     draftLoadRequestRef.current = requestId
@@ -1881,29 +1846,21 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
     if (!activeProject) return
 
     const project = activeProject
-    // An explicit New task action takes precedence over the deferred restore
-    // of the last persisted task during application bootstrap.
     pendingStartupTaskRef.current = null
     const requestId = draftLoadRequestRef.current + 1
     draftLoadRequestRef.current = requestId
 
-    // Clicking New task while already editing a draft explicitly replaces it
-    // with a fresh project-default draft, as requested by the product rule.
     if (isNewTaskDraftRef.current && activeProjectIdRef.current === project.id) {
       createFreshProjectDraft(project)
       return
     }
 
-    // Treat a second click while the first draft lookup is still pending as an
-    // explicit request for a fresh draft as well.
     if (pendingDraftLoadRef.current?.projectId === project.id) {
       pendingDraftLoadRef.current = null
       createFreshProjectDraft(project)
       return
     }
 
-    // Without a draft bridge there is nothing to look up, so keep this path
-    // synchronous and create the fresh draft immediately.
     if (!window.cliLoom?.getTaskDraft && !draftSaveQueuesRef.current.get(project.id)) {
       createFreshProjectDraft(project)
       return
@@ -2003,9 +1960,6 @@ export function App({ initialSkin = DEFAULT_SKIN }: { initialSkin?: Skin }) {
     commitActiveProject(project.id)
     resetTaskWorkspaceForProject(project, { draftStarted: false })
     rememberWorkspace(project.id, null)
-    // Switching to a project that has a persisted draft restores it directly
-    // so editing resumes without clicking New task again. Without a draft the
-    // neutral workspace prepared above stays in place.
     await loadPersistedDraft(project, requestId)
   }
 

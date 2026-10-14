@@ -28,7 +28,6 @@ export async function rebuildRuntimeShellEnvironment(options: {
   try {
     selectedShell = options.shellService.resolveEffectiveShell()
   } catch {
-    // The final shell snapshot carries the actionable selection error.
   }
   const shellPath = await (options.readPath ?? readUserShellPath)(
     baseEnvironment,

@@ -19,12 +19,6 @@ export type TaskDraftRecord = TaskDraftPayload & {
   updatedAt: string
 }
 
-/**
- * Parse the renderer-facing draft payload at the privileged process boundary.
- * Drafts intentionally use the structural workflow parser so a snapshot can
- * still be displayed if its catalog entry was removed or is temporarily
- * incomplete while the user decides how to replace it.
- */
 export function parseTaskDraftPayload(value: unknown): TaskDraftPayload {
   if (!isRecord(value)) {
     throw invalidTaskDraft('Task draft must be an object')

@@ -27,6 +27,8 @@ This is a TypeScript Electron desktop application with Vite/React renderers.
 
 Use TypeScript for application code. Match the existing style: two-space indentation, single quotes, no trailing semicolons, and named exports for shared utilities. React components use `PascalCase`; functions, variables, and file-local helpers use `camelCase`. Follow the local style for CJS/Shell tooling and C++ native code.
 
+Do not add or retain code comments outside test cases and test-only fixtures or helpers. This applies to application code, styles, scripts, native code, and build configuration, including inline comments, block comments, JSDoc, and JSX comments. Preserve comments in tests. Keep executable directives such as shebangs and C/C++ preprocessor directives; use equivalent non-comment syntax for type references.
+
 Use the `@/` alias only in renderer code. Prefer existing `components/ui/` primitives and Lucide icons. Keep Electron APIs in `src/main/`, browser UI in `src/renderer/`, and portable logic in `src/shared/`.
 
 Update both `src/shared/i18n/locales/en.ts` and `zh.ts` for user-facing text, preserving matching keys and interpolation placeholders. Keep `README.md` and `README.zh-CN.md` aligned; update `SHELLS.md`, `PACKAGING.md`, or `SECURITY_MODEL.md` when their documented behavior changes.

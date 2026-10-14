@@ -19,11 +19,6 @@ export type CronValidationResult = {
   issue?: TranslationIssue
 }
 
-/**
- * Normalize raw user input into the canonical five-field form: trimmed, with
- * runs of whitespace collapsed to single spaces. Returns null when the value
- * cannot possibly be a five-field expression.
- */
 export function normalizeCronExpression(value: string): string | null {
   if (typeof value !== 'string') return null
   if (value.includes('\0')) return null
@@ -33,12 +28,6 @@ export function normalizeCronExpression(value: string): string | null {
   return normalized
 }
 
-/**
- * Structural check for the supported dialect: five fields (minute hour
- * day-of-month month day-of-week) containing only digits, `*`, `,`, `-` and
- * `/` with valid ranges. Macros, seconds, names and Quartz extensions are
- * rejected before the parser is invoked.
- */
 export function checkCronSyntax(normalized: string): TranslationIssue | null {
   const fields = normalized.split(' ')
   if (fields.length !== CRON_FIELD_COUNT) {
@@ -102,11 +91,6 @@ function cronFieldLabelKey(fieldIndex: number): string {
   }
 }
 
-/**
- * Validate a cron expression for the terminal auto-retry feature. The check
- * verifies the five-field syntax, then confirms that at least one future
- * trigger exists after `afterMs` in the given IANA time zone.
- */
 export function validateRetryCron(
   expression: string,
   timeZone: string,
@@ -137,10 +121,6 @@ function isNoFutureDateError(error: unknown): boolean {
     message.includes('Invalid explicit day of month definition')
 }
 
-/**
- * Compute the next cron trigger strictly after `afterMs`, in epoch
- * milliseconds. Throws when the expression is invalid or has no future date.
- */
 export function getNextCronTime(expression: string, timeZone: string, afterMs: number): number {
   const normalized = normalizeCronExpression(expression)
   if (!normalized) throw cronSyntaxError()
@@ -150,7 +130,6 @@ export function getNextCronTime(expression: string, timeZone: string, afterMs: n
   return iterator.next().toDate().getTime()
 }
 
-/** Compute the next `count` strictly increasing trigger times after `afterMs`. */
 export function getCronPreview(
   expression: string,
   timeZone: string,
@@ -188,16 +167,11 @@ function cronSyntaxError(): Error {
   })
 }
 
-/**
- * Resolve the host system IANA time zone. Falls back to UTC when the runtime
- * cannot report a usable identifier.
- */
 export function getSystemTimeZone(): string {
   try {
     const zone = Intl.DateTimeFormat().resolvedOptions().timeZone
     if (zone && typeof zone === 'string' && isValidTimeZone(zone)) return zone
   } catch {
-    // Fall through to UTC.
   }
   return 'UTC'
 }

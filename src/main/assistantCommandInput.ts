@@ -5,11 +5,6 @@ import {
 } from './assistantWorkspace'
 import { t } from './i18n'
 
-/**
- * Shared input plumbing for assistant commands that accept JSON payloads via
- * standard input or a file inside the private assistant workspace. The error
- * class is re-exported by the command handler for backward compatibility.
- */
 export class AssistantCommandError extends AppError {
   readonly exitCode: number
 
@@ -25,9 +20,7 @@ export class AssistantCommandError extends AppError {
 }
 
 export type AssistantInputReadOptions = {
-  /** Whether --expected-revision is accepted for this command. */
   allowRevision?: boolean
-  /** UTF-8 byte limit applied to stdin and file content alike. */
   maxBytes?: number
 }
 
@@ -85,10 +78,6 @@ export function readAssistantCommandInput(options: {
   return { content, ...(expectedRevision === undefined ? {} : { expectedRevision }) }
 }
 
-/**
- * Parse the JSON payload of a command. Accepts a top-level null so callers
- * can distinguish payloads that use null as a meaningful value.
- */
 export function parseAssistantCommandJson(source: string): unknown {
   if (!source.trim()) throw new AssistantCommandError('INVALID_ARGUMENT', 2, t('errors:assistantCommand.inputJsonEmpty'))
   try {
@@ -98,18 +87,12 @@ export function parseAssistantCommandJson(source: string): unknown {
   }
 }
 
-/**
- * Require a parsed JSON payload to be a non-null plain object. Commands whose
- * input shape is a fixed object use this before touching properties so a
- * top-level null or primitive fails with a controlled INVALID_ARGUMENT error.
- */
 export function requireJsonObjectInput(value: unknown): void {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     throw new AssistantCommandError('INVALID_ARGUMENT', 2, t('errors:assistantCommand.inputJsonObjectRequired'))
   }
 }
 
-/** Reject unexpected top-level keys in a fixed-shape JSON input object. */
 export function rejectUnknownFields(
   value: unknown,
   allowedKeys: readonly string[],

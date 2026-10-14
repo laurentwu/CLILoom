@@ -9,8 +9,6 @@ async function afterPack(context) {
 
   const buildsAppImage = context.targets?.some((target) => target.name === 'appImage') ?? false
   const helperPath = path.join(context.appOutDir, 'chrome-sandbox')
-  // AppImage mounts cannot honor SUID. Keep the helper non-SUID there so the
-  // custom launcher can select user namespaces without triggering a helper error.
   const helperMode = buildsAppImage ? REGULAR_EXECUTABLE_MODE : SETUID_SANDBOX_MODE
   chmodSync(helperPath, helperMode)
   const helperStat = statSync(helperPath)
@@ -23,8 +21,6 @@ async function afterPack(context) {
 
   if (!buildsAppImage) return
 
-  // electron-builder's generated AppRun may add --no-sandbox when its userns probe is
-  // inconclusive. Override it so Chromium either starts sandboxed or fails closed.
   const launcherPath = path.join(context.appOutDir, 'AppRun')
   copyFileSync(path.join(__dirname, 'appimage-AppRun.sh'), launcherPath)
   chmodSync(launcherPath, REGULAR_EXECUTABLE_MODE)

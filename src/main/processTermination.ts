@@ -25,7 +25,6 @@ export type TaskkillOptions = {
   isProcessAlive?: (pid: number) => boolean
 }
 
-/** Best-effort, bounded and idempotent process-tree termination. */
 export async function terminateProcessTree(
   handle: ProcessTreeHandle,
   options: {
@@ -67,7 +66,6 @@ async function terminateWindowsProcessTree(
     try {
       rootAlreadyExited = !(options?.isProcessAlive ?? isProcessAlive)(pid)
     } catch {
-      // If liveness cannot be checked, keep the full termination path.
     }
     if (rootAlreadyExited) return runTaskkill(pid, options)
 
@@ -75,8 +73,6 @@ async function terminateWindowsProcessTree(
     const ptyErrors = exitWaiter.registrationError ? [exitWaiter.registrationError] : []
     const taskkill = await runTaskkill(pid, options)
     if (taskkill.terminated) {
-      // taskkill 已在根进程仍存活时捕获并终止整棵树。等待 node-pty
-      // 自然观察退出，避免再附加到一个已经关闭的 ConPTY 控制台。
       await exitWaiter.promise
       return taskkill
     }
@@ -96,14 +92,11 @@ async function terminateWindowsProcessTree(
     }
   }
 
-  // A regular ChildProcess does not kill its descendants. Keep the root alive
-  // until taskkill has captured and terminated the complete parent/child tree.
   const taskkill = await runTaskkill(pid, options)
   if (taskkill.terminated) {
     try {
       handle.kill()
     } catch {
-      // node-pty/ChildProcess may already have observed the exit.
     }
   }
   return taskkill
@@ -137,7 +130,6 @@ function createPtyExitWaiter(
     try {
       subscription?.dispose?.()
     } catch {
-      // Listener disposal is best-effort after the PTY has exited.
     }
     resolvePromise(exited)
   }
@@ -170,7 +162,6 @@ async function terminatePosixProcessTree(
       process.kill(-pid, 'SIGTERM')
       termSent = true
     } catch {
-      // Fall through to the direct child handle.
     }
   }
   if (!termSent) {
@@ -190,13 +181,11 @@ async function terminatePosixProcessTree(
       process.kill(-pid, 'SIGKILL')
       return { terminated: true }
     } catch {
-      // Fall through to the direct child handle.
     }
   }
   try {
     handle.kill('SIGKILL')
   } catch {
-    // The process has already exited.
   }
   return { terminated: true }
 }
@@ -277,7 +266,6 @@ export function runTaskkill(
       try {
         child.kill()
       } catch {
-        // taskkill may already have exited.
       }
       finish({ terminated: false, error: t('errors:termination.taskkillTimeout') })
     }, options.timeoutMs ?? TASKKILL_TIMEOUT_MS)

@@ -546,19 +546,6 @@ body,
   overscroll-behavior: contain;
 }
 
-/*
- * xterm 6 still creates a legacy .xterm-viewport and leaves it with
- * overflow-y: scroll from its own stylesheet (xterm.css). Scrolling has moved
- * to .xterm-scrollable-element above, so the viewport no longer holds content
- * or a usable thumb, but Chromium still reserves its native overflow gutter and
- * would render a default-styled gray track beside the themed div slider below.
- *
- * scrollbar-width: none suppresses the gutter on Chromium 121+ (Electron 43
- * ships Chromium 130+). The ::-webkit-scrollbar rule below is a belt-and-
- * suspenders safeguard for older builds and for any future Chromium regression;
- * it is harmless on current versions. This is independent of the div scrollbar
- * here and of the plain-text .terminal-output WebKit scrollbar further down.
- */
 .xterm-host .xterm-viewport {
   scrollbar-width: none;
 }
@@ -569,24 +556,6 @@ body,
   height: 0;
 }
 
-/*
- * xterm 6 renders its own scrollbar as a div structure
- * (.xterm-scrollable-element > .scrollbar.vertical > .slider) rather than the
- * Chromium ::-webkit-scrollbar pseudo-element used by the plain-text output
- * pane below. These are two independent mechanisms. Only the vertical slider is
- * customized here; xterm 6 also creates a hidden horizontal slider, so the
- * selectors stay direction-scoped to avoid affecting it.
- *
- * xterm 6 appends its own <style> element after Terminal.open that writes
- * background rules for the normal/:hover/.active slider states at the same
- * specificity as these selectors. Because that runtime style appears later in
- * the document, each custom background here uses !important to win; only the
- * background property needs the override, and border-radius stays at normal
- * specificity in the base rule. XtermTerminal configures a 12px overview ruler
- * so xterm and FitAddon reserve the same amount of layout width. The visible
- * thumb is kept at 6px and aligned to the outer edge, leaving the inner 6px as
- * a dedicated safety gap between terminal glyphs and the scrollbar.
- */
 .xterm-host .xterm-scrollable-element > .scrollbar.vertical > .slider {
   background: color-mix(in srgb, var(--terminal-foreground) 15%, transparent) !important;
   border-radius: 9999px;
@@ -603,16 +572,6 @@ body,
   background: color-mix(in srgb, var(--terminal-foreground) 45%, transparent) !important;
 }
 
-/*
- * The plain-text TerminalOutputPane keeps the classic thin Chromium WebKit
- * scrollbar: a transparent track with a translucent rounded thumb and a
- * brighter thumb on hover. This is distinct from the xterm 6 div scrollbar
- * above; Electron is Chromium, so ::-webkit-scrollbar controls sizing here, and
- * scrollbar-width is intentionally omitted because it conflicts with these
- * webkit rules. A stable gutter handles classic scrollbars, while an extra 10px
- * beyond the pane's standard 0.75rem padding protects content when Chromium
- * uses an overlay scrollbar that does not consume gutter space.
- */
 .terminal-output {
   padding-inline-end: calc(0.75rem + 10px);
   scrollbar-gutter: stable;

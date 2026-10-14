@@ -1,4 +1,4 @@
-/// <reference types="vite/client" />
+import 'vite/client'
 
 import type { CLILoomApi } from '../main/preload'
 import type { CLILoomAssistantApi } from '../main/assistantPreload'

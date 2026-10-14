@@ -182,7 +182,6 @@ function ensurePrivateDirectory(directoryPath: string): void {
   try {
     chmodSync(directoryPath, 0o700)
   } catch {
-    // Windows does not implement POSIX modes.
   }
 }
 
@@ -203,7 +202,6 @@ function synchronizeAssistantWorkspace(
       try {
         chmodSync(filePath, managedFile.mode)
       } catch {
-        // Windows does not implement POSIX modes.
       }
     }
   }
@@ -217,7 +215,6 @@ function synchronizeAssistantWorkspace(
     try {
       chmodSync(manifestPath, 0o600)
     } catch {
-      // Windows does not implement POSIX modes.
     }
   }
 
@@ -306,13 +303,11 @@ function atomicManagedWrite(filePath: string, content: string, mode: number): vo
     try {
       chmodSync(filePath, mode)
     } catch {
-      // Windows does not implement POSIX modes.
     }
   } finally {
     try {
       unlinkSync(temporaryPath)
     } catch {
-      // The rename already consumed the temporary file in the normal path.
     }
   }
 }
@@ -326,8 +321,6 @@ function replaceManagedFile(temporaryPath: string, filePath: string): void {
     if (code !== 'EACCES' && code !== 'EEXIST' && code !== 'EPERM') throw error
   }
 
-  // Windows cannot rename over an existing file. Move the validated target
-  // aside first, then restore it if installing the replacement fails.
   const backupPath = `${filePath}.old-${randomBytes(8).toString('hex')}`
   renameSync(filePath, backupPath)
   try {
@@ -339,7 +332,6 @@ function replaceManagedFile(temporaryPath: string, filePath: string): void {
   try {
     unlinkSync(backupPath)
   } catch {
-    // The replacement is complete; retain the uniquely named recovery copy.
   }
 }
 

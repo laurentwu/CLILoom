@@ -92,12 +92,6 @@ export class WorkflowRuntimeService {
     })
   }
 
-  /**
-   * The system time zone is read when a task is launched (and when a legacy
-   * task is explicitly recovered), not when the service is constructed, so
-   * tasks started after a system time-zone change use the new value. Already
-   * running tasks keep the persisted zone.
-   */
   private currentSystemTimeZone(): string {
     return getSystemTimeZone()
   }
@@ -210,13 +204,8 @@ export class WorkflowRuntimeService {
     const engine = this.engines.get(taskId)
     if (!engine) {
       await this.processRunner.killByTask(taskId)
-      // The engine may have been released after a failure; persisted waiting
-      // plans must still be cancelled so restarts never resume them.
       const changed = cancelWaitingAutoRetriesInDb(this.db, taskId, 'task-stopped')
       if (changed > 0) {
-        // Broadcast the refreshed snapshot so renderers drop stale waiting
-        // banners and countdowns instead of showing a plan that no longer
-        // exists.
         const refreshed = this.restoreWithoutActiveEngine(taskId)
         if (refreshed.state) {
           this.getWindow()?.webContents.send('workflow:state', refreshed.state)
@@ -383,10 +372,6 @@ export class WorkflowRuntimeService {
     })
   }
 
-  /**
-   * Start the retry process for a terminal retry that the engine already
-   * accepted, and wire the process result back into the engine.
-   */
   private async launchAcceptedTerminalRetry(args: {
     taskId: string
     nodeId: string
@@ -615,12 +600,6 @@ export class WorkflowRuntimeService {
     return this.serializeTask(taskId, () => this.restoreInternal(taskId))
   }
 
-  /**
-   * Execute one scheduled automatic retry. Everything is re-validated against
-   * current runtime and persisted state; a rejected ticket is dropped without
-   * consuming anything. This entry never clears stop markers and never falls
-   * back to a standalone rerun.
-   */
   private async retryScheduledTerminal(ticket: AutoRetryTicket): Promise<void> {
     if (this.shuttingDown || this.cancelledTaskLaunches.has(ticket.taskId)) return
     if (this.pendingTerminalRetries.has(ticket.sessionId)) return
@@ -635,13 +614,8 @@ export class WorkflowRuntimeService {
     this.assertRuntimeAvailable()
     if (this.shuttingDown || this.cancelledTaskLaunches.has(ticket.taskId)) return
     if (this.pendingTerminalRetries.has(ticket.sessionId)) return
-    // A still-live session means the node is executing; skip this trigger
-    // without consuming the attempt.
     if (this.processRunner.hasLiveSession(ticket.sessionId)) return
 
-    // A retryable session that actually belongs to this task and node must
-    // exist before an attempt may be accepted; otherwise the plan is blocked
-    // instead of being consumed as a failed execution.
     let sessionTarget: ReturnType<ProcessRunner['getRetryTarget']> | null = null
     try {
       sessionTarget = this.processRunner.getRetryTarget(ticket.sessionId)
@@ -654,9 +628,6 @@ export class WorkflowRuntimeService {
       return
     }
 
-    // Automatic executions must use the workflow version the task is bound
-    // to; falling back to the current template is reserved for manual
-    // retries (Plan 6.1).
     const engine = this.getEngineForTerminalRetry(ticket.taskId, ticket.nodeId, {
       requireBoundVersion: true
     })
@@ -697,7 +668,6 @@ export class WorkflowRuntimeService {
     })
   }
 
-  /** Mark one node's waiting plan as blocked directly in persisted output. */
   private markAutoRetryBlocked(ticket: AutoRetryTicket, reason: TerminalAutoRetryReason): void {
     const rows = this.db.prepare(
       `select node_runs.id, node_runs.output_json
@@ -753,11 +723,6 @@ export class WorkflowRuntimeService {
     })
   }
 
-  /**
-   * Reload persisted waiting plans after startup or restore. Overdue plans
-   * dispatch exactly once through the scheduler; future plans keep their
-   * original due time, cycle, and attempt count.
-   */
   async recoverAutoRetries(): Promise<void> {
     const taskRows = this.db.prepare(
       `select distinct task_id from workflow_runs
@@ -777,7 +742,6 @@ export class WorkflowRuntimeService {
     this.autoRetryScheduler.resume()
   }
 
-  /** Re-check overdue plans, e.g. after the system wakes from sleep. */
   resumeAutoRetryScheduler(): void {
     this.autoRetryScheduler.resume()
   }
@@ -832,8 +796,6 @@ export class WorkflowRuntimeService {
   async shutdown(): Promise<void> {
     if (this.shutdownPromise) return this.shutdownPromise
     this.shuttingDown = true
-    // Shutdown differs from a user stop: timers are cleared and dispatch is
-    // forbidden, but waiting plans stay persisted for the next launch.
     this.autoRetryScheduler.dispose()
     const taskIds = new Set([
       ...this.engines.keys(),
@@ -957,9 +919,6 @@ export class WorkflowRuntimeService {
     })
     if (!restored.state) return null
 
-    // Manual retries keep the legacy compatibility path that falls back to
-    // the current workflow template. Automatic executions must not: without
-    // the task's bound workflow version the plan is blocked instead.
     if (options.requireBoundVersion && (!restored.workflow || restored.workflowVersion === null)) {
       return null
     }
@@ -998,8 +957,6 @@ export class WorkflowRuntimeService {
           workflow,
           workflowVersion
         )
-        // Only plans committed to storage may be scheduled; the scheduler
-        // derives its ticket set from the persisted snapshot.
         this.autoRetryScheduler.reconcileTask(state)
         return task
       },

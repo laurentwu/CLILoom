@@ -63,7 +63,6 @@ export class AssistantWindowManager {
       try {
         await this.options.terminalService.start(command)
       } catch {
-        // The renderer receives the failed status and offers settings.
       }
     }
   }

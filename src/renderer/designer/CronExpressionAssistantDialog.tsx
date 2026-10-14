@@ -57,8 +57,6 @@ export function CronExpressionAssistantDialog({
   const [unconvertible, setUnconvertible] = useState(false)
   const applyButtonRef = useRef<HTMLButtonElement>(null)
 
-  // A fresh local draft is created each time the dialog opens; cancelling
-  // (Esc, overlay, close button) discards it without touching the workflow.
   useEffect(() => {
     if (!open) return
     const matched = initialExpression ? matchAssistantExpression(initialExpression) : null

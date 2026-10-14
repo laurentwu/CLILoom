@@ -217,10 +217,6 @@ export function restoreWorkflowRuntimeState(
   }
 }
 
-/**
- * Load the retry-relevant runtime snapshot without repairing database rows,
- * persisting workflow versions, emitting events, or creating a runtime engine.
- */
 export function readWorkflowRuntimeState(
   db: AppDatabase,
   taskId: string,
@@ -448,12 +444,6 @@ function restoreNodeRuns(
 
 const STORED_FAILURE_SOURCES = ['terminal', 'start-hook', 'end-hook', 'runtime'] as const
 
-/**
- * Validate retry-relevant fields read from `node_runs.output_json`. Corrupt or
- * unknown data never reaches the scheduler: waiting states on non-failed
- * nodes are demoted to blocked, and an automatic execution recorded as
- * running is treated as interrupted by the crash.
- */
 function sanitizeStoredNodeRunOutput(
   output: Omit<WorkflowRuntimeNodeRun, 'nodeId' | 'status'>,
   rowStatus: string
@@ -492,11 +482,6 @@ function sanitizeStoredNodeRunOutput(
   return { ...output, failureSource, autoRetry }
 }
 
-/**
- * When a `running` node run is reconciled to `interrupted`, an automatic
- * execution recorded as in-flight must be blocked rather than resumed, since
- * whether the command already ran cannot be determined.
- */
 function blockInFlightAutoRetry(output: Record<string, unknown>): string {
   const autoRetry = parseTerminalAutoRetryState(output.autoRetry)
   if (!autoRetry || autoRetry.phase !== 'running') return JSON.stringify(output)
@@ -510,11 +495,6 @@ function blockInFlightAutoRetry(output: Record<string, unknown>): string {
   })
 }
 
-/**
- * Cancel every persisted waiting automatic-retry plan of a task directly in
- * storage. Used by user-initiated stops and deletions when no runtime engine
- * is loaded; the workflow definition is not required.
- */
 export function cancelWaitingAutoRetriesInDb(
   db: AppDatabase,
   taskId: string,

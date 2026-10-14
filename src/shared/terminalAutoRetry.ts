@@ -9,10 +9,6 @@ export const AUTO_RETRY_CRON_MAX_LENGTH = 512
 
 export const RECOMMENDED_RETRY_DELAYS_MINUTES = [1, 2, 5, 10, 30] as const
 
-/**
- * Optional per-node configuration for automatic retries of failed terminal
- * executions. Absence means the feature is disabled for the node.
- */
 export type TerminalAutoRetryConfig = {
   enabled: boolean
   maxRetries: number | null
@@ -21,7 +17,6 @@ export type TerminalAutoRetryConfig = {
   | { mode: 'cron'; cron: string }
 )
 
-/** Per-run automatic retry context captured when a task is launched. */
 export type WorkflowAutoRetryContext = {
   runId: string
   timeZone: string
@@ -45,29 +40,20 @@ export type TerminalAutoRetryReason =
   | 'user-cancelled'
   | 'task-stopped'
 
-/** Runtime metadata for one automatic-retry cycle of a terminal node. */
 export type TerminalAutoRetryState = {
   version: 1
   cycleId: string
   phase: TerminalAutoRetryPhase
   attemptsStarted: number
   lastFailureAt?: number
-  /** Epoch milliseconds when the latest automatic retry in this cycle entered running. */
   lastRetryStartedAt?: number
   scheduleId?: string
   nextRetryAt?: number
   reason?: TerminalAutoRetryReason
 }
 
-/** Upper bound for accepted epoch-millisecond timestamps (Date range). */
 const AUTO_RETRY_MAX_EPOCH_MS = 8_640_000_000_000_000
 
-/**
- * Validate an optional stored `lastRetryStartedAt` value. Accepts any safe
- * integer epoch millisecond value within the Date range, including zero;
- * everything else (missing, non-number, fractional, negative, NaN, Infinity,
- * out of range) is ignored without invalidating the remaining retry state.
- */
 export function parseLastRetryStartedAt(
   value: unknown,
   attemptsStarted: number
@@ -84,22 +70,12 @@ export type AutoRetryClock = {
   createCycleId: () => string
 }
 
-/**
- * Create a random identifier usable for run/cycle/schedule identities. Uses
- * the Web Crypto API when available and a time-plus-random fallback that is
- * still unique enough for in-process scheduling.
- */
 export function createAutoRetryId(): string {
   const cryptoApi = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto
   if (typeof cryptoApi?.randomUUID === 'function') return cryptoApi.randomUUID()
   return `ar-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 }
 
-/**
- * Parse and normalize an `autoRetry` config object. Returns undefined when the
- * field is absent (disabled without persisted state). Invalid shapes throw
- * `WORKFLOW_INVALID` so main-process save/import/run paths reject them.
- */
 export function parseTerminalAutoRetryConfig(
   value: unknown
 ): TerminalAutoRetryConfig | undefined {
@@ -125,8 +101,6 @@ export function parseTerminalAutoRetryConfig(
 }
 
 function parseMaxRetries(value: unknown): number | null {
-  // undefined means the object predates the field: normalize to the default.
-  // null explicitly requests unlimited retries.
   if (value === undefined) return AUTO_RETRY_DEFAULT_MAX_RETRIES
   if (value === null) return null
   if (typeof value !== 'number' ||
@@ -148,7 +122,6 @@ function autoRetryConfigError(i18nKey: TranslationIssue['key'], params?: Record<
   })
 }
 
-/** Waiting delay before automatic attempt `nextAttempt` (1-based). */
 export function getRecommendedRetryDelayMs(nextAttempt: number): number {
   const index = Math.min(Math.max(nextAttempt, 1) - 1, RECOMMENDED_RETRY_DELAYS_MINUTES.length - 1)
   return RECOMMENDED_RETRY_DELAYS_MINUTES[index] * 60_000
@@ -159,12 +132,6 @@ export function isAutoRetryExhausted(attemptsStarted: number, maxRetries: number
   return attemptsStarted >= maxRetries
 }
 
-/**
- * Compute the epoch-millisecond time of the next automatic attempt after a
- * failure confirmed at `lastFailureAt`. For recommended mode this is a plain
- * delay; for cron mode it is the next calendar match strictly after the
- * failure. Throws when a cron expression has no computable future time.
- */
 export function computeNextAutoRetryTime(args: {
   config: TerminalAutoRetryConfig
   attemptsStarted: number
@@ -197,11 +164,6 @@ const AUTO_RETRY_REASONS: readonly TerminalAutoRetryReason[] = [
   'task-stopped'
 ]
 
-/**
- * Sanitize a stored automatic-retry state object read from persistence.
- * Returns null for unknown versions or malformed data so that corrupted
- * records never reach the scheduler.
- */
 export function parseTerminalAutoRetryState(value: unknown): TerminalAutoRetryState | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
   const raw = value as Record<string, unknown>
@@ -238,10 +200,6 @@ export function parseTerminalAutoRetryState(value: unknown): TerminalAutoRetrySt
   return state
 }
 
-/**
- * Sanitize the stored per-run context. Returns null when the run identity or
- * time zone is unusable; the caller then treats automatic retries as blocked.
- */
 export function parseWorkflowAutoRetryContext(value: unknown): WorkflowAutoRetryContext | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
   const raw = value as Record<string, unknown>
@@ -250,12 +208,6 @@ export function parseWorkflowAutoRetryContext(value: unknown): WorkflowAutoRetry
   return { runId: raw.runId, timeZone: raw.timeZone }
 }
 
-/**
- * Check whether an `autoRetry` configuration passes workflow validation.
- * Enabled cron-mode configurations must resolve to a future trigger time.
- * Disabled configurations may keep an unfinished cron draft, but structural
- * limits (length, NUL) still apply.
- */
 export function getAutoRetryCronIssue(
   config: TerminalAutoRetryConfig,
   nowMs: number

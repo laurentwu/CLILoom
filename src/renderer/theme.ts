@@ -124,9 +124,6 @@ export async function loadInitialSkin(
   }
 }
 
-// Defensive runtime normalization: builtin ids always map to the trusted builtin
-// definition so the renderer never honors a forged builtin payload over IPC.
-// User skins are produced by our own main process and trusted as-is.
 function normalizeSkin(skin: Skin): Skin {
   if (skin.builtin) {
     const trusted = BUILTIN_SKINS.find((entry) => entry.id === skin.id)

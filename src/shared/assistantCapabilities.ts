@@ -18,24 +18,14 @@ import type { NodeType } from './workflow'
 import type { Translator } from './i18n/translator'
 import type { TranslationKey } from './i18n/types'
 
-/**
- * Descriptive capability catalog for the cliloom assistant CLI. This module is
- * pure data: it must not depend on Electron, the browser, the filesystem, or
- * main-process objects. Final validation always happens in the existing
- * business parsers; nothing here is a JSON Schema validator.
- */
 
 export const ASSISTANT_CAPABILITY_SCHEMA_VERSION = 2
 
 export type AssistantCommandDescriptor = {
-  /** Stable command id used in --json output and capability tests. */
   id: string
-  /** Exact CLI usage line shown by `cliloom help`. */
   usage: string
   summary: string
-  /** Input form for commands that take JSON payloads. */
   input?: string
-  /** When a change takes effect. */
   appliesTo: string
 }
 
@@ -223,9 +213,6 @@ export function getAssistantCommandDescriptor(id: string): AssistantCommandDescr
   return ASSISTANT_COMMAND_DESCRIPTORS.find((descriptor) => descriptor.id === id)
 }
 
-// ---------------------------------------------------------------------------
-// Workflow schema description
-// ---------------------------------------------------------------------------
 
 export const WORKFLOW_NODE_TYPES = [
   'start',
@@ -237,11 +224,6 @@ export const WORKFLOW_NODE_TYPES = [
   'end'
 ] as const
 
-/**
- * Field-value examples for nodes[].config.autoRetry. These are values of the
- * autoRetry field, not complete workflows; the adjacent test enforces that the
- * shared parser accepts each of them.
- */
 export const TERMINAL_AUTO_RETRY_CONFIG_EXAMPLES = {
   recommendedFinite: { enabled: true, mode: 'recommended', maxRetries: 5 },
   recommendedDefault: { enabled: true, mode: 'recommended' },
@@ -251,11 +233,6 @@ export const TERMINAL_AUTO_RETRY_CONFIG_EXAMPLES = {
   clear: null
 } as const
 
-/**
- * Complete workflow definitions. Every example must pass
- * parseWorkflowDefinition; the adjacent test enforces this. None of them may
- * contain comments, ellipses, or a workflow-get response wrapper.
- */
 export const WORKFLOW_SCHEMA_EXAMPLES = {
   minimal: {
     id: 'example-minimal',
@@ -514,9 +491,6 @@ export const WORKFLOW_SCHEMA_EXAMPLES = {
   }
 } as const
 
-// ---------------------------------------------------------------------------
-// Complete workflow save documentation
-// ---------------------------------------------------------------------------
 
 export type WorkflowSchemaFieldDocs = Record<string, string>
 
@@ -703,11 +677,6 @@ export function buildWorkflowSchema(translate: Translator): WorkflowSchemaDocume
   }
 }
 
-/**
- * Render the complete workflow save documentation as plain text from the same
- * schema data returned by buildWorkflowSchema. This is the full document, not
- * a summary: every section and every complete JSON example is included.
- */
 export function renderWorkflowSchemaText(
   schema: WorkflowSchemaDocument,
   translate: Translator
@@ -781,9 +750,6 @@ export function renderWorkflowSchemaText(
   return lines.join('\n')
 }
 
-// ---------------------------------------------------------------------------
-// Compact summaries embedded in `cliloom context`
-// ---------------------------------------------------------------------------
 
 export const CONTEXT_CAPABILITY_SUMMARIES = [
   'read and validate workflows',
