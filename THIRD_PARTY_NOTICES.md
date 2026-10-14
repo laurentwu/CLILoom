@@ -214,7 +214,7 @@ This generated inventory contains 328 package versions and 103 distinct notice t
 | [devlop](https://www.npmjs.com/package/devlop) | `1.1.0` | MIT | [Notice 047](#notice-047) |
 | [diff](https://www.npmjs.com/package/diff) | `5.2.2` | BSD-3-Clause | [Notice 048](#notice-048) |
 | [downshift](https://www.npmjs.com/package/downshift) | `7.6.2` | MIT | [Notice 049](#notice-049) |
-| [electron](https://www.npmjs.com/package/electron) | `43.3.0` | MIT | [Notice 050](#notice-050) |
+| [electron](https://www.npmjs.com/package/electron) | `43.5.0` | MIT | [Notice 050](#notice-050) |
 | [electron-updater](https://www.npmjs.com/package/electron-updater) | `6.8.9` | MIT | [Notice 029](#notice-029) |
 | [escape-string-regexp](https://www.npmjs.com/package/escape-string-regexp) | `5.0.0` | MIT | [Notice 051](#notice-051) |
 | [estree-util-is-identifier-name](https://www.npmjs.com/package/estree-util-is-identifier-name) | `3.0.0` | MIT | [Notice 052](#notice-052) |
@@ -2261,7 +2261,7 @@ SOFTWARE.
 
 ### Notice 050
 
-Applies to: `electron@43.3.0`
+Applies to: `electron@43.5.0`
 
 Declared license: MIT
 
